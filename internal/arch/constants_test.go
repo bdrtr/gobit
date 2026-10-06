@@ -295,19 +295,30 @@ func TestTheGiftCardAccountAgrees(t *testing.T) {
 }
 
 // TestTheDocumentedActKindsAgree binds the act kinds the invoice module lets an
-// amendment's key name to the kinds the order journal places (ADR 0419). A
-// drift is loud only at the worst moment: a key the journal cannot place
-// refuses every read of its quarter, and one the invoice module refuses stops
-// an act being documented at all.
+// amendment's key name, and the kind of document each is documented on, to
+// the kinds the order journal places and the side it books each on
+// (ADR 0419). A drift is loud only at the worst moment: a key the journal
+// cannot place refuses every read of its quarter, and one the invoice module
+// refuses stops an act being documented at all.
 func TestTheDocumentedActKindsAgree(t *testing.T) {
 	t.Parallel()
 
-	placed := make([]string, 0, len(ordersvc.DocumentedActs))
-	for _, kind := range ordersvc.DocumentedActs {
+	placed := make([]string, 0, len(ordersvc.DocumentedActs()))
+	for _, kind := range ordersvc.DocumentedActs() {
 		placed = append(placed, string(kind))
 	}
-	assert.ElementsMatch(t, placed, invoicemodels.AmendmentActKinds,
+	require.NotEmpty(t, placed, "the journal places no act; the binding is BLIND")
+	assert.ElementsMatch(t, placed, invoicemodels.AmendmentActKinds(),
 		"the invoice module must refuse exactly the keys the order journal cannot place")
+
+	for _, act := range placed {
+		booked, ok := ordersvc.DocumentKindOf(ordermodels.JournalKind(act))
+		require.True(t, ok, "the journal books no document for %s", act)
+		documented, ok := invoicemodels.AmendmentActDocument(act)
+		require.True(t, ok, "the invoice module documents no %s", act)
+		assert.Equal(t, booked, string(documented),
+			"%s must be documented on the kind of document the journal books it as", act)
+	}
 }
 
 // TestTheGiftCardNamesAgree binds the checkout's spelling of the gift card

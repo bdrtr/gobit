@@ -707,3 +707,27 @@ func TestAZeroTaxDocumentIsHeldToItsKinds(t *testing.T) {
 		})
 	}
 }
+
+// failingDocuments is an invoice module whose read fails as a database outage
+// does.
+type failingDocuments struct{}
+
+// DocumentedTaxJSON fails.
+func (failingDocuments) DocumentedTaxJSON(context.Context, time.Time, time.Time, string) (json.RawMessage, error) {
+	return nil, errors.Internal("invoice_query_failed", "the documents that name an act could not be listed")
+}
+
+// TestAFailedReadOfTheDocumentsStaysAFailure: only the invoice module's
+// refusal of the window is answered in the journal's code; a read that failed
+// is reported as the failure it is, not as a window too wide (ADR 0419).
+func TestAFailedReadOfTheDocumentsStaysAFailure(t *testing.T) {
+	t.Parallel()
+
+	svc, err := service.New(service.Options{Repo: newFakeStore(), Events: newFakeBus(t), Documents: failingDocuments{}})
+	require.NoError(t, err)
+
+	_, err = september(t, svc)
+	require.Error(t, err)
+	assert.True(t, errors.HasKind(err, errors.KindInternal), "%v", err)
+	assert.Equal(t, "invoice_query_failed", errors.CodeOf(err), "the failure keeps its own code")
+}

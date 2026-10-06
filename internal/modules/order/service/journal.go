@@ -481,13 +481,36 @@ const (
 	documentSale   = "sale"
 )
 
-// DocumentedActs are the act kinds a document can name: what the invoicing
+// documentedActs are the act kinds a document can name: what the invoicing
 // flow documents (ADR 0406). An exchange is on no document. The invoice module
-// refuses a key naming another kind when it is written, and internal/arch
-// binds its list to this one (ADR 0419).
-var DocumentedActs = []models.JournalKind{
+// refuses a key naming another kind, or naming one on the other kind of
+// document, when it is written, and internal/arch binds its map to
+// [DocumentedActs] and [DocumentKindOf] (ADR 0419).
+var documentedActs = []models.JournalKind{
 	models.JournalCreditLine, models.JournalDeliveryChanged, models.JournalDeliveryUpgraded,
 	models.JournalReturnRefunded, models.JournalClaimRefunded,
+}
+
+// DocumentedActs returns the act kinds a document can name; the slice is the
+// caller's.
+func DocumentedActs() []models.JournalKind {
+	return slices.Clone(documentedActs)
+}
+
+// DocumentKindOf returns the kind of document whose tax the journal books for
+// an act of the kind, "refund" for an act that gave money back and "sale" for
+// one that charged it, and false for a kind no document names (ADR 0419).
+func DocumentKindOf(act models.JournalKind) (string, bool) {
+	if !slices.Contains(documentedActs, act) {
+		return "", false
+	}
+	if _, ok := givenBackTo[act]; ok {
+		return documentRefund, true
+	}
+	if _, ok := chargedTo[act]; ok {
+		return documentSale, true
+	}
+	return "", false
 }
 
 // actOrder is the order a document's act belongs to.
@@ -537,7 +560,7 @@ func (s *Service) documentFacts(
 	var credits, changes, refunds []string
 	for i := range documents {
 		kind, id, ok := strings.Cut(documents[i].AmendmentKey, ":")
-		if !ok || id == "" || !slices.Contains(DocumentedActs, models.JournalKind(kind)) {
+		if !ok || id == "" || !slices.Contains(documentedActs, models.JournalKind(kind)) {
 			return nil, errors.Internal(CodeInvalidInput,
 				"document %s names an act this journal cannot read: %q", documents[i].ID, documents[i].AmendmentKey)
 		}

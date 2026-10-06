@@ -177,38 +177,49 @@ func TestAKeyNeedsASale(t *testing.T) {
 }
 
 // TestAKeyNamesAnActTheJournalPlaces: the order journal books a document's tax
-// against the act its key names and refuses every read of a window holding a
-// document it cannot place (ADR 0419), so a key that is not "<kind>:<act id>"
-// with a kind the journal places is refused before any document carries it,
-// and every kind it places is taken.
+// against the act its key names, on the side the document's kind gives, and
+// refuses every read of a window holding a document it cannot place
+// (ADR 0419). So a key that is not "<kind>:<act id>", whose kind is not one
+// the journal places, whose kind is documented on the other kind of document,
+// or whose id carries spaces the journal would look up, is refused before any
+// document carries it, and every kind on its own kind of document is taken.
 func TestAKeyNamesAnActTheJournalPlaces(t *testing.T) {
 	t.Parallel()
 
-	for _, key := range []string{
-		"exchange_funded:exch_1", "exchange_refunded:re_1", "order_placed:order_1", "credit_1",
-		"credit_line:", "credit_line:  ", ":ocl_1", "Credit_line:ocl_1",
-	} {
+	issue := func(t *testing.T, document models.Kind, key string) error {
+		t.Helper()
 		svc := newService(newFakeRepo())
-		in := refundOf(issuedSale(t, svc), 120, 20)
+		sale := issuedSale(t, svc)
+		in := refundOf(sale, 120, 20)
+		if document == models.KindSale {
+			in = chargeOf(sale, 120, 20, false)
+		}
 		in.AmendmentKey = key
-
 		_, err := svc.Issue(context.Background(), in)
-		require.Error(t, err, "%q is a key the journal cannot place", key)
+		return err
+	}
+	refused := map[string]models.Kind{
+		"exchange_funded:exch_1": models.KindRefund, "exchange_refunded:re_1": models.KindRefund,
+		"order_placed:order_1": models.KindRefund, "credit_1": models.KindRefund,
+		"credit_line:": models.KindRefund, "credit_line:  ": models.KindRefund,
+		":ocl_1": models.KindRefund, "Credit_line:ocl_1": models.KindRefund,
+		// The kind fits the other kind of document.
+		"delivery_upgraded:dc_1": models.KindRefund, "credit_line:ocl_1": models.KindSale,
+		"return_refunded:re_1": models.KindSale,
+		// The id carries spaces the journal would look up as they are.
+		"credit_line: ocl_1": models.KindRefund, "credit_line:ocl_1 ": models.KindRefund,
+	}
+	for key, document := range refused {
+		err := issue(t, document, key)
+		require.Error(t, err, "%q on a %s is a key the journal cannot place", key, document)
 		assert.True(t, errors.IsInvalid(err), "%q: %v", key, err)
 		assert.Equal(t, service.CodeInvalidInput, errors.CodeOf(err))
 	}
 
-	for _, kind := range models.AmendmentActKinds {
-		svc := newService(newFakeRepo())
-		sale := issuedSale(t, svc)
-		in := refundOf(sale, 120, 20)
-		if kind == "delivery_upgraded" {
-			in = chargeOf(sale, 120, 20, false)
-		}
-		in.AmendmentKey = kind + ":act_1"
-
-		_, err := svc.Issue(context.Background(), in)
-		require.NoError(t, err, "%s is a kind the journal places", kind)
+	for _, act := range models.AmendmentActKinds() {
+		document, ok := models.AmendmentActDocument(act)
+		require.True(t, ok, act)
+		require.NoError(t, issue(t, document, act+":act_1"), "%s on a %s is a key the journal places", act, document)
 	}
 }
 

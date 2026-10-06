@@ -115,9 +115,11 @@ func describeOrderJournal(d *openapi.Doc) {
 			"\"tax_correction_voided\" entry at that moment books the same lines the other way. " +
 			"An act no document names, and a document that names no act, correct no tax. " +
 			"issued_at is the issuing process's clock and the voiding the database's. A " +
-			"document whose act cannot be found, or whose currency is not its order's, makes " +
-			"the read of any window holding its moments answer 500 rather than leave its tax " +
-			"out; the invoice module refuses a key naming an act this journal does not book. " +
+			"document whose act cannot be found, whose kind does not fit its act's, or whose " +
+			"currency is not its order's, makes the read of any window holding its moments " +
+			"answer 500 rather than leave its tax out; the invoice module refuses a key whose " +
+			"kind this journal does not book for that kind of document, or whose id has spaces " +
+			"around it. " +
 			"\n\n" +
 			"receivable is the payment module's account too (GET /admin/v1/payment-journal): " +
 			"a capture credits it and a refund debits it, so the two journals together close " +

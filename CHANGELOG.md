@@ -264,11 +264,12 @@ design. It is fixed with `1.0.0`.
   `CausedRefundsByIDJSON`; an embedder's order wiring that resolves
   `payment.interop` as the journal's refunds needs the new method. An
   amendment issued through the invoice module's `IssueJSON` with an
-  `amendment_key` that is not `<kind>:<act id>`, the kind one of
-  `credit_line`, `delivery_changed`, `delivery_upgraded`, `return_refunded`
-  or `claim_refunded`, answers 422 `invoice_invalid_input`: the journal
-  could not place it, and a document it cannot place makes the read of any
-  window holding its moments answer 500.
+  `amendment_key` that is not `<kind>:<act id>` answers 422
+  `invoice_invalid_input` unless the kind is `delivery_upgraded` on a sale,
+  or `credit_line`, `delivery_changed`, `return_refunded` or
+  `claim_refunded` on a refund, and the id has no spaces around it: the
+  journal could not place it, and a document it cannot place makes the read
+  of any window holding its moments answer 500.
 
 - **A return's parcel is opened from its return** (ADR 0413, D266). **For
   operators:** the order page lists each return's parcels under the return and,

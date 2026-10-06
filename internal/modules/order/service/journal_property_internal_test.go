@@ -23,7 +23,7 @@ var (
 	// act kind a key can name and one it cannot, and over both document kinds
 	// and one that is neither.
 	correctionKinds = []models.JournalKind{models.JournalTaxCorrected, models.JournalTaxCorrectionVoided}
-	correctedActs   = append(append([]models.JournalKind{}, DocumentedActs...),
+	correctedActs   = append(append([]models.JournalKind{}, documentedActs...),
 		models.JournalExchangeRefunded, "not_an_act")
 	documentKinds = []string{documentRefund, documentSale, "not_a_document"}
 )

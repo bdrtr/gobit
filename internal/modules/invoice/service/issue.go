@@ -357,14 +357,15 @@ func (in IssueInput) validateAmendment() error {
 		return errors.Invalid(CodeInvalidInput, "an act's key is carried only by an amendment")
 	case in.AmendmentKey != "" && strings.TrimSpace(in.AmendmentKey) == "":
 		return errors.Invalid(CodeInvalidInput, "an act's key cannot be blank")
-	case in.AmendmentKey != "" && !models.PlaceableAmendmentKey(in.AmendmentKey):
+	case in.AmendmentKey != "" && !models.PlaceableAmendmentKey(in.AmendmentKey, in.Kind):
 		// The order journal books the document's tax against the act its key
-		// names, and refuses every read of a window holding a document it
-		// cannot place (ADR 0419), so such a key is refused here, before any
-		// document carries it.
+		// names, on the side its document's kind gives, and refuses every read
+		// of a window holding a document it cannot place (ADR 0419), so such a
+		// key is refused here, before any document carries it.
 		return errors.Invalid(CodeInvalidInput,
-			"an act's key is \"<kind>:<act id>\" with a kind in %v, %q given",
-			models.AmendmentActKinds, in.AmendmentKey)
+			"a %s document's key is \"<kind>:<act id>\", with a kind of act a %s documents among %v "+
+				"and an id without spaces around it, %q given",
+			in.Kind, in.Kind, models.AmendmentActKinds(), in.AmendmentKey)
 	}
 	if !amends {
 		for i := range in.Lines {

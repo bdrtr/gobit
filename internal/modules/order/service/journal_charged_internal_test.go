@@ -143,7 +143,7 @@ func TestOnlyADearerDeliveryAndAnExchangeChargeAfterTheSale(t *testing.T) {
 func auditCorrection(t *testing.T, kind models.JournalKind) {
 	t.Helper()
 
-	for _, act := range DocumentedActs {
+	for _, act := range documentedActs {
 		document, account := documentRefund, givenBackTo[act]
 		if act == models.JournalDeliveryUpgraded {
 			document, account = documentSale, chargedTo[act]

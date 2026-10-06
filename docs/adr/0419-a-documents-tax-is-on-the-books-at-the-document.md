@@ -45,12 +45,14 @@ and a document naming no act correct no tax.
   only that write moves.
 - The journal reads the invoice module's documents and, for a refund's act,
   the payment module's refund by id; without the invoice module it books none.
-- A document whose act the journal cannot find, or whose currency is not its
-  order's, refuses every read of a window holding its moments until its
-  retention ends, rather than leave its tax out. The invoice module refuses a
-  key naming a kind the journal does not book, and the invoicing flow keys
-  only its order's acts in the order's currency, so no writer in the tree
-  makes one; unregistering the payment module under a documented refund would.
+- A document whose act the journal cannot find, whose kind does not fit its
+  act's, or whose currency is not its order's, refuses every read of a window
+  holding its moments until its retention ends, rather than leave its tax out.
+  The invoice module refuses a key the journal could not place: a kind it does
+  not book for that kind of document, or an id with spaces around it. The
+  invoicing flow keys only its order's acts in the order's currency, so no
+  writer in the tree makes one; unregistering the payment module under a
+  documented refund would.
 - An order canceled under a live refund document owes negative tax on these
   books; cancel the refund document, then the sale.
 - A document issued on the admin route naming no act gives back tax the books

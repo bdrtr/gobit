@@ -13,6 +13,7 @@
 package models
 
 import (
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -73,22 +74,42 @@ func (r AmendmentReason) Fits(kind Kind) bool {
 // String returns the reason as text.
 func (r AmendmentReason) String() string { return string(r) }
 
-// AmendmentActKinds are the kinds of act an amendment's key may name: the
-// order journal's kinds of the acts the invoicing flow documents (ADR 0406).
-// The journal finds a document's act by its key to book the document's tax,
-// and a document it cannot place refuses every read of its window (ADR 0419),
-// so a key naming another kind is refused when it is written. internal/arch
-// binds the list to the order journal's.
-var AmendmentActKinds = []string{
-	"credit_line", "delivery_changed", "delivery_upgraded", "return_refunded", "claim_refunded",
+// amendmentActDocuments maps each kind of act an amendment's key may name to
+// the kind of document that documents it: the order journal's kinds of the
+// acts the invoicing flow documents (ADR 0406), a dearer delivery on a sale
+// and every amount given back on a refund. The journal finds a document's act
+// by its key to book the document's tax, and a document it cannot place
+// refuses every read of its window (ADR 0419), so a key it could not place is
+// refused when it is written. internal/arch binds the map to the journal's.
+var amendmentActDocuments = map[string]Kind{
+	"credit_line":       KindRefund,
+	"delivery_changed":  KindRefund,
+	"delivery_upgraded": KindSale,
+	"return_refunded":   KindRefund,
+	"claim_refunded":    KindRefund,
+}
+
+// AmendmentActKinds returns the kinds of act an amendment's key may name, in
+// order; the slice is the caller's.
+func AmendmentActKinds() []string {
+	return slices.Sorted(maps.Keys(amendmentActDocuments))
+}
+
+// AmendmentActDocument returns the kind of document an act of the kind is
+// documented on, and false for a kind no amendment's key may name.
+func AmendmentActDocument(act string) (Kind, bool) {
+	kind, ok := amendmentActDocuments[act]
+	return kind, ok
 }
 
 // PlaceableAmendmentKey reports whether an amendment's key is "<kind>:<act
-// id>", with a kind in [AmendmentActKinds] and an id that is not blank.
-func PlaceableAmendmentKey(key string) bool {
-	kind, id, ok := strings.Cut(key, ":")
+// id>" with a kind documented on a document of the given kind and an id that
+// is neither blank nor padded: the journal looks the id up as it is written.
+func PlaceableAmendmentKey(key string, document Kind) bool {
+	act, id, ok := strings.Cut(key, ":")
+	want, known := amendmentActDocuments[act]
 
-	return ok && strings.TrimSpace(id) != "" && slices.Contains(AmendmentActKinds, kind)
+	return ok && known && want == document && id != "" && strings.TrimSpace(id) == id
 }
 
 // Status is where the document is in its life.
