@@ -684,8 +684,9 @@ past and is not corrected retroactively.
   rank is filled from nowhere, and a line whose claim the checkout failed to
   record and an order placed before the upgrade have none. A claim the checkout
   recorded but could not settle (a warning on its answer) still owes the units
-  written off before it. A filled claim opens no parcel, and no date is
-  promised (ADR 0048).
+  written off before it. A filled claim opens no parcel, no date is promised,
+  and nothing caps how many units are sold ahead of a receipt
+  ([ADR 0425](adr/0425-selling-ahead-of-stock-is-a-backordered-line.md)).
 - **A restock date is an estimate.** `restock_expected_at` is the first moment
   expected supplier receipts leave units for sale at the request's warehouses
   after waiting backorders take theirs
@@ -735,7 +736,9 @@ past and is not corrected retroactively.
   keeps no history at all. Nothing records what a dispute would ask for beyond
   the order either, such as the buyer's IP, the carrier's checkpoints or what
   the customer was sent
-  ([measurement 0170](measurements/0170-what-the-timeline-left-out.md)).
+  ([measurement 0170](measurements/0170-what-the-timeline-left-out.md)), and
+  gobit assembles no dispute file
+  ([ADR 0427](adr/0427-a-cart-keeps-no-past-and-gobit-files-no-dispute.md)).
 - **A read at the edge of "now" can miss a row that commits a moment later.**
   A row's moment is taken when it is written and its transaction commits after
   it. [ADR 0241](adr/0241-a-row-written-under-a-lock-is-stamped-when-written.md)
@@ -1085,7 +1088,10 @@ past and is not corrected retroactively.
   line's cost and the placed margin on the order page and the margin on the
   order list, and writes a variant's cost one currency at a time
   ([ADR 0412](adr/0412-the-panel-shows-what-an-orders-goods-cost.md)); the
-  sales report and the CSV export and import carry neither.
+  sales report and the CSV export and import carry neither. No other margin is
+  kept: no provider's fee, carrier's cost, after-sale margin or cost of goods
+  in the journal
+  ([ADR 0426](adr/0426-the-margin-gobit-keeps-is-the-placed-margin.md)).
 
 - **The in-process harness consumes events like a server.** `InProcess` opens the
   whole application, so its modules subscribe — which is what a test wants, and

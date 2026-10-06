@@ -1704,6 +1704,27 @@ design. It is fixed with `1.0.0`.
 
 ### Decisions
 
+- **Selling ahead of stock is a backordered line** (ADR 0425). **For
+  operators:** a pre-order is a variant with `allow_backorder` and an expected
+  supplier receipt; the storefront shows `restock_expected_at` and the
+  option's days as an estimate, no order keeps a promised date, no level goes
+  below zero and nothing caps the units sold ahead. The stock alert mails when
+  the variant is in stock, not when a receipt is expected, which
+  `TestAnExpectedReceiptMailsNoStockAlert` now holds.
+
+- **The margin gobit keeps is the placed margin** (ADR 0426). **For
+  operators:** `placed_margin` is an order's goods sold less the costs its
+  lines kept when it was placed; gobit records no payment fee, carrier cost,
+  after-sale margin or cost of goods in the journal. It reopens when a provider
+  plugin reports a fee or a cost, or the inventory module keeps a value per
+  unit.
+
+- **A cart keeps no past, and gobit files no dispute** (ADR 0427). **For
+  integrators:** a cart is overwritten in place and an order keeps what was
+  sold; a chargeback is answered from the order, its as-of read, its timeline,
+  its invoices and its parcels, with the embedder's own edge logs. It reopens
+  when a payment provider plugin reports a dispute to gobit.
+
 - **GraphQL reads the catalog and nothing else** (ADR 0414). **For
   integrators:** `POST /store/v1/graphql` keeps no mutation and gains no cart,
   checkout, order or customer type; those stay REST. It reopens when a client
