@@ -219,7 +219,9 @@ design. It is fixed with `1.0.0`.
   integrators:** the manual fulfillment provider's refusal of a shipment
   with no reference says "the reference is required"; its code,
   `fulfillment_manual_invalid_input`, is unchanged, and a client matching on the
-  message text has to match the new one. **For contributors:** the language
+  message text has to match the new one. The order and inventory query
+  providers' refusal of an unknown filter says "the %q entity does not support
+  the %q filter", as the cart's and payment's do. **For contributors:** the language
   gate reads every Go comment and string literal for the stems it already
   read in names, so Turkish data kept on purpose takes an entry in
   `diacriticDataExemptions` with its reason.

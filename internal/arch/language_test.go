@@ -163,6 +163,11 @@ const turkishLetters = "çğıöşüÇĞİÖŞÜ"
 // "olmayan", "gizli" and "degistirildi" in test data). Each was measured the
 // same way, as a whole word in the 7710 Go files of the go1.26.6 standard
 // library, and each had zero hits.
+//
+// "desteklemiyor" and "filtresini" came after it (D263): the order and inventory
+// query providers refused an unknown filter with "%q entity'si %q filtresini
+// desteklemiyor", which the stem list did not reach. Both had zero hits in the
+// 7711 Go files of the same library.
 var safeTurkishWords = []string{
 	"bir",
 	"cunku", "çünkü",
@@ -174,6 +179,8 @@ var safeTurkishWords = []string{
 	"yalnizca", "yalnızca",
 	"yok",
 	"degistirildi", "değiştirildi",
+	"desteklemiyor",
+	"filtresini",
 	"gizli",
 	"olmayan",
 	"zorunlu",

@@ -181,7 +181,7 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 			in.RequiresShipping = &flag
 		default:
 			return nil, errors.Invalid(CodeInvalidInput,
-				"%q entity'si %q filtresini desteklemiyor", EntityName, name)
+				"the %q entity does not support the %q filter", EntityName, name)
 		}
 	}
 
