@@ -176,6 +176,42 @@ func TestAKeyNeedsASale(t *testing.T) {
 	}
 }
 
+// TestAKeyNamesAnActTheJournalPlaces: the order journal books a document's tax
+// against the act its key names and refuses every read of a window holding a
+// document it cannot place (ADR 0419), so a key that is not "<kind>:<act id>"
+// with a kind the journal places is refused before any document carries it,
+// and every kind it places is taken.
+func TestAKeyNamesAnActTheJournalPlaces(t *testing.T) {
+	t.Parallel()
+
+	for _, key := range []string{
+		"exchange_funded:exch_1", "exchange_refunded:re_1", "order_placed:order_1", "credit_1",
+		"credit_line:", "credit_line:  ", ":ocl_1", "Credit_line:ocl_1",
+	} {
+		svc := newService(newFakeRepo())
+		in := refundOf(issuedSale(t, svc), 120, 20)
+		in.AmendmentKey = key
+
+		_, err := svc.Issue(context.Background(), in)
+		require.Error(t, err, "%q is a key the journal cannot place", key)
+		assert.True(t, errors.IsInvalid(err), "%q: %v", key, err)
+		assert.Equal(t, service.CodeInvalidInput, errors.CodeOf(err))
+	}
+
+	for _, kind := range models.AmendmentActKinds {
+		svc := newService(newFakeRepo())
+		sale := issuedSale(t, svc)
+		in := refundOf(sale, 120, 20)
+		if kind == "delivery_upgraded" {
+			in = chargeOf(sale, 120, 20, false)
+		}
+		in.AmendmentKey = kind + ":act_1"
+
+		_, err := svc.Issue(context.Background(), in)
+		require.NoError(t, err, "%s is a kind the journal places", kind)
+	}
+}
+
 // TestAnAmendmentAmendsOnlyALiveSale walks every refusal of the sale named and
 // of the rows named, and every status an amendment may follow.
 func TestAnAmendmentAmendsOnlyALiveSale(t *testing.T) {

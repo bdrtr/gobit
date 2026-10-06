@@ -412,6 +412,9 @@ type Store interface {
 	// JournalCauses reads which order each return or claim id belongs to
 	// (ADR 0189); an id that is neither has no row.
 	JournalCauses(ctx context.Context, ids []string) ([]models.JournalCause, error)
+	// JournalActOrders reads which order each credit line and delivery change
+	// id belongs to (ADR 0419); an id that is neither has no row.
+	JournalActOrders(ctx context.Context, creditLineIDs, changeIDs []string) ([]models.JournalActOrder, error)
 	// OrderAfterSaleCauses reads the order's returns, claims and exchanges,
 	// at most limit+1 of them (ADR 0406).
 	OrderAfterSaleCauses(ctx context.Context, orderID string, limit int32) ([]models.AfterSaleCause, error)

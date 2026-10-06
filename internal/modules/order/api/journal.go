@@ -88,7 +88,8 @@ func describeOrderJournal(d *openapi.Doc) {
 
 	d.Describe(http.MethodGet, pathAdminOrderJournal, openapi.Operation{
 		Summary: "Reads the order module's facts as double-entry journal entries.",
-		Description: "Every entry is DERIVED from a record the module keeps and never deletes. " +
+		Description: "Every entry is DERIVED from a record that is never deleted: the module's " +
+			"own, a refund the payment module keeps, or a document the invoice module keeps. " +
 			"An order placed debits receivable with its total and sales_discounts with its " +
 			"discount, and credits sales with its subtotal, tax_payable with its tax and " +
 			"shipping with its shipping; an order canceled is the same lines the other way; a " +
@@ -104,6 +105,19 @@ func describeOrderJournal(d *openapi.Doc) {
 			"entry at the funding that debits receivable and credits sales, and a refund " +
 			"that names the exchange is an \"exchange_refunded\" entry, the same lines the " +
 			"other way. A zero amount writes no line, and an order of nothing is no entry. " +
+			"\n\n" +
+			"A document amending the order's invoice that names one of these acts is a " +
+			"\"tax_corrected\" entry under the document's id, at the document's issued_at: a " +
+			"refund document debits tax_payable and credits the account its act was booked to " +
+			"(credit_allowances, shipping, sales_returns or claim_allowances) with the tax it " +
+			"gave back, and a sale document debits shipping and credits tax_payable with the " +
+			"tax it charged. When the document is rejected or canceled, a " +
+			"\"tax_correction_voided\" entry at that moment books the same lines the other way. " +
+			"An act no document names, and a document that names no act, correct no tax. " +
+			"issued_at is the issuing process's clock and the voiding the database's. A " +
+			"document whose act cannot be found, or whose currency is not its order's, makes " +
+			"the read of any window holding its moments answer 500 rather than leave its tax " +
+			"out; the invoice module refuses a key naming an act this journal does not book. " +
 			"\n\n" +
 			"receivable is the payment module's account too (GET /admin/v1/payment-journal): " +
 			"a capture credits it and a refund debits it, so the two journals together close " +

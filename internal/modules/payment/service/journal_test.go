@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -54,6 +55,27 @@ func (f *fakeStore) CausedRefundsOf(
 	for _, refund := range f.caused {
 		for _, reference := range references {
 			if refund.Reference == reference {
+				out = append(out, refund)
+			}
+		}
+	}
+
+	return out, nil
+}
+
+// CausedRefundsByID returns the scripted refunds with one of the ids, and
+// records what it was asked for (ADR 0419).
+func (f *fakeStore) CausedRefundsByID(
+	_ context.Context, ids []string, _ int32,
+) ([]models.CausedRefund, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.causedAsked = append(f.causedAsked, ids...)
+	out := []models.CausedRefund{}
+	for _, refund := range f.caused {
+		for _, id := range ids {
+			if refund.ID == id {
 				out = append(out, refund)
 			}
 		}
@@ -322,4 +344,36 @@ func TestCausedRefundsOfAsksOnlyForCauses(t *testing.T) {
 	store.caused = many
 	_, err = svc.CausedRefundsOf(t.Context(), []string{"ret_many"})
 	assert.True(t, errors.IsInvalid(err), "past the ceiling: %v", err)
+}
+
+// TestCausedRefundsByIDAsksOnlyForIDs: a blank id names nothing and asks the
+// store nothing, the ids asked for reach the store trimmed, and more ids than
+// the journal's ceiling are refused rather than cut (ADR 0419).
+func TestCausedRefundsByIDAsksOnlyForIDs(t *testing.T) {
+	t.Parallel()
+
+	svc, store := journalService(t)
+	store.caused = []models.CausedRefund{
+		{ID: "refund_1", Reference: "ret_1", Amount: 500, CurrencyCode: "TRY"},
+		{ID: "refund_2", Reference: "clm_1", Amount: 300, CurrencyCode: "TRY"},
+	}
+
+	none, err := svc.CausedRefundsByID(t.Context(), []string{"", "  "})
+	require.NoError(t, err)
+	assert.Empty(t, none)
+	assert.Empty(t, store.causedAsked, "no id asks the store nothing")
+
+	refunds, err := svc.CausedRefundsByID(t.Context(), []string{" refund_1 ", " "})
+	require.NoError(t, err)
+	assert.Equal(t, store.caused[:1], refunds)
+	assert.Equal(t, []string{"refund_1"}, store.causedAsked)
+
+	many := make([]string, service.MaxJournalEntries+1)
+	for i := range many {
+		many[i] = fmt.Sprintf("refund_%d", i)
+	}
+	_, err = svc.CausedRefundsByID(t.Context(), many)
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalid(err), "%v", err)
+	assert.Equal(t, []string{"refund_1"}, store.causedAsked, "more ids than the ceiling ask the store nothing")
 }

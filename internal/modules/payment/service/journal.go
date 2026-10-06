@@ -301,3 +301,28 @@ func (s *Service) CausedRefundsOf(ctx context.Context, references []string) ([]m
 
 	return refunds, nil
 }
+
+// CausedRefundsByID returns the refunds with the given ids that name the
+// record that caused them, whenever they were made, oldest first (ADR 0419).
+//
+// The order journal reads it to find the order a documented return's or
+// claim's refund belongs to: the amending document names the refund, and the
+// refund names its cause. A blank id names nothing, and more than
+// [MaxJournalEntries] ids, the journal's ceiling, are refused rather than cut.
+func (s *Service) CausedRefundsByID(ctx context.Context, ids []string) ([]models.CausedRefund, error) {
+	wanted := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id = strings.TrimSpace(id); id != "" {
+			wanted = append(wanted, id)
+		}
+	}
+	if len(wanted) == 0 {
+		return nil, nil
+	}
+	if len(wanted) > MaxJournalEntries {
+		return nil, errors.Invalid(CodeInvalidInput,
+			"at most %d refunds are read by id at a time", MaxJournalEntries)
+	}
+
+	return s.store.CausedRefundsByID(ctx, wanted, MaxJournalEntries)
+}

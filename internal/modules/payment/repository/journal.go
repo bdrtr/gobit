@@ -172,3 +172,27 @@ func (r *Repository) CausedRefundsOf(
 
 	return out, nil
 }
+
+// CausedRefundsByID reads the refunds with the given ids that name a cause, at
+// most limit+1 of them, oldest first (ADR 0419).
+func (r *Repository) CausedRefundsByID(
+	ctx context.Context, ids []string, limit int32,
+) ([]models.CausedRefund, error) {
+	rows, err := r.queries(ctx).CausedRefundsByID(ctx, paymentdb.CausedRefundsByIDParams{
+		Ids: ids, RowLimit: limit + 1,
+	})
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "the refunds with the given ids could not be read")
+	}
+
+	out := make([]models.CausedRefund, 0, len(rows))
+	for i := range rows {
+		out = append(out, models.CausedRefund{
+			ID: rows[i].ID, Reference: rows[i].Reference, Amount: rows[i].Amount,
+			CurrencyCode: rows[i].CurrencyCode, CollectionID: rows[i].PaymentCollectionID,
+			RefundedAt: toTime(rows[i].CreatedAt),
+		})
+	}
+
+	return out, nil
+}

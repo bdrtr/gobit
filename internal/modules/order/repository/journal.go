@@ -128,6 +128,42 @@ func (r *Repository) JournalCauses(ctx context.Context, ids []string) ([]models.
 	return out, nil
 }
 
+// JournalActOrders reads which order each of the given credit lines and
+// delivery changes belongs to, and its currency (ADR 0419). An id that is
+// neither has no row.
+func (r *Repository) JournalActOrders(
+	ctx context.Context, creditLineIDs, changeIDs []string,
+) ([]models.JournalActOrder, error) {
+	if len(creditLineIDs) == 0 && len(changeIDs) == 0 {
+		return []models.JournalActOrder{}, nil
+	}
+	rows, err := r.queries(ctx).JournalActOrders(ctx, orderdb.JournalActOrdersParams{
+		CreditLineIds: nonNilStrings(creditLineIDs), ChangeIds: nonNilStrings(changeIDs),
+	})
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "the orders of the documented acts could not be read")
+	}
+
+	out := make([]models.JournalActOrder, 0, len(rows))
+	for i := range rows {
+		out = append(out, models.JournalActOrder{
+			ID: rows[i].ID, Kind: rows[i].Kind, OrderID: rows[i].OrderID, CurrencyCode: rows[i].CurrencyCode,
+		})
+	}
+
+	return out, nil
+}
+
+// nonNilStrings turns a nil list into an empty one: pgx sends a nil slice as
+// NULL, and `= ANY (NULL)` matches nothing only by accident of three-valued
+// logic.
+func nonNilStrings(ids []string) []string {
+	if ids == nil {
+		return []string{}
+	}
+	return ids
+}
+
 // OrderAfterSaleCauses reads the order's returns, claims and exchanges, with
 // when each exchange's difference was funded, at most limit+1 of them
 // (ADR 0406).

@@ -288,6 +288,9 @@ type Store interface {
 	// CausedRefundsOf reads the refunds that name one of the causes, at most
 	// limit+1 of them (ADR 0406).
 	CausedRefundsOf(ctx context.Context, references []string, limit int32) ([]models.CausedRefund, error)
+	// CausedRefundsByID reads the refunds with the given ids that name a
+	// cause, at most limit+1 of them (ADR 0419).
+	CausedRefundsByID(ctx context.Context, ids []string, limit int32) ([]models.CausedRefund, error)
 	// UpdatePaymentCollectionTotals writes the amounts and the derived status
 	// with ABSOLUTE values.
 	UpdatePaymentCollectionTotals(

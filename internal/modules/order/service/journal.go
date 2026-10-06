@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
@@ -46,7 +47,12 @@ func (s *Service) Journal(ctx context.Context, q JournalQuery) (Journal, error) 
 	if q.From.IsZero() || q.To.IsZero() {
 		return Journal{}, errors.Invalid(CodeInvalidInput, "the journal needs both ends of its window")
 	}
-	from, to := q.From.UTC(), q.To.UTC()
+	// The bounds are cut to the microsecond the database stores before any
+	// read. The driver cuts them for the queries, and the documents are read
+	// back and filtered again here: two filters at two precisions would let a
+	// document stamped at a bound's microsecond fall between two adjacent
+	// windows (ADR 0419).
+	from, to := q.From.UTC().Truncate(time.Microsecond), q.To.UTC().Truncate(time.Microsecond)
 	if !from.Before(to) {
 		return Journal{}, errors.Invalid(CodeInvalidInput,
 			"the journal's window has to end after it begins: %s is not before %s",
@@ -74,6 +80,11 @@ func (s *Service) Journal(ctx context.Context, q JournalQuery) (Journal, error) 
 		return Journal{}, err
 	}
 	facts = append(facts, refunded...)
+	documented, err := s.documentFacts(ctx, from, to, currency)
+	if err != nil {
+		return Journal{}, err
+	}
+	facts = append(facts, documented...)
 	if len(facts) > MaxJournalEntries {
 		return Journal{}, errors.Invalid(CodeInvalidInput,
 			"the window holds more than %d facts; ask for a narrower one", MaxJournalEntries)
@@ -114,13 +125,18 @@ func journalEntries(facts []models.JournalFact) ([]models.JournalEntry, error) {
 	return entries, nil
 }
 
-// kindOrder puts a placement before the cancellation of the same order.
+// kindOrder puts a placement before the cancellation of the same order, and a
+// document's correction before its voiding.
 func kindOrder(kind models.JournalKind) int {
 	switch kind {
 	case models.JournalOrderPlaced:
 		return 0
 	case models.JournalOrderCanceled:
 		return 1
+	case models.JournalTaxCorrected:
+		return 3
+	case models.JournalTaxCorrectionVoided:
+		return 4
 	default:
 		return 2
 	}
@@ -139,6 +155,14 @@ func kindOrder(kind models.JournalKind) int {
 //	delivery upgraded Dr receivable          Cr shipping
 //	exchange funded   Dr receivable          Cr sales
 //	exchange refunded Dr sales               Cr receivable
+//	tax corrected     a refund document: Dr tax_payable   Cr the act's account
+//	                  a sale document:   Dr the act's account   Cr tax_payable
+//	correction voided the same lines, the other way
+//
+// A tax correction is an amending document that names an act (ADR 0419): its
+// tax_total leaves the account the act was booked to whole, at the document's
+// issued_at, and goes back at its voided_at. The act's account is the one
+// [givenBackTo] or [chargedTo] names for the act's kind.
 //
 // An order balances because its table holds it to
 // total = subtotal - discount_total + tax_total + shipping_total; the entry is
@@ -209,12 +233,68 @@ func journalEntry(f *models.JournalFact) (models.JournalEntry, error) {
 			{Account: models.AccountReceivable, Debit: f.Amount},
 			{Account: chargedTo[f.Kind], Credit: f.Amount},
 		}
+	case models.JournalTaxCorrected, models.JournalTaxCorrectionVoided:
+		lines, err := taxCorrectionLines(f)
+		if err != nil {
+			return models.JournalEntry{}, err
+		}
+		entry.Lines = lines
 	default:
 		return models.JournalEntry{}, errors.Internal(CodeInvalidInput,
 			"the journal read a fact of an unknown kind %q (%s)", f.Kind, f.ID)
 	}
 
 	return entry, nil
+}
+
+// taxCorrectionLines are a document's correction (ADR 0419): a refund document
+// takes its tax off tax_payable and off the account its act gave back from, a
+// sale document puts it on tax_payable and takes it out of the account its act
+// charged to, and a voiding reverses either. A document that moved no tax
+// writes no line, and is held to the same kinds as one that did: the journal
+// refuses what it cannot place whatever it would have written.
+func taxCorrectionLines(f *models.JournalFact) ([]models.JournalLine, error) {
+	if f.Amount < 0 {
+		return nil, errors.Internal(CodeInvalidInput,
+			"the journal read document %s with a negative tax of %d", f.ID, f.Amount)
+	}
+
+	var lines []models.JournalLine
+	switch f.DocumentKind {
+	case documentRefund:
+		account, ok := givenBackTo[f.ActKind]
+		if !ok {
+			return nil, errors.Internal(CodeInvalidInput,
+				"the journal read refund document %s naming a %s act, which gives nothing back", f.ID, f.ActKind)
+		}
+		lines = []models.JournalLine{
+			{Account: models.AccountTaxPayable, Debit: f.Amount},
+			{Account: account, Credit: f.Amount},
+		}
+	case documentSale:
+		account, ok := chargedTo[f.ActKind]
+		if !ok {
+			return nil, errors.Internal(CodeInvalidInput,
+				"the journal read sale document %s naming a %s act, which charges nothing", f.ID, f.ActKind)
+		}
+		lines = []models.JournalLine{
+			{Account: account, Debit: f.Amount},
+			{Account: models.AccountTaxPayable, Credit: f.Amount},
+		}
+	default:
+		return nil, errors.Internal(CodeInvalidInput,
+			"the journal read document %s of an unknown kind %q", f.ID, f.DocumentKind)
+	}
+	if f.Amount == 0 {
+		return nil, nil
+	}
+	if f.Kind == models.JournalTaxCorrectionVoided {
+		for i := range lines {
+			lines[i].Debit, lines[i].Credit = lines[i].Credit, lines[i].Debit
+		}
+	}
+
+	return lines, nil
 }
 
 // trialBalance sums the entries per currency and account, in a stable order.
@@ -278,9 +358,13 @@ var chargedTo = map[models.JournalKind]models.JournalAccount{
 //
 // CausedRefundsOfJSON answers the same array for the refunds that name one of
 // the given causes, whenever they were made (ADR 0406).
+//
+// CausedRefundsByIDJSON answers it for the refunds with the given ids, which is
+// how the journal finds the order a documented refund belongs to (ADR 0419).
 type CausedRefunds interface {
 	CausedRefundsJSON(ctx context.Context, from, to time.Time, currencyCode string) (json.RawMessage, error)
 	CausedRefundsOfJSON(ctx context.Context, references []string) (json.RawMessage, error)
+	CausedRefundsByIDJSON(ctx context.Context, ids []string) (json.RawMessage, error)
 }
 
 // causedRefund is one element of [CausedRefunds.CausedRefundsJSON]'s answer.
@@ -295,8 +379,12 @@ type causedRefund struct {
 	RefundedAt   time.Time `json:"refunded_at"`
 }
 
-// causeExchange is the kind of cause an exchange is (ADR 0189, 0203).
-const causeExchange = "exchange"
+// causeExchange is the kind of cause an exchange is (ADR 0189, 0203), and
+// causeClaim the kind a claim is.
+const (
+	causeExchange = "exchange"
+	causeClaim    = "claim"
+)
 
 // refundFacts reads the refunds in the window that name one of this module's
 // returns or claims, as facts on the order they belong to (ADR 0189).
@@ -351,7 +439,7 @@ func (s *Service) refundFacts(
 		}
 		kind := models.JournalReturnRefunded
 		switch cause.Kind {
-		case "claim":
+		case causeClaim:
 			kind = models.JournalClaimRefunded
 		case causeExchange:
 			kind = models.JournalExchangeRefunded
@@ -363,4 +451,208 @@ func (s *Service) refundFacts(
 	}
 
 	return facts, nil
+}
+
+// DocumentedTax is the surface of the invoice module ("invoice.interop") the
+// journal reads (ADR 0419): the amending documents that name an act and were
+// issued or voided inside [from, to), as a JSON array of {id, kind,
+// amendment_key, tax_total, currency_code, issued_at, voided_at}.
+type DocumentedTax interface {
+	DocumentedTaxJSON(ctx context.Context, from, to time.Time, currencyCode string) (json.RawMessage, error)
+}
+
+// documentedTax is one element of [DocumentedTax.DocumentedTaxJSON]'s answer.
+// The field names are the invoice module's, written here because this module
+// cannot import that one; the e2e books test holds the two spellings together.
+type documentedTax struct {
+	ID           string     `json:"id"`
+	Kind         string     `json:"kind"`
+	AmendmentKey string     `json:"amendment_key"`
+	TaxTotal     int64      `json:"tax_total"`
+	CurrencyCode string     `json:"currency_code"`
+	IssuedAt     time.Time  `json:"issued_at"`
+	VoidedAt     *time.Time `json:"voided_at"`
+}
+
+// The invoice module's document kinds a correction reads (ADR 0406): a refund
+// gives tax back, a sale charges it.
+const (
+	documentRefund = "refund"
+	documentSale   = "sale"
+)
+
+// DocumentedActs are the act kinds a document can name: what the invoicing
+// flow documents (ADR 0406). An exchange is on no document. The invoice module
+// refuses a key naming another kind when it is written, and internal/arch
+// binds its list to this one (ADR 0419).
+var DocumentedActs = []models.JournalKind{
+	models.JournalCreditLine, models.JournalDeliveryChanged, models.JournalDeliveryUpgraded,
+	models.JournalReturnRefunded, models.JournalClaimRefunded,
+}
+
+// actOrder is the order a document's act belongs to.
+type actOrder struct {
+	orderID, currency string
+}
+
+// documentFacts reads the amending documents issued or voided in the window
+// as facts on the order their act belongs to (ADR 0419): one at the document's
+// issued_at and, when it fell inside the window too, one at its voided_at.
+//
+// The act is found from the document's key, "<journal kind>:<act id>" as the
+// invoicing flow wrote it: a credit line or a delivery change from this
+// module's own tables, a return's or a claim's refund through the payment
+// module's refund and then its cause. A key this module cannot read, an act it
+// cannot find and a document in another currency than its order's are errors
+// rather than entries: books that silently left a correction out would balance
+// and be wrong.
+func (s *Service) documentFacts(
+	ctx context.Context, from, to time.Time, currency string,
+) ([]models.JournalFact, error) {
+	if s.docs == nil {
+		return nil, nil
+	}
+	raw, err := s.docs.DocumentedTaxJSON(ctx, from, to, currency)
+	if err != nil {
+		if errors.IsInvalid(err) {
+			// The invoice module refuses a window holding more documents than
+			// one read takes; the caller asked this module, and is answered in
+			// its code.
+			return nil, errors.Wrap(err, errors.KindInvalid, CodeInvalidInput,
+				"the window holds more documents amending its orders than one read takes; ask for a narrower one")
+		}
+		return nil, err
+	}
+	var documents []documentedTax
+	if err := json.Unmarshal(raw, &documents); err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, CodeInvalidInput,
+			"the invoice module's documents could not be read")
+	}
+	if len(documents) == 0 {
+		return nil, nil
+	}
+
+	acts := make([]models.JournalKind, len(documents))
+	ids := make([]string, len(documents))
+	var credits, changes, refunds []string
+	for i := range documents {
+		kind, id, ok := strings.Cut(documents[i].AmendmentKey, ":")
+		if !ok || id == "" || !slices.Contains(DocumentedActs, models.JournalKind(kind)) {
+			return nil, errors.Internal(CodeInvalidInput,
+				"document %s names an act this journal cannot read: %q", documents[i].ID, documents[i].AmendmentKey)
+		}
+		acts[i], ids[i] = models.JournalKind(kind), id
+		switch acts[i] {
+		case models.JournalCreditLine:
+			credits = append(credits, id)
+		case models.JournalDeliveryChanged, models.JournalDeliveryUpgraded:
+			changes = append(changes, id)
+		default:
+			refunds = append(refunds, id)
+		}
+	}
+
+	orders, err := s.actOrders(ctx, credits, changes, refunds)
+	if err != nil {
+		return nil, err
+	}
+
+	facts := make([]models.JournalFact, 0, len(documents))
+	for i := range documents {
+		document := &documents[i]
+		order, ok := orders[string(acts[i])+":"+ids[i]]
+		if !ok {
+			return nil, errors.Internal(CodeInvalidInput,
+				"document %s names %s %s, which is not one of this module's acts", document.ID, acts[i], ids[i])
+		}
+		if order.currency != document.CurrencyCode {
+			return nil, errors.Internal(CodeInvalidInput,
+				"document %s names %s %s in %s, and the order is in %s",
+				document.ID, acts[i], ids[i], document.CurrencyCode, order.currency)
+		}
+		fact := models.JournalFact{
+			ID: document.ID, Kind: models.JournalTaxCorrected, OrderID: order.orderID,
+			OccurredAt: document.IssuedAt, CurrencyCode: document.CurrencyCode, Amount: document.TaxTotal,
+			ActKind: acts[i], DocumentKind: document.Kind,
+		}
+		if within(document.IssuedAt, from, to) {
+			facts = append(facts, fact)
+		}
+		if document.VoidedAt != nil && within(*document.VoidedAt, from, to) {
+			fact.Kind, fact.OccurredAt = models.JournalTaxCorrectionVoided, *document.VoidedAt
+			facts = append(facts, fact)
+		}
+	}
+
+	return facts, nil
+}
+
+// within reports whether the moment is inside [from, to).
+func within(at, from, to time.Time) bool {
+	return !at.Before(from) && at.Before(to)
+}
+
+// actOrders finds the order each documented act belongs to, keyed by
+// "<journal kind>:<act id>". A delivery change answers for both of its kinds,
+// and a refund for the kind its cause gives it.
+func (s *Service) actOrders(
+	ctx context.Context, credits, changes, refunds []string,
+) (map[string]actOrder, error) {
+	out := make(map[string]actOrder, len(credits)+len(changes)+len(refunds))
+
+	rows, err := s.store.JournalActOrders(ctx, credits, changes)
+	if err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		order := actOrder{orderID: rows[i].OrderID, currency: rows[i].CurrencyCode}
+		switch rows[i].Kind {
+		case "credit_line":
+			out[string(models.JournalCreditLine)+":"+rows[i].ID] = order
+		default:
+			out[string(models.JournalDeliveryChanged)+":"+rows[i].ID] = order
+			out[string(models.JournalDeliveryUpgraded)+":"+rows[i].ID] = order
+		}
+	}
+
+	if len(refunds) == 0 || s.refunds == nil {
+		return out, nil
+	}
+	raw, err := s.refunds.CausedRefundsByIDJSON(ctx, refunds)
+	if err != nil {
+		return nil, err
+	}
+	var found []causedRefund
+	if err := json.Unmarshal(raw, &found); err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, CodeInvalidInput,
+			"the payment module's refunds could not be read")
+	}
+	references := make([]string, 0, len(found))
+	for i := range found {
+		references = append(references, found[i].Reference)
+	}
+	causes, err := s.store.JournalCauses(ctx, references)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[string]models.JournalCause, len(causes))
+	for i := range causes {
+		byID[causes[i].ID] = causes[i]
+	}
+	for i := range found {
+		cause, ok := byID[found[i].Reference]
+		if !ok {
+			continue
+		}
+		kind := models.JournalReturnRefunded
+		switch cause.Kind {
+		case causeClaim:
+			kind = models.JournalClaimRefunded
+		case causeExchange:
+			continue
+		}
+		out[string(kind)+":"+found[i].ID] = actOrder{orderID: cause.OrderID, currency: cause.CurrencyCode}
+	}
+
+	return out, nil
 }

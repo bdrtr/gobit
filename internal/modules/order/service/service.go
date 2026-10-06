@@ -212,6 +212,7 @@ type Service struct {
 	events   EventPublisher
 	spending SpendingPolicy
 	refunds  CausedRefunds
+	docs     DocumentedTax
 	catalog  Catalog
 	log      *slog.Logger
 	now      func() time.Time
@@ -239,6 +240,14 @@ type Options struct {
 	// When nil the journal books none, and a returned order's receivable
 	// stays open by its refund — as it did before ADR 0189.
 	Refunds CausedRefunds
+	// Documents is the invoice module's amending documents that name an act;
+	// it is OPTIONAL (ADR 0419).
+	//
+	// The journal reads it to move the tax a document gave back or charged
+	// between tax_payable and the account its act was booked to. When nil the
+	// journal books no correction, as an installation without invoices has
+	// no document to book.
+	Documents DocumentedTax
 	// Catalog is the Query-layer surface; it is OPTIONAL.
 	//
 	// It is only used to read an order's payment through the "order_payment"
@@ -288,6 +297,7 @@ func New(opts Options) (*Service, error) {
 		events:   opts.Events,
 		spending: opts.Spending,
 		refunds:  opts.Refunds,
+		docs:     opts.Documents,
 		catalog:  opts.Catalog,
 		log:      log,
 		now:      now,

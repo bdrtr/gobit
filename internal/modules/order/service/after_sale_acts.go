@@ -199,7 +199,7 @@ func (s *Service) refundActs(ctx context.Context, order models.Order, causes []m
 			Amount: refund.Amount, Documentable: true,
 		}
 		switch kind {
-		case "claim":
+		case causeClaim:
 			act.Kind = models.JournalClaimRefunded
 		case causeExchange:
 			act.Kind, act.Documentable = models.JournalExchangeRefunded, false

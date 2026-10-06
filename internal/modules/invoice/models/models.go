@@ -13,6 +13,7 @@
 package models
 
 import (
+	"slices"
 	"strings"
 	"time"
 
@@ -71,6 +72,24 @@ func (r AmendmentReason) Fits(kind Kind) bool {
 
 // String returns the reason as text.
 func (r AmendmentReason) String() string { return string(r) }
+
+// AmendmentActKinds are the kinds of act an amendment's key may name: the
+// order journal's kinds of the acts the invoicing flow documents (ADR 0406).
+// The journal finds a document's act by its key to book the document's tax,
+// and a document it cannot place refuses every read of its window (ADR 0419),
+// so a key naming another kind is refused when it is written. internal/arch
+// binds the list to the order journal's.
+var AmendmentActKinds = []string{
+	"credit_line", "delivery_changed", "delivery_upgraded", "return_refunded", "claim_refunded",
+}
+
+// PlaceableAmendmentKey reports whether an amendment's key is "<kind>:<act
+// id>", with a kind in [AmendmentActKinds] and an id that is not blank.
+func PlaceableAmendmentKey(key string) bool {
+	kind, id, ok := strings.Cut(key, ":")
+
+	return ok && strings.TrimSpace(id) != "" && slices.Contains(AmendmentActKinds, kind)
+}
 
 // Status is where the document is in its life.
 //
@@ -300,7 +319,8 @@ type Invoice struct {
 	// Quantity once its TaxTotal is taken out (ADR 0248). A provider
 	// transmitting the document reads the rows by it.
 	PricesIncludeTax bool
-	// IssuedAt is the moment the document came into being.
+	// IssuedAt is the moment the document came into being, stamped by the
+	// issuing process's clock.
 	IssuedAt time.Time
 	// ProviderID is the transmission provider that handled it; empty until one
 	// does.
@@ -317,6 +337,12 @@ type Invoice struct {
 	// AmendmentKey names the act the invoicing flow documented; one live
 	// document per key and sale. It is empty on a document issued directly.
 	AmendmentKey string
+	// VoidedAt is the moment the document was rejected or canceled, stamped by
+	// the database at the status write's transaction; nil while it stands.
+	// IssuedAt is the process's clock, so the two moments of one document are
+	// read off two clocks (ADR 0053), and nothing orders them. The order
+	// journal takes an amending document's tax back at it (ADR 0419).
+	VoidedAt *time.Time
 	// Lines are the rows of the document, in printed order.
 	Lines []Line
 	// Metadata is free structured context.

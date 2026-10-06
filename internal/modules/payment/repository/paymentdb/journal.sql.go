@@ -72,6 +72,61 @@ func (q *Queries) CausedRefunds(ctx context.Context, arg CausedRefundsParams) ([
 	return items, nil
 }
 
+const causedRefundsByID = `-- name: CausedRefundsByID :many
+SELECT r.id, r.reference, r.amount, r.created_at, p.currency_code, p.payment_collection_id
+FROM refunds r
+JOIN payments p ON p.id = r.payment_id
+WHERE r.reference <> ''
+  AND r.id = ANY ($1::text[])
+ORDER BY r.created_at, r.id
+LIMIT $2
+`
+
+type CausedRefundsByIDParams struct {
+	Ids      []string
+	RowLimit int32
+}
+
+type CausedRefundsByIDRow struct {
+	ID                  string
+	Reference           string
+	Amount              int64
+	CreatedAt           pgtype.Timestamptz
+	CurrencyCode        string
+	PaymentCollectionID string
+}
+
+// The refunds with the given ids that name a cause, whenever they were made
+// (ADR 0419): what the order journal finds a documented refund's order through,
+// since an amending document names the refund rather than its cause. A refund
+// that names no cause is not in the answer.
+func (q *Queries) CausedRefundsByID(ctx context.Context, arg CausedRefundsByIDParams) ([]CausedRefundsByIDRow, error) {
+	rows, err := q.db.Query(ctx, causedRefundsByID, arg.Ids, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CausedRefundsByIDRow{}
+	for rows.Next() {
+		var i CausedRefundsByIDRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Reference,
+			&i.Amount,
+			&i.CreatedAt,
+			&i.CurrencyCode,
+			&i.PaymentCollectionID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const causedRefundsOf = `-- name: CausedRefundsOf :many
 SELECT r.id, r.reference, r.amount, r.created_at, p.currency_code, p.payment_collection_id
 FROM refunds r

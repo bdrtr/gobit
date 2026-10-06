@@ -72,6 +72,16 @@ func fromTime(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t, Valid: true}
 }
 
+// optionalTime returns nil for a null timestamp, and the moment otherwise.
+func optionalTime(t pgtype.Timestamptz) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	at := t.Time.UTC()
+
+	return &at
+}
+
 // optional returns nil for the empty string.
 //
 // The SetInvoiceStatus query COALESCEs a null onto the existing value, so nil
@@ -163,6 +173,7 @@ func toInvoice(row invoicedb.Invoice) (models.Invoice, error) {
 		AmendsInvoiceID:  deref(row.AmendsInvoiceID),
 		AmendmentReason:  models.AmendmentReason(deref(row.AmendmentReason)),
 		AmendmentKey:     deref(row.AmendmentKey),
+		VoidedAt:         optionalTime(row.VoidedAt),
 		IssuedAt:         row.IssuedAt.Time,
 		ProviderID:       row.ProviderID,
 		ExternalID:       row.ExternalID,

@@ -1,10 +1,13 @@
 package service_test
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/invoice/models"
@@ -205,6 +208,11 @@ func (f *fakeRepo) SetStatus(
 	if externalID != "" {
 		in.ExternalID = externalID
 	}
+	if to == models.StatusRejected || to == models.StatusCanceled {
+		// The real statement stamps voided_at in the same UPDATE (ADR 0419).
+		at := time.Now().UTC()
+		in.VoidedAt = &at
+	}
 	f.invoices[id] = in
 
 	return in, nil
@@ -315,4 +323,33 @@ func (f *fakeRepo) ListNonAsciiBuyerEmailsForRefold(
 	ctx context.Context, afterID string, limit int32,
 ) ([]models.BuyerEmailHandle, error) {
 	return f.ListBuyerEmailsForRefold(ctx, afterID, limit)
+}
+
+// DocumentedTax returns the stored amending documents that name an act and
+// were issued or voided inside [from, to), oldest issue first (ADR 0419).
+func (f *fakeRepo) DocumentedTax(
+	_ context.Context, from, to time.Time, currencyCode string, limit int64,
+) ([]models.Invoice, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	in := func(at time.Time) bool { return !at.Before(from) && at.Before(to) }
+	out := []models.Invoice{}
+	for id := range f.invoices {
+		document := f.invoices[id]
+		if document.AmendmentKey == "" || (currencyCode != "" && document.CurrencyCode != currencyCode) {
+			continue
+		}
+		if in(document.IssuedAt) || (document.VoidedAt != nil && in(*document.VoidedAt)) {
+			out = append(out, document)
+		}
+	}
+	slices.SortFunc(out, func(a, b models.Invoice) int {
+		return cmp.Or(a.IssuedAt.Compare(b.IssuedAt), cmp.Compare(a.ID, b.ID))
+	})
+	if int64(len(out)) > limit {
+		out = out[:limit]
+	}
+
+	return out, nil
 }

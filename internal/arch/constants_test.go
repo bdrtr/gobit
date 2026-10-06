@@ -35,6 +35,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/inventory"
 	inventorysvc "github.com/bdrtr/gobit/internal/modules/inventory/service"
 	"github.com/bdrtr/gobit/internal/modules/invoice"
+	invoicemodels "github.com/bdrtr/gobit/internal/modules/invoice/models"
 	"github.com/bdrtr/gobit/internal/modules/notification"
 	"github.com/bdrtr/gobit/internal/modules/notification/logonly"
 	"github.com/bdrtr/gobit/internal/modules/order"
@@ -291,6 +292,22 @@ func TestTheGiftCardAccountAgrees(t *testing.T) {
 
 	assert.Equal(t, string(paymentmodels.AccountGiftCard), string(ordermodels.AccountGiftCard),
 		"the payment and order journals must spell gift_card alike")
+}
+
+// TestTheDocumentedActKindsAgree binds the act kinds the invoice module lets an
+// amendment's key name to the kinds the order journal places (ADR 0419). A
+// drift is loud only at the worst moment: a key the journal cannot place
+// refuses every read of its quarter, and one the invoice module refuses stops
+// an act being documented at all.
+func TestTheDocumentedActKindsAgree(t *testing.T) {
+	t.Parallel()
+
+	placed := make([]string, 0, len(ordersvc.DocumentedActs))
+	for _, kind := range ordersvc.DocumentedActs {
+		placed = append(placed, string(kind))
+	}
+	assert.ElementsMatch(t, placed, invoicemodels.AmendmentActKinds,
+		"the invoice module must refuse exactly the keys the order journal cannot place")
 }
 
 // TestTheGiftCardNamesAgree binds the checkout's spelling of the gift card

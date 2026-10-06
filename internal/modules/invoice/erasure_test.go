@@ -119,7 +119,7 @@ var notPersonalColumns = map[string][]string{
 		"id", "number", "series_id", "kind", "status", "currency_code", "subtotal",
 		"discount_total", "tax_total", "total", "issued_at", "provider_id", "external_id",
 		"created_at", "updated_at", "prices_include_tax",
-		"amends_invoice_id", "amendment_reason", "amendment_key",
+		"amends_invoice_id", "amendment_reason", "amendment_key", "voided_at",
 	},
 	"invoice_lines": {
 		"id", "invoice_id", "position", "quantity", "unit_price", "subtotal", "discount_total",

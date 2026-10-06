@@ -187,13 +187,18 @@ type invoiceDTO struct {
 	// AmendsInvoiceID, AmendmentReason and AmendmentKey name the sale document
 	// this one amends, why, and the act the invoicing flow documented
 	// (ADR 0406); absent on a document that amends nothing.
-	AmendsInvoiceID string         `json:"amends_invoice_id,omitempty"`
-	AmendmentReason string         `json:"amendment_reason,omitempty"`
-	AmendmentKey    string         `json:"amendment_key,omitempty"`
-	Lines           []lineDTO      `json:"lines"`
-	Metadata        map[string]any `json:"metadata,omitempty"`
-	CreatedAt       time.Time      `json:"created_at"`
-	UpdatedAt       time.Time      `json:"updated_at"`
+	AmendsInvoiceID string `json:"amends_invoice_id,omitempty"`
+	AmendmentReason string `json:"amendment_reason,omitempty"`
+	AmendmentKey    string `json:"amendment_key,omitempty"`
+	// VoidedAt is when the document was rejected or canceled, stamped by the
+	// database at the status write; absent while it stands. issued_at is the
+	// process's clock (ADR 0053). The order journal takes an amending
+	// document's tax back at it (ADR 0419).
+	VoidedAt  *time.Time     `json:"voided_at,omitempty"`
+	Lines     []lineDTO      `json:"lines"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
 }
 
 // seriesDTO is the external representation of a series.
@@ -259,6 +264,7 @@ func toInvoiceDTO(in models.Invoice) invoiceDTO {
 		AmendsInvoiceID:  in.AmendsInvoiceID,
 		AmendmentReason:  in.AmendmentReason.String(),
 		AmendmentKey:     in.AmendmentKey,
+		VoidedAt:         in.VoidedAt,
 		Lines:            lines,
 		Metadata:         in.Metadata,
 		CreatedAt:        in.CreatedAt,

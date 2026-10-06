@@ -247,6 +247,29 @@ design. It is fixed with `1.0.0`.
   each option's days and its forms write them; fulfillment migration 000007
   adds the two columns, and existing options carry none.
 
+- **A document's tax is on the books at the document** (ADR 0419, D262). **For
+  operators:** the order journal's `tax_payable` falls by the tax each
+  document amending an order's invoice gives back, on the day the document is
+  issued, and rises again when it is rejected or canceled; the account the act
+  was booked to (`sales_returns`, `credit_allowances`, `claim_allowances` or
+  `shipping`) keeps the act's amount less that tax. An act no document names,
+  and a document issued on the admin route that names no act, correct no tax,
+  and an order canceled under a live refund document owes negative tax until
+  the document is canceled too. **For integrators:**
+  `GET /admin/v1/order-journal` has two new entry kinds, `tax_corrected` and
+  `tax_correction_voided`, each under the document's id; the invoice record
+  publishes `voided_at`, the moment a document was rejected or canceled,
+  filled by invoice migration 000007 for documents voided before it. The
+  invoice module's interop gains `DocumentedTaxJSON` and the payment module's
+  `CausedRefundsByIDJSON`; an embedder's order wiring that resolves
+  `payment.interop` as the journal's refunds needs the new method. An
+  amendment issued through the invoice module's `IssueJSON` with an
+  `amendment_key` that is not `<kind>:<act id>`, the kind one of
+  `credit_line`, `delivery_changed`, `delivery_upgraded`, `return_refunded`
+  or `claim_refunded`, answers 422 `invoice_invalid_input`: the journal
+  could not place it, and a document it cannot place makes the read of any
+  window holding its moments answer 500.
+
 - **A return's parcel is opened from its return** (ADR 0413, D266). **For
   operators:** the order page lists each return's parcels under the return and,
   while it is requested, opens one on a return option for the units it still

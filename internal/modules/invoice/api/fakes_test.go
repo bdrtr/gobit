@@ -258,6 +258,11 @@ func (m *memRepo) SetStatus(
 
 		m.stored[i].Status = to
 		m.stored[i].StatusReason = reason
+		if to == models.StatusRejected || to == models.StatusCanceled {
+			// The real statement stamps voided_at in the same UPDATE (ADR 0419).
+			at := time.Now().UTC()
+			m.stored[i].VoidedAt = &at
+		}
 
 		if providerID != "" {
 			m.stored[i].ProviderID = providerID
@@ -356,6 +361,33 @@ func (m *memRepo) ListAmendmentsOf(_ context.Context, saleID string, limit int64
 	for i := range m.stored {
 		if m.stored[i].AmendsInvoiceID == saleID && int64(len(out)) < limit {
 			out = append(out, m.stored[i])
+		}
+	}
+
+	return out, nil
+}
+
+// DocumentedTax returns the stored amending documents that name an act and
+// were issued or voided inside [from, to), in the order they were written
+// (ADR 0419).
+func (m *memRepo) DocumentedTax(
+	_ context.Context, from, to time.Time, currencyCode string, limit int64,
+) ([]models.Invoice, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	in := func(at time.Time) bool { return !at.Before(from) && at.Before(to) }
+	out := []models.Invoice{}
+	for i := range m.stored {
+		document := &m.stored[i]
+		if int64(len(out)) == limit {
+			break
+		}
+		if document.AmendmentKey == "" || (currencyCode != "" && document.CurrencyCode != currencyCode) {
+			continue
+		}
+		if in(document.IssuedAt) || (document.VoidedAt != nil && in(*document.VoidedAt)) {
+			out = append(out, *document)
 		}
 	}
 

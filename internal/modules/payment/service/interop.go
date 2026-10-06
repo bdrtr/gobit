@@ -412,6 +412,31 @@ func (i *Interop) CausedRefundsJSON(
 	return json.Marshal(out)
 }
 
+// CausedRefundsByIDJSON returns the refunds with the given ids that name a
+// cause, whenever they were made, as the JSON array [Interop.CausedRefundsJSON]
+// answers with (ADR 0419).
+//
+// The order journal reads it to find the order a documented return's or
+// claim's refund belongs to.
+func (i *Interop) CausedRefundsByIDJSON(ctx context.Context, ids []string) (json.RawMessage, error) {
+	refunds, err := i.svc.CausedRefundsByID(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]causedRefundJSON, 0, len(refunds))
+	for idx := range refunds {
+		refund := &refunds[idx]
+		out = append(out, causedRefundJSON{
+			ID: refund.ID, Reference: refund.Reference, Amount: refund.Amount,
+			CurrencyCode: refund.CurrencyCode, CollectionID: refund.CollectionID,
+			RefundedAt: refund.RefundedAt.UTC(),
+		})
+	}
+
+	return json.Marshal(out)
+}
+
 // CausedRefundsOfJSON returns the refunds that name one of the given causes,
 // whenever they were made, as the JSON array [Interop.CausedRefundsJSON]
 // answers with (ADR 0406).

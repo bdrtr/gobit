@@ -198,6 +198,11 @@ const SpendingPolicyName = "b2b.interop"
 // other module's name repeated as a string.
 const CausedRefundsName = "payment.interop"
 
+// DocumentedTaxName is the container name the order journal reads the invoice
+// module's amending documents under (ADR 0419), the other module's name
+// repeated as a string.
+const DocumentedTaxName = "invoice.interop"
+
 // codeSetupFailed is the error code reporting that the module could not be
 // wired.
 const codeSetupFailed = "order_module_setup_failed"
@@ -310,6 +315,9 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		// (see [spendingPolicy] and the module.Module documentation).
 		Spending: &spendingPolicy{c: c, log: log},
 		Refunds:  &causedRefunds{c: c, log: log},
+		// The invoice module is another module too, resolved on first use for
+		// the same reason (ADR 0419).
+		Documents: &documentedTax{c: c, log: log},
 		// The Query layer is a CORE service, so it can be resolved right here:
 		// the deferral the spending rule needs is about another MODULE not
 		// being registered yet, and that does not apply to core.
@@ -751,6 +759,18 @@ func (p *causedRefunds) CausedRefundsOfJSON(ctx context.Context, references []st
 	return p.svc.CausedRefundsOfJSON(ctx, references)
 }
 
+// CausedRefundsByIDJSON returns the payment module's refunds with the given
+// ids that name a cause (ADR 0419).
+func (p *causedRefunds) CausedRefundsByIDJSON(ctx context.Context, ids []string) (json.RawMessage, error) {
+	if err := p.resolve(ctx); err != nil {
+		return nil, err
+	}
+	if p.svc == nil {
+		return noCausedRefunds, nil
+	}
+	return p.svc.CausedRefundsByIDJSON(ctx, ids)
+}
+
 // resolve finds the payment module's surface once.
 func (p *causedRefunds) resolve(ctx context.Context) error {
 	p.once.Do(func() {
@@ -768,6 +788,50 @@ func (p *causedRefunds) resolve(ctx context.Context) error {
 	})
 
 	return p.err
+}
+
+// documentedTax is the wrapper that resolves the invoice module's amending
+// documents ON FIRST USE (ADR 0419), as [causedRefunds] resolves the refunds.
+//
+// Without the invoice module no document was issued, so no tax was corrected
+// and the answer is an empty list. A registration that does not satisfy the
+// surface is a wiring error and is returned: books that silently left out
+// every correction would balance and be wrong.
+type documentedTax struct {
+	c    *container.Container
+	log  *slog.Logger
+	once sync.Once
+	svc  service.DocumentedTax
+	err  error
+}
+
+var _ service.DocumentedTax = (*documentedTax)(nil)
+
+// DocumentedTaxJSON returns the invoice module's amending documents that name
+// an act and were issued or voided inside [from, to).
+func (p *documentedTax) DocumentedTaxJSON(
+	ctx context.Context, from, to time.Time, currencyCode string,
+) (json.RawMessage, error) {
+	p.once.Do(func() {
+		svc, err := container.Resolve[service.DocumentedTax](p.c, DocumentedTaxName)
+		switch {
+		case err == nil:
+			p.svc = svc
+		case errors.IsNotFound(err):
+			p.log.DebugContext(ctx, "the invoice module is not registered; the order journal books no tax correction",
+				"provider", DocumentedTaxName)
+		default:
+			p.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,
+				"the %s module could not resolve the amending documents (%q)", ModuleName, DocumentedTaxName)
+		}
+	})
+	if p.err != nil {
+		return nil, p.err
+	}
+	if p.svc == nil {
+		return json.RawMessage(`[]`), nil
+	}
+	return p.svc.DocumentedTaxJSON(ctx, from, to, currencyCode)
 }
 
 // invoicingFlow is the wrapper that resolves the invoicing flow ON FIRST USE.

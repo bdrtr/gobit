@@ -298,8 +298,12 @@ past and is not corrected retroactively.
   nothing issues one by itself, and an act moved before the order was invoiced
   is documented after it. A row is one unit carrying its share. A registered
   buyer's own return invoice is kept only as the shop's refund, with its number
-  in the metadata. The order journal still books each act whole to revenue, so
-  `tax_payable` keeps the tax a refund document gives back (D262).
+  in the metadata. The order journal moves a document's tax off `tax_payable`
+  on the day the document is issued and back when it is rejected or canceled
+  ([ADR 0419](adr/0419-a-documents-tax-is-on-the-books-at-the-document.md)); an
+  act no document names, and a document issued on the admin route that names no
+  act, correct no tax, and an order canceled under a live refund document owes
+  negative tax on these books until the document is canceled.
 - **An exchange's money is on no document.** Its funding and its refund are
   booked by the order journal and printed on nothing: the figure is typed by
   the operator and names neither goods nor tax, so no row of the sale could

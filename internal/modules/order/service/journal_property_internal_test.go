@@ -19,6 +19,13 @@ var (
 		models.JournalDeliveryChanged, models.JournalDeliveryUpgraded, models.JournalExchangeFunded,
 		models.JournalExchangeRefunded, "not_a_fact",
 	}
+	// correctionKinds are a document's two facts (ADR 0419), drawn over every
+	// act kind a key can name and one it cannot, and over both document kinds
+	// and one that is neither.
+	correctionKinds = []models.JournalKind{models.JournalTaxCorrected, models.JournalTaxCorrectionVoided}
+	correctedActs   = append(append([]models.JournalKind{}, DocumentedActs...),
+		models.JournalExchangeRefunded, "not_an_act")
+	documentKinds = []string{documentRefund, documentSale, "not_a_document"}
 )
 
 // drawFact draws a fact. Half are an order's, and each of an order's shapes is
@@ -31,9 +38,17 @@ func drawFact(t *rapid.T) *models.JournalFact {
 		ID: "f", OrderID: "order_1", CurrencyCode: rapid.SampledFrom([]string{"TRY", "EUR"}).Draw(t, "currency"),
 		OccurredAt: time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC),
 	}
-	if !rapid.Bool().Draw(t, "an order's fact") {
+	switch rapid.SampledFrom([]string{"order", "movement", "correction"}).Draw(t, "fact") {
+	case "movement":
 		f.Kind = rapid.SampledFrom(movementKinds).Draw(t, "kind")
 		f.Amount = rapid.OneOf(rapid.Just(int64(0)), rapid.Int64Range(-5, -1), rapid.Int64Range(1, models.MaxTotal)).Draw(t, "amount")
+
+		return f
+	case "correction":
+		f.Kind = rapid.SampledFrom(correctionKinds).Draw(t, "kind")
+		f.ActKind = rapid.SampledFrom(correctedActs).Draw(t, "act")
+		f.DocumentKind = rapid.SampledFrom(documentKinds).Draw(t, "document")
+		f.Amount = rapid.OneOf(rapid.Just(int64(0)), rapid.Int64Range(-5, -1), rapid.Int64Range(1, models.MaxTotal)).Draw(t, "tax")
 
 		return f
 	}
@@ -77,6 +92,11 @@ func TestEveryJournalEntryBalancesOrIsRefused(t *testing.T) {
 				f.GiftCardSubtotal <= f.Subtotal
 		case "not_a_fact":
 			admitted = false
+		case models.JournalTaxCorrected, models.JournalTaxCorrectionVoided:
+			_, gives := givenBackTo[f.ActKind]
+			_, charges := chargedTo[f.ActKind]
+			admitted = f.Amount >= 0 &&
+				((f.DocumentKind == documentRefund && gives) || (f.DocumentKind == documentSale && charges))
 		default:
 			admitted = f.Amount > 0
 		}
@@ -109,6 +129,28 @@ func TestEveryJournalEntryBalancesOrIsRefused(t *testing.T) {
 				require.Equal(t, entry.Lines[i].Account, other.Lines[i].Account)
 				require.Equal(t, entry.Lines[i].Debit, other.Lines[i].Credit, "the cancellation is the placement the other way")
 			}
+		}
+
+		if f.Kind == models.JournalTaxCorrected || f.Kind == models.JournalTaxCorrectionVoided {
+			mirror := *f
+			mirror.Kind = models.JournalTaxCorrectionVoided
+			if f.Kind == models.JournalTaxCorrectionVoided {
+				mirror.Kind = models.JournalTaxCorrected
+			}
+			other, err := journalEntry(&mirror)
+			require.NoError(t, err)
+			require.Len(t, other.Lines, len(entry.Lines))
+			for i := range entry.Lines {
+				require.Equal(t, entry.Lines[i].Account, other.Lines[i].Account)
+				require.Equal(t, entry.Lines[i].Debit, other.Lines[i].Credit, "the voiding is the correction the other way")
+			}
+			var taxPayable int64
+			for _, line := range entry.Lines {
+				if line.Account == models.AccountTaxPayable {
+					taxPayable += line.Debit + line.Credit
+				}
+			}
+			require.Equal(t, f.Amount, taxPayable, "a correction moves its whole tax through tax_payable")
 		}
 	})
 }

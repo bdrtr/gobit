@@ -98,3 +98,16 @@ WHERE r.reference <> ''
   AND r.reference = ANY (sqlc.arg('refs')::text[])
 ORDER BY r.created_at, r.id
 LIMIT sqlc.arg('row_limit');
+
+-- The refunds with the given ids that name a cause, whenever they were made
+-- (ADR 0419): what the order journal finds a documented refund's order through,
+-- since an amending document names the refund rather than its cause. A refund
+-- that names no cause is not in the answer.
+-- name: CausedRefundsByID :many
+SELECT r.id, r.reference, r.amount, r.created_at, p.currency_code, p.payment_collection_id
+FROM refunds r
+JOIN payments p ON p.id = r.payment_id
+WHERE r.reference <> ''
+  AND r.id = ANY (sqlc.arg('ids')::text[])
+ORDER BY r.created_at, r.id
+LIMIT sqlc.arg('row_limit');

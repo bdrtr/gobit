@@ -19,6 +19,7 @@ import (
 	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/internal/adminui"
 
+	ordermodels "github.com/bdrtr/gobit/internal/modules/order/models"
 	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"
 	paymentmanual "github.com/bdrtr/gobit/internal/modules/payment/manual"
 	paymentmodels "github.com/bdrtr/gobit/internal/modules/payment/models"
@@ -337,11 +338,12 @@ func TestAnOrdersDocumentsCarryWhatItsBuyerPaidAfterTheSale(t *testing.T) {
 		"what the buyer paid and kept paid is on the documents")
 
 	var returned bool
+	var returnDocument string
 	for _, amendment := range amendmentsOf(t, saleOf(t, orderID)).Data {
 		if amendment.AmendmentKey != "return_refunded:"+refundID {
 			continue
 		}
-		returned = true
+		returned, returnDocument = true, amendment.ID
 		assert.Equal(t, "refund", amendment.Kind)
 		assert.Equal(t, "returned", amendment.AmendmentReason)
 		assert.Equal(t, int64(2_000), amendment.TaxTotal, "the 20% row gives back the tax it charged")
@@ -360,9 +362,11 @@ func TestAnOrdersDocumentsCarryWhatItsBuyerPaidAfterTheSale(t *testing.T) {
 	require.NoError(t, err)
 	var booked, listed []string
 	for _, entry := range journal.Entries {
-		if entry.OrderID == orderID && entry.Kind != "order_placed" && entry.Kind != "order_canceled" {
-			booked = append(booked, string(entry.Kind)+":"+entry.ID)
+		if entry.OrderID != orderID || entry.Kind == "order_placed" || entry.Kind == "order_canceled" ||
+			entry.Kind == "tax_corrected" || entry.Kind == "tax_correction_voided" {
+			continue
 		}
+		booked = append(booked, string(entry.Kind)+":"+entry.ID)
 	}
 	rec := adminCartRequest(t, http.MethodGet, "/admin/v1/orders/"+orderID+"/invoice/amendments", "")
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
@@ -373,6 +377,56 @@ func TestAnOrdersDocumentsCarryWhatItsBuyerPaidAfterTheSale(t *testing.T) {
 		assert.NotNil(t, act.Document, "%s %s is documented", act.Kind, act.ID)
 	}
 	assert.Equal(t, booked, listed)
+
+	// The return's document gives its tax back on the order's books too
+	// (ADR 0419, D262), and the dearer delivery's moves none: carriage is
+	// untaxed. Canceling the document puts the tax back on tax_payable at the
+	// moment the document records, and the window that ends there reads as the
+	// books read before the cancellation. The bound is the stored stamp, not a
+	// moment this test guesses.
+	books := orderBooks(t, orderID, from, time.Now().UTC().Add(time.Minute))
+	assert.Equal(t, order.TaxTotal-2_000, books[ordermodels.AccountTaxPayable],
+		"tax_payable holds the order's tax less what the return's document gave back")
+	assert.Equal(t, int64(-10_000), books[ordermodels.AccountSalesReturns],
+		"the return gave back 10 000 of revenue and 2 000 of tax")
+
+	canceled, err := adminRequestWithBody(http.MethodPost, "/admin/v1/invoices/"+returnDocument+"/status",
+		map[string]any{"status": "canceled", "reason": "issued in error"})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, canceled.Code, canceled.Body.String())
+	var voided struct {
+		Data struct {
+			VoidedAt *time.Time `json:"voided_at"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(canceled.Body.Bytes(), &voided))
+	require.NotNil(t, voided.Data.VoidedAt, "the canceled document says when: %s", canceled.Body.String())
+	assert.Equal(t, books, orderBooks(t, orderID, from, *voided.Data.VoidedAt),
+		"the window that ends at the voiding reads as the books read before it")
+	after := orderBooks(t, orderID, from, time.Now().UTC().Add(time.Minute))
+	assert.Equal(t, order.TaxTotal, after[ordermodels.AccountTaxPayable],
+		"the canceled document's tax is owed again")
+	assert.Equal(t, int64(-12_000), after[ordermodels.AccountSalesReturns])
+}
+
+// orderBooks is the order's own entries in the order journal over
+// [from, to), as each account's credits less its debits.
+func orderBooks(t *testing.T, orderID string, from, to time.Time) map[ordermodels.JournalAccount]int64 {
+	t.Helper()
+
+	journal, err := orderSvc.Journal(t.Context(), ordersvc.JournalQuery{From: from, To: to})
+	require.NoError(t, err)
+	net := map[ordermodels.JournalAccount]int64{}
+	for _, entry := range journal.Entries {
+		if entry.OrderID != orderID {
+			continue
+		}
+		for _, line := range entry.Lines {
+			net[line.Account] += line.Credit - line.Debit
+		}
+	}
+
+	return net
 }
 
 // TestAFreeDeliveryChangedUpAndBackIsDocumented is the order that shipped

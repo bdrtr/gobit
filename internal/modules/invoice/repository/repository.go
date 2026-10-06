@@ -611,3 +611,28 @@ func (r *Repository) ListAmendmentsOf(ctx context.Context, saleID string, limit 
 
 	return out, nil
 }
+
+// DocumentedTax lists, without their lines, the amending documents that name
+// an act and were issued or voided inside [from, to), in one currency when
+// currencyCode is set, at most limit of them (ADR 0419).
+func (r *Repository) DocumentedTax(
+	ctx context.Context, from, to time.Time, currencyCode string, limit int64,
+) ([]models.Invoice, error) {
+	rows, err := r.queries(ctx).DocumentedTax(ctx, invoicedb.DocumentedTaxParams{
+		FromAt: fromTime(from), ToAt: fromTime(to), CurrencyCode: optional(currencyCode), RowLimit: limit,
+	})
+	if err != nil {
+		return nil, wrapDB(err, codeQueryFailed, "the documents that name an act could not be listed")
+	}
+
+	out := make([]models.Invoice, 0, len(rows))
+	for i := range rows {
+		invoice, convErr := toInvoice(rows[i])
+		if convErr != nil {
+			return nil, convErr
+		}
+		out = append(out, invoice)
+	}
+
+	return out, nil
+}

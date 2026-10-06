@@ -139,16 +139,38 @@ WHERE (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
 -- database rather than by what the caller read a moment ago: two operators
 -- cancelling and sending at the same time cannot both win.
 --
+-- A move to rejected or canceled stamps voided_at in the same statement
+-- (ADR 0419): the order journal takes an amending document's tax back at that
+-- moment, and both states are final, so it is stamped once.
+--
 -- name: SetInvoiceStatus :one
 UPDATE invoices
 SET status        = sqlc.arg('next_status')::text,
     status_reason = sqlc.arg('status_reason')::text,
     provider_id   = COALESCE(sqlc.narg('provider_id')::text, provider_id),
     external_id   = COALESCE(sqlc.narg('external_id')::text, external_id),
+    voided_at     = CASE WHEN sqlc.arg('next_status')::text IN ('rejected', 'canceled')
+                         THEN now() ELSE voided_at END,
     updated_at    = now()
 WHERE id = sqlc.arg('id')::text
   AND status = sqlc.arg('current_status')::text
 RETURNING *;
+
+-- DocumentedTax reads the amending documents that name an act and were issued
+-- or voided inside [from, to), whatever their status now, in one currency when
+-- one is given (ADR 0419): what the order journal books a document's tax from.
+-- A document issued in the window is read even when it was voided later, so a
+-- window reads the same after it. One more than the caller's ceiling is read so
+-- a full answer can be told from a cut one.
+--
+-- name: DocumentedTax :many
+SELECT * FROM invoices
+WHERE amendment_key IS NOT NULL
+  AND ((issued_at >= sqlc.arg('from_at')::timestamptz AND issued_at < sqlc.arg('to_at')::timestamptz)
+    OR (voided_at >= sqlc.arg('from_at')::timestamptz AND voided_at < sqlc.arg('to_at')::timestamptz))
+  AND (sqlc.narg('currency_code')::text IS NULL OR currency_code = sqlc.narg('currency_code')::text)
+ORDER BY issued_at, id
+LIMIT sqlc.arg('row_limit')::bigint;
 
 -- CountInvoicesByBuyerEmail counts the documents issued to one address.
 --

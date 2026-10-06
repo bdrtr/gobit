@@ -11,6 +11,58 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const journalActOrders = `-- name: JournalActOrders :many
+SELECT cl.id, 'credit_line'::text AS kind, cl.order_id, o.currency_code
+FROM order_credit_lines cl
+JOIN orders o ON o.id = cl.order_id
+WHERE cl.id = ANY ($1::text[])
+UNION ALL
+SELECT dc.id, 'delivery_change'::text, dc.order_id, o.currency_code
+FROM order_delivery_changes dc
+JOIN orders o ON o.id = dc.order_id
+WHERE dc.id = ANY ($2::text[])
+`
+
+type JournalActOrdersParams struct {
+	CreditLineIds []string
+	ChangeIds     []string
+}
+
+type JournalActOrdersRow struct {
+	ID           string
+	Kind         string
+	OrderID      string
+	CurrencyCode string
+}
+
+// The orders the given credit lines and delivery changes belong to, and each
+// order's currency (ADR 0419): what an amending document naming one of them is
+// booked against. An id that is neither has no row.
+func (q *Queries) JournalActOrders(ctx context.Context, arg JournalActOrdersParams) ([]JournalActOrdersRow, error) {
+	rows, err := q.db.Query(ctx, journalActOrders, arg.CreditLineIds, arg.ChangeIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []JournalActOrdersRow{}
+	for rows.Next() {
+		var i JournalActOrdersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.OrderID,
+			&i.CurrencyCode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const journalCauses = `-- name: JournalCauses :many
 SELECT r.id, 'return'::text AS kind, r.order_id, o.currency_code
 FROM order_returns r

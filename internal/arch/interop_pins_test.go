@@ -123,6 +123,7 @@ var (
 	_ productsvc.StockItemWriter  = (*inventorysvc.Service)(nil)
 	_ ordersvc.SpendingPolicy     = (*b2bsvc.Interop)(nil)
 	_ ordersvc.CausedRefunds      = (*paymentsvc.Interop)(nil)
+	_ ordersvc.DocumentedTax      = (*invoicesvc.Interop)(nil)
 	_ notifsvc.OrderContactReader = (*ordersvc.Interop)(nil)
 )
 
@@ -353,10 +354,10 @@ var pinnedNames = map[string]string{
 	"cart.interop":                 "the cart and checkout flows",
 	"inventory.interop":            "the checkout, returns and cancellation flows",
 	"fulfillment.interop":          "the cart, checkout, fulfilling and cancellation flows",
-	"payment.interop":              "the checkout and returns flows",
+	"payment.interop":              "the checkout and returns flows, and the order journal's refunds",
 	"promotion.interop":            "the cart and checkout flows",
 	"tax.interop":                  "the cart flow's tax and its rate comparison",
-	"invoice.interop":              "the invoicing flow",
+	"invoice.interop":              "the invoicing flow, and the order journal's documents",
 	"settings.interop":             "the invoicing flow's store profile",
 	"product.interop":              "the searchpg plugin's catalog read",
 	"auth.interop":                 "the composition root and the admin panel's authenticator",

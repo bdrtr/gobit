@@ -81,6 +81,11 @@ func declaredKinds(t *testing.T, file *ast.File) []models.JournalKind {
 // source, and each is booked through [journalEntry] itself; a kind the
 // journal cannot book fails here rather than passing unread. The sale and its
 // cancellation are the two kinds left out: they ARE the sale.
+//
+// A document's tax correction and its voiding (ADR 0419) are booked for every
+// act and document kind a document can carry, and held to touching neither the
+// buyer's receivable nor any account but tax_payable and the act's own: they
+// move tax a document printed between the two, and charge nobody.
 func TestOnlyADearerDeliveryAndAnExchangeChargeAfterTheSale(t *testing.T) {
 	t.Parallel()
 
@@ -95,6 +100,10 @@ func TestOnlyADearerDeliveryAndAnExchangeChargeAfterTheSale(t *testing.T) {
 	var credited, charged []models.JournalKind
 	for _, kind := range kinds {
 		if kind == models.JournalOrderPlaced || kind == models.JournalOrderCanceled {
+			continue
+		}
+		if kind == models.JournalTaxCorrected || kind == models.JournalTaxCorrectionVoided {
+			auditCorrection(t, kind)
 			continue
 		}
 		entry, err := journalEntry(&models.JournalFact{
@@ -126,4 +135,30 @@ func TestOnlyADearerDeliveryAndAnExchangeChargeAfterTheSale(t *testing.T) {
 			"a dearer delivery and an exchange's funding. "+why)
 	assert.Equal(t, models.AccountShipping, chargedTo[models.JournalDeliveryUpgraded])
 	assert.Equal(t, models.AccountSales, chargedTo[models.JournalExchangeFunded])
+}
+
+// auditCorrection books a tax correction of the kind for every act a document
+// can name, as the document kind that act is documented with (ADR 0406), and
+// holds each to the two accounts it moves tax between.
+func auditCorrection(t *testing.T, kind models.JournalKind) {
+	t.Helper()
+
+	for _, act := range DocumentedActs {
+		document, account := documentRefund, givenBackTo[act]
+		if act == models.JournalDeliveryUpgraded {
+			document, account = documentSale, chargedTo[act]
+		}
+		entry, err := journalEntry(&models.JournalFact{
+			ID: "fact_1", Kind: kind, OrderID: "order_1", CurrencyCode: "eur", Amount: 100,
+			ActKind: act, DocumentKind: document,
+		})
+		require.NoError(t, err, "the journal cannot book %q on a %s document for %q", kind, document, act)
+		require.Len(t, entry.Lines, 2, "%q for %q", kind, act)
+		for _, line := range entry.Lines {
+			assert.NotEqual(t, models.AccountReceivable, line.Account,
+				"%q for %q touches the buyer's receivable: a correction charges nobody", kind, act)
+			assert.Contains(t, []models.JournalAccount{models.AccountTaxPayable, account}, line.Account,
+				"%q for %q moves tax to an account that is neither tax_payable nor the act's", kind, act)
+		}
+	}
 }

@@ -82,6 +82,9 @@ type fakeStore struct {
 	journal []models.JournalFact
 	// causes are the returns and claims JournalCauses knows (ADR 0189).
 	causes []models.JournalCause
+	// actOrders are the credit lines and delivery changes JournalActOrders
+	// knows (ADR 0419).
+	actOrders []models.JournalActOrder
 	// afterSaleCauses are what OrderAfterSaleCauses reads, by order
 	// (ADR 0406).
 	afterSaleCauses map[string][]models.AfterSaleCause

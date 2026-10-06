@@ -5,8 +5,10 @@ import "time"
 // This file is the order module's side of the books (ADR 0188).
 //
 // As on the payment module's (ADR 0186), nothing here is written: every entry
-// is derived, when it is read, from a record this module keeps and never
-// deletes — an order placed, an order canceled, a credit line.
+// is derived, when it is read, from a record that is never deleted — an order
+// placed, an order canceled, a credit line this module keeps, a refund the
+// payment module keeps (ADR 0189), a document amending an order's invoice the
+// invoice module keeps (ADR 0419).
 
 // JournalAccount is one side of the order module's books.
 type JournalAccount string
@@ -71,6 +73,15 @@ const (
 	// JournalExchangeRefunded is a refund whose cause is one of the order's
 	// exchanges: the difference sent back (ADR 0203).
 	JournalExchangeRefunded JournalKind = "exchange_refunded"
+	// JournalTaxCorrected is an amending document that names one of the
+	// order's acts, at its issued_at: the tax it gave back or charged moves
+	// between tax_payable and the account the act was booked to (ADR 0419).
+	// Its id is the document's.
+	JournalTaxCorrected JournalKind = "tax_corrected"
+	// JournalTaxCorrectionVoided is the same document at its voided_at, when it
+	// was rejected or canceled: the correction's lines the other way
+	// (ADR 0419). Its id is the document's.
+	JournalTaxCorrectionVoided JournalKind = "tax_correction_voided"
 )
 
 // JournalLine is one side of an entry: exactly one of Debit and Credit is
@@ -86,7 +97,7 @@ type JournalEntry struct {
 	// ID is the id of the record the entry is read from: the order for a
 	// placement or a cancellation, the credit line for a credit line, the
 	// delivery change for a changed delivery, the payment module's refund for
-	// a refund.
+	// a refund, the invoice module's amending document for a tax correction.
 	ID           string        `json:"id"`
 	Kind         JournalKind   `json:"kind"`
 	OrderID      string        `json:"order_id"`
@@ -119,6 +130,23 @@ type JournalFact struct {
 	GiftCardSubtotal int64
 
 	Amount int64
+
+	// ActKind and DocumentKind are set for a tax correction (ADR 0419): the
+	// kind of the act the document names, which decides the account its tax
+	// moves from or to, and the document's kind, "refund" for tax given back
+	// and "sale" for tax charged.
+	ActKind      JournalKind
+	DocumentKind string
+}
+
+// JournalActOrder is the order a credit line or a delivery change belongs to,
+// as a document naming it is booked (ADR 0419).
+type JournalActOrder struct {
+	ID string
+	// Kind is "credit_line" or "delivery_change".
+	Kind         string
+	OrderID      string
+	CurrencyCode string
 }
 
 // JournalCause is an order record a refund can name as its cause (ADR 0189).

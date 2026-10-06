@@ -82,6 +82,20 @@ FROM order_exchanges x
 JOIN orders o ON o.id = x.order_id
 WHERE x.id = ANY (sqlc.arg('ids')::text[]);
 
+-- The orders the given credit lines and delivery changes belong to, and each
+-- order's currency (ADR 0419): what an amending document naming one of them is
+-- booked against. An id that is neither has no row.
+-- name: JournalActOrders :many
+SELECT cl.id, 'credit_line'::text AS kind, cl.order_id, o.currency_code
+FROM order_credit_lines cl
+JOIN orders o ON o.id = cl.order_id
+WHERE cl.id = ANY (sqlc.arg('credit_line_ids')::text[])
+UNION ALL
+SELECT dc.id, 'delivery_change'::text, dc.order_id, o.currency_code
+FROM order_delivery_changes dc
+JOIN orders o ON o.id = dc.order_id
+WHERE dc.id = ANY (sqlc.arg('change_ids')::text[]);
+
 -- One order's records a refund can name as its cause, and when an exchange's
 -- difference was funded (ADR 0406): what an order's acts after the sale are
 -- read from, beside its credit lines and its delivery changes. It takes one row

@@ -43,6 +43,7 @@ type Invoice struct {
 	AmendsInvoiceID   *string
 	AmendmentReason   *string
 	AmendmentKey      *string
+	VoidedAt          pgtype.Timestamptz
 }
 
 type InvoiceLine struct {

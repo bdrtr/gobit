@@ -206,3 +206,4 @@ truth: a report says what was true on the day it was taken.
 | [What an order documents — measured 2026-10-06](0406-what-an-order-documents.md) | 135 |
 | [Who reads the cart's bag — measured 2026-10-06](0407-who-reads-the-carts-bag.md) | 84 |
 | [Turkish without its marks — measured 2026-10-06](0408-turkish-without-its-marks.md) | 76 |
+| [A document's tax on the books — measured 2026-10-06](0419-a-documents-tax-on-the-books.md) | 83 |
