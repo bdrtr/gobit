@@ -160,6 +160,11 @@ type Order struct {
 	// surface or the panel, as the guard ring proved them; empty on a
 	// shopper's order (ADR 0298). It is written once, when the order is placed.
 	PlacedBy string
+	// SalesChannelID is the sales channel the order's cart was opened in, the
+	// one its prices and promotions were chosen in (ADR 0397); empty when the
+	// cart named none (ADR 0410). It is written once, when the order is placed,
+	// and copied as the cart held it.
+	SalesChannelID string
 	// Subtotal is the sum of the line subtotals (minor unit).
 	Subtotal int64
 	// DiscountTotal is the total discount (minor unit); it is stored positive

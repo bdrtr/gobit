@@ -46,10 +46,11 @@ func TestAListTrialComparesTodaysPriceWithAndWithoutTheList(t *testing.T) {
 	assert.Equal(t, "order_a", report.Orders[0].OrderID)
 	assert.Equal(t, []int64{1500, 1300}, []int64{report.Orders[0].Baseline, report.Orders[0].Trial})
 	assert.Contains(t, report.Assumptions, "list_active_without_window")
-	// What an order does not keep is said, not priced as if it were there
-	// (ADR 0397, D253). The cart's metadata is no longer such a fact: a cart's
-	// price does not read it either (ADR 0403, D260).
-	assert.Contains(t, report.Assumptions, "no_sales_channel")
+	// An order is priced in the channel it recorded (ADR 0410). The cart's
+	// metadata is no fact to set aside: a cart's price does not read it either
+	// (ADR 0403, D260).
+	assert.Contains(t, report.Assumptions, "recorded_sales_channel")
+	assert.NotContains(t, report.Assumptions, "no_sales_channel")
 	assert.NotContains(t, report.Assumptions, "no_cart_metadata",
 		"the trial sets aside nothing a cart's price reads")
 
@@ -58,6 +59,46 @@ func TestAListTrialComparesTodaysPriceWithAndWithoutTheList(t *testing.T) {
 	assert.Equal(t, testCustomerID, entry.Attributes[AttrCustomerID], "the customer's own context, as a cart's")
 	assert.Equal(t, []priceRequestItem{{PriceSetID: testPriceSetA, Quantity: 1}, {PriceSetID: testPriceSetB, Quantity: 2}},
 		entry.Items, "each line at its own quantity")
+}
+
+// TestAListTrialPricesAnOrderInTheChannelItRecorded verifies that a line is
+// priced with the sales channel its order recorded, and one whose order
+// recorded none with none (ADR 0410). The orders are one customer's in one
+// region and currency, so a context read once per those three would carry the
+// first order's channel to the others.
+func TestAListTrialPricesAnOrderInTheChannelItRecorded(t *testing.T) {
+	inStore := trialOrderRecord("order_store", "pending", testCustomerID, 1000, 0)
+	inStore["sales_channel_id"] = "sc_store"
+	inNone := trialOrderRecord("order_none", "pending", testCustomerID, 1000, 0)
+	inWeb := trialOrderRecord("order_web", "pending", testCustomerID, 1000, 0)
+	inWeb["sales_channel_id"] = "sc_web"
+	h := newTrialHarness(t,
+		[]query.Record{
+			trialLineRecord("li_store", "order_store", testVariantA, 1, 1000, 0),
+			trialLineRecord("li_none", "order_none", testVariantA, 1, 1000, 0),
+			trialLineRecord("li_web", "order_web", testVariantA, 1, 1000, 0),
+		},
+		[]query.Record{inStore, inNone, inWeb},
+		nil,
+	)
+
+	_, err := h.wf.TrialPriceList(context.Background(), "plist_1", trialFrom, trialTo)
+	require.NoError(t, err)
+
+	require.Len(t, h.prices.compared, 1)
+	channels := map[string]string{}
+	for _, entry := range h.prices.compared[0].Entries {
+		channel, named := entry.Attributes[AttrSalesChannelID]
+		if !named {
+			channel = "(none)"
+		}
+		channels[entry.Reference] = channel
+	}
+	assert.Equal(t, map[string]string{
+		"order_store": "sc_store",
+		"order_none":  "(none)",
+		"order_web":   "sc_web",
+	}, channels)
 }
 
 // TestAListTrialLeavesOutWhatItCannotPrice: a canceled order, a variant with no

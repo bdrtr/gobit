@@ -35,6 +35,9 @@ type Snapshot struct {
 	// AddsToOrderID is the order the cart was opened to add to; empty when it
 	// adds to nothing (ADR 0192).
 	AddsToOrderID string `json:"adds_to_order_id,omitempty"`
+	// SalesChannelID is the sales channel the cart was opened in and priced in
+	// (ADR 0397); empty when it named none. The order records it (ADR 0410).
+	SalesChannelID string `json:"sales_channel_id,omitempty"`
 	// Revision is the shape counter of the cart; it is the stamp of the totals.
 	Revision int64 `json:"revision"`
 	// Completed reports whether the cart has been completed.
@@ -150,6 +153,12 @@ type checkoutPlan struct {
 	// PlacedBy is the operator placing the order; empty on a shopper's
 	// checkout (ADR 0298).
 	PlacedBy string `json:"placed_by,omitempty"`
+	// SalesChannel is the channel the cart was priced in (ADR 0397), which
+	// the order records (ADR 0410); empty when the cart named none. It is not
+	// [checkoutPlan.SalesChannelIDs]: those are the REQUEST's channels, which
+	// may be several and pick the warehouses. A plan recorded before the field
+	// reads empty and places an order with no channel, which is what it knew.
+	SalesChannel string `json:"sales_channel_id,omitempty"`
 	// Revision is the SHARED shape counter of the totals and the snapshot.
 	Revision int64 `json:"revision"`
 	// LocationID is the stock location the caller DECLARED; it may be empty.
@@ -492,6 +501,7 @@ func (w *Workflows) prepare(ctx context.Context, in CompleteCartInput) (*checkou
 		CurrencyCode:      snap.CurrencyCode,
 		AddsToOrderID:     snap.AddsToOrderID,
 		PlacedBy:          in.PlacedBy,
+		SalesChannel:      snap.SalesChannelID,
 		Revision:          snap.Revision,
 		LocationID:        in.LocationID,
 		SalesChannelIDs:   in.SalesChannelIDs,
@@ -1375,6 +1385,7 @@ type orderSnapshot struct {
 	IdempotencyKey string `json:"idempotency_key"`
 	AddsToOrderID  string `json:"adds_to_order_id,omitempty"`
 	PlacedBy       string `json:"placed_by,omitempty"`
+	SalesChannelID string `json:"sales_channel_id,omitempty"`
 	Subtotal       int64  `json:"subtotal"`
 	DiscountTotal  int64  `json:"discount_total"`
 	TaxTotal       int64  `json:"tax_total"`
@@ -1574,6 +1585,7 @@ func (p *checkoutPlan) orderSnapshotJSON(idempotencyKey string) (json.RawMessage
 		IdempotencyKey:   idempotencyKey,
 		AddsToOrderID:    p.AddsToOrderID,
 		PlacedBy:         p.PlacedBy,
+		SalesChannelID:   p.SalesChannel,
 		Subtotal:         p.Subtotal,
 		DiscountTotal:    p.DiscountTotal,
 		TaxTotal:         p.TaxTotal,

@@ -165,8 +165,10 @@ func TestATrialLeavesOutWhatItMustNotPrice(t *testing.T) {
 	assert.Equal(t, 1, report.Currencies[0].OrdersDiscounted)
 	assert.Equal(t, int64(50), report.Currencies[0].TrialDiscountTotal)
 	assert.Contains(t, report.Assumptions, "todays_catalog", "the flow's own assumptions are published")
-	assert.Contains(t, report.Assumptions, "no_sales_channel",
-		"an order does not keep the channel its cart was opened in (ADR 0397)")
+	assert.Contains(t, report.Assumptions, "recorded_sales_channel",
+		"an order is tried in the channel it recorded (ADR 0410)")
+	assert.NotContains(t, report.Assumptions, "no_sales_channel",
+		"the order keeps the channel its cart was opened in since ADR 0410")
 	assert.NotContains(t, report.Assumptions, "no_cart_metadata",
 		"a cart's metadata reaches no live round either, so the trial sets nothing aside for it (ADR 0407)")
 	assert.Contains(t, report.Assumptions, "active", "the promotion module's assumptions are published")
@@ -194,6 +196,46 @@ func TestATrialResolvesEachCustomersSegmentOnce(t *testing.T) {
 		assert.Equal(t, "vip", entry.Request.Context[AttrCustomerGroupID],
 			"every order of the customer carries the segment the cart would have")
 	}
+}
+
+// TestATrialPricesAnOrderInTheChannelItRecorded verifies that a purchase is
+// asked about in the sales channel its order recorded, and one that recorded
+// none in none (ADR 0410). Both orders are one customer's in one region, so a
+// context resolved once per customer and region would carry the first order's
+// channel to the second.
+func TestATrialPricesAnOrderInTheChannelItRecorded(t *testing.T) {
+	inStore := trialOrderRecord("order_store", "pending", testCustomerID, 1000, 0)
+	inStore["sales_channel_id"] = "sc_store"
+	inNone := trialOrderRecord("order_none", "pending", testCustomerID, 1000, 0)
+	inWeb := trialOrderRecord("order_web", "pending", testCustomerID, 1000, 0)
+	inWeb["sales_channel_id"] = "sc_web"
+	h := newTrialHarness(t,
+		[]query.Record{
+			trialLineRecord("li_store", "order_store", testVariantA, 1, 1000, 0),
+			trialLineRecord("li_none", "order_none", testVariantA, 1, 1000, 0),
+			trialLineRecord("li_web", "order_web", testVariantA, 1, 1000, 0),
+		},
+		[]query.Record{inStore, inNone, inWeb},
+		map[string]int64{},
+	)
+
+	_, err := h.wf.TrialPromotion(context.Background(), "promo_1", trialFrom, trialTo)
+	require.NoError(t, err)
+
+	require.Len(t, h.discounts.trials, 1)
+	channels := map[string]string{}
+	for _, entry := range h.discounts.trials[0].Entries {
+		channel, named := entry.Request.Context[AttrSalesChannelID]
+		if !named {
+			channel = "(none)"
+		}
+		channels[entry.Reference] = channel
+	}
+	assert.Equal(t, map[string]string{
+		"cart_of_order_store": "sc_store",
+		"cart_of_order_none":  "(none)",
+		"cart_of_order_web":   "sc_web",
+	}, channels)
 }
 
 // TestATrialRefusesAPeriodItCannotPrice verifies the period's bounds.

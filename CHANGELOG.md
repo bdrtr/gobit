@@ -92,8 +92,8 @@ design. It is fixed with `1.0.0`.
   exactly one channel records it as `sales_channel_id`, and every price and
   promotion round asks with it; a key bound to several records none.
   `POST /admin/v1/carts` takes an optional `sales_channel_id`. A merge prices
-  the moved lines in the target cart's channel. The price list trial's and the
-  promotion trial's `assumptions` gain `no_sales_channel`. **For operators:** a price or promotion rule
+  the moved lines in the target cart's channel; the order records the channel
+  too (ADR 0410). **For operators:** a price or promotion rule
   naming `sales_channel_id` matched nothing before this release and starts
   matching carts opened through a single-channel key, so review such rules
   before upgrading. Cart migration 000010 adds `carts.sales_channel_id`; the
@@ -202,6 +202,18 @@ design. It is fixed with `1.0.0`.
   operator who can sign in can protect their account.
 
 ### Fixes
+
+- **An order records the channel it was sold in** (ADR 0410). **For API
+  consumers:** `GET /admin/v1/orders/{id}`, every admin route answering with
+  the order record, and each row of `GET /admin/v1/orders` carry
+  `sales_channel_id`, the sales channel the order's cart was opened in, absent
+  when the cart named none; `GET /admin/v1/orders?sales_channel_id=` lists the
+  orders placed in one channel. The storefront's order does not carry it. The
+  promotion trial and the price list trial price each past order in the
+  channel it recorded, and their `assumptions` say `recorded_sales_channel`.
+  **For operators:** the panel's order list filters by channel and the order
+  page names it. Order migration 000042 adds `orders.sales_channel_id`; an
+  order placed before it records no channel.
 
 - **Turkish without its marks is read in Go text** (ADR 0408, D263). **For
   integrators:** the manual fulfillment provider's refusal of a shipment

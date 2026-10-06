@@ -32,6 +32,9 @@ type OrderFilter struct {
 	// PlacedByOperator, when given, returns only the orders an operator placed,
 	// or only the shoppers' (ADR 0298).
 	PlacedByOperator *bool
+	// SalesChannelID, when given, returns only the orders placed in that sales
+	// channel (ADR 0410).
+	SalesChannelID *string
 	// Limit is the maximum number of rows to return.
 	Limit int64
 	// Offset is the number of rows to skip.

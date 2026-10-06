@@ -462,6 +462,11 @@ type adminOrderDetailDTO struct {
 	// admin surface's alone, as the addresses are: a shopper reading the order
 	// would read the operator's identity.
 	PlacedBy string `json:"placed_by,omitempty"`
+	// SalesChannelID is the sales channel the order's cart was opened in;
+	// absent when it named none (ADR 0410). It is the shop's partition of its
+	// sales, so the admin surface carries it and the storefront's record does
+	// not.
+	SalesChannelID string `json:"sales_channel_id,omitempty"`
 	// Items SHADOWS the storefront record's lines with the admin's, which
 	// carry what each unit cost the shop (ADR 0401); encoding/json writes only
 	// this one.
@@ -506,6 +511,9 @@ type placedMarginDTO struct {
 // [orderDTO] alone.
 type adminOrderRowDTO struct {
 	orderDTO
+	// SalesChannelID is the sales channel the order's cart was opened in;
+	// absent when it named none (ADR 0410).
+	SalesChannelID string `json:"sales_channel_id,omitempty"`
 	// PlacedMargin is absent on an order with no line that is not a gift card.
 	PlacedMargin *placedMarginDTO `json:"placed_margin,omitempty"`
 }
@@ -763,6 +771,7 @@ func toAdminOrderDetailDTO(detail models.OrderDetail, margins map[string]models.
 		ShippingAddress: toOrderAddressDTO(detail.ShippingAddress),
 		BillingAddress:  toOrderAddressDTO(detail.BillingAddress),
 		PlacedBy:        detail.PlacedBy,
+		SalesChannelID:  detail.SalesChannelID,
 		Items:           make([]adminLineItemDTO, 0, len(detail.Items)),
 		PlacedMargin:    toPlacedMarginDTO(detail.Order, margins),
 	}

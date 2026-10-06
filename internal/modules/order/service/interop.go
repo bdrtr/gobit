@@ -134,12 +134,15 @@ type interopSnapshot struct {
 	AddsToOrderID  string `json:"adds_to_order_id"`
 	// PlacedBy is the operator placing the order; absent on a shopper's (ADR
 	// 0298).
-	PlacedBy      string `json:"placed_by"`
-	Subtotal      int64  `json:"subtotal"`
-	DiscountTotal int64  `json:"discount_total"`
-	TaxTotal      int64  `json:"tax_total"`
-	ShippingTotal int64  `json:"shipping_total"`
-	Total         int64  `json:"total"`
+	PlacedBy string `json:"placed_by"`
+	// SalesChannelID is the sales channel the cart was opened in; absent when
+	// it named none, and on a plan saved before ADR 0410.
+	SalesChannelID string `json:"sales_channel_id"`
+	Subtotal       int64  `json:"subtotal"`
+	DiscountTotal  int64  `json:"discount_total"`
+	TaxTotal       int64  `json:"tax_total"`
+	ShippingTotal  int64  `json:"shipping_total"`
+	Total          int64  `json:"total"`
 	// PricesIncludeTax is the flag the cart's totals were computed under
 	// (ADR 0246).
 	PricesIncludeTax bool               `json:"prices_include_tax"`
@@ -338,6 +341,7 @@ func (i *Interop) PlaceOrderJSON(ctx context.Context, snapshot json.RawMessage) 
 		IdempotencyKey:   incoming.IdempotencyKey,
 		AddsToOrderID:    incoming.AddsToOrderID,
 		PlacedBy:         incoming.PlacedBy,
+		SalesChannelID:   incoming.SalesChannelID,
 		Subtotal:         incoming.Subtotal,
 		DiscountTotal:    incoming.DiscountTotal,
 		TaxTotal:         incoming.TaxTotal,

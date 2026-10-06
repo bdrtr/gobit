@@ -31,6 +31,14 @@ const (
 	FieldPlacedBy          = "placed_by"
 )
 
+// The sales channel an order recorded (ADR 0410): the order page's field and
+// the order list's filter, the order module's one name for both, pinned as the
+// operator's is.
+const (
+	paramOrderChannel      = "channel"
+	FieldOrderSalesChannel = "sales_channel_id"
+)
+
 // EntityOrder is the order module's entity name in the read layer.
 //
 // It is a STRING and not an import: the panel knows no module (ADR 0011), the
@@ -166,6 +174,9 @@ type orderDetail struct {
 	// PlacedBy is the operator who placed the order; empty on a shopper's
 	// (ADR 0298).
 	PlacedBy string
+	// SalesChannel is the sales channel the order recorded; empty when its
+	// cart named none (ADR 0410).
+	SalesChannel string
 	// Parent is the order this one adds to; nil when it adds to nothing, and
 	// its ID alone when the parent could not be read.
 	Parent *orderRow
@@ -352,9 +363,14 @@ func (u *UI) listOrders(w http.ResponseWriter, r *http.Request) {
 	if !slices.Contains(orderStatuses, status) {
 		status = ""
 	}
+	// And the ones placed in one sales channel (ADR 0410).
+	channel := strings.TrimSpace(r.URL.Query().Get(paramOrderChannel))
 	var filters map[string]any
-	if awaiting || placed || customer != "" || status != "" {
+	if awaiting || placed || customer != "" || status != "" || channel != "" {
 		filters = map[string]any{}
+	}
+	if channel != "" {
+		filters[FieldOrderSalesChannel] = channel
 	}
 	if status != "" {
 		filters[FilterOrderStatus] = status
@@ -403,8 +419,18 @@ func (u *UI) listOrders(w http.ResponseWriter, r *http.Request) {
 		"Awaiting":  awaiting,
 		"Placed":    placed,
 		"Customer":  customer,
+		"Channel":   channel,
 		statusKey:   status,
 		statusesKey: orderStatuses,
+	}
+	// The channels are offered by name to an operator who may read them, as
+	// the telephone order offers them (ADR 0305); otherwise, or when the list
+	// could not be read, none are offered and the filter in the address still
+	// applies.
+	if principal, _ := corehttp.PrincipalFromContext(r.Context()); principal.HasScope(scopeAuthRead) {
+		if channels, ok := u.channelsOf(r); ok {
+			data[channelsKey] = channels
+		}
 	}
 	addPaging(data, page, hasNext, OrdersPath)
 
@@ -451,6 +477,7 @@ func (u *UI) renderOrder(
 			fieldSubtotal, fieldDiscount, fieldTax, fieldShipping, fieldTotal,
 			fieldPlacedAt, fieldAddsToOrderID, fieldShippingAddress,
 			fieldBillingAddress, fieldShippingAddressCorrectedAt, FieldPlacedBy, fieldShippingAddressID,
+			FieldOrderSalesChannel,
 		},
 		Filters: map[string]any{filterID: []string{id}},
 		Limit:   1,
@@ -481,6 +508,7 @@ func (u *UI) renderOrder(
 	detail.ShipToID = recordString(record, fieldShippingAddressID)
 	shipToForm(&detail, record[fieldShippingAddress], outcome)
 	detail.PlacedBy = recordString(record, FieldPlacedBy)
+	detail.SalesChannel = recordString(record, FieldOrderSalesChannel)
 	detail.Parent = u.parentOrder(r, recordString(record, fieldAddsToOrderID))
 	detail.Additions, detail.AdditionsUnread = u.additionsOf(r, detail.ID, scales)
 	detail.Lines, detail.LinesMore, detail.LinesUnread = u.linesOf(r, detail.ID, detail.Currency, scales)

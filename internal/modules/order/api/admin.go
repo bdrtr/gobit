@@ -59,6 +59,9 @@ func (h *Handler) adminListOrders(w http.ResponseWriter, r *http.Request) {
 		}
 		in.PlacedByOperator = &placed
 	}
+	if raw := r.URL.Query().Get("sales_channel_id"); raw != "" {
+		in.SalesChannelID = &raw
+	}
 
 	result, err := h.svc.ListOrders(ctx, in)
 	if err != nil {
@@ -81,8 +84,9 @@ func (h *Handler) adminListOrders(w http.ResponseWriter, r *http.Request) {
 	// value would carry a few hundred bytes for nothing on every turn.
 	for i := range result.Items {
 		data = append(data, adminOrderRowDTO{
-			orderDTO:     toOrderDTO(result.Items[i]),
-			PlacedMargin: toPlacedMarginDTO(result.Items[i], margins),
+			orderDTO:       toOrderDTO(result.Items[i]),
+			SalesChannelID: result.Items[i].SalesChannelID,
+			PlacedMargin:   toPlacedMarginDTO(result.Items[i], margins),
 		})
 	}
 	corehttp.WriteJSON(ctx, w, http.StatusOK, listEnvelope{

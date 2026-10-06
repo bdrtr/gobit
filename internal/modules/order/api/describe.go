@@ -174,6 +174,11 @@ func Describe(d *openapi.Doc) {
 			queryParameter("placed_by_operator", typeBoolean,
 				"true lists only the orders an operator placed through the admin cart "+
 					"surface or the panel, and false only the shoppers' (ADR 0298)."),
+			queryParameter("sales_channel_id", typeString,
+				"Limits the orders to those placed in one sales channel: the channel the "+
+					"order's cart was opened in, which the order recorded when it was placed. "+
+					"An order whose cart named no channel, or placed before orders recorded "+
+					"one, is in no channel's list (ADR 0410)."),
 			queryParameter("limit", typeInteger,
 				"Page size; when it is not given the service's default applies."),
 			queryParameter("offset", typeInteger, "Number of records to skip."),

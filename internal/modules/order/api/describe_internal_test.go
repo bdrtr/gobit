@@ -240,7 +240,7 @@ func describedEndpoints() []endpointExpectation {
 	return []endpointExpectation{
 		{
 			method: http.MethodGet, path: "/admin/v1/orders", status: "200",
-			response: adminOrderRowDTO{orderDTO: filledOrder(), PlacedMargin: filledPlacedMargin()},
+			response: adminOrderRowDTO{orderDTO: filledOrder(), SalesChannelID: "sc_store", PlacedMargin: filledPlacedMargin()},
 			shape:    pagedList,
 		},
 		{
@@ -670,6 +670,7 @@ func filledAdminOrderDetail() adminOrderDetailDTO {
 		ShippingAddress: address,
 		BillingAddress:  address,
 		PlacedBy:        "user_operator",
+		SalesChannelID:  "sc_store",
 		Items:           []adminLineItemDTO{{lineItemDTO: filledOrderDetail().Items[0], UnitCost: &cost}},
 		PlacedMargin:    filledPlacedMargin(),
 	}

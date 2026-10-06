@@ -20,12 +20,14 @@ INSERT INTO orders (
     id, status, region_id, customer_id, email, currency_code,
     cart_id, idempotency_key,
     subtotal, discount_total, tax_total, shipping_total, total,
-    metadata, adds_to_order_id, prices_include_tax, placed_at, placed_by
+    metadata, adds_to_order_id, prices_include_tax, placed_at, placed_by,
+    sales_channel_id
 ) VALUES (
     $1, $2, $3, $4, $5, $6,
     $7, $8,
     $9, $10, $11, $12, $13,
-    $14, $15, $16, now(), sqlc.narg('placed_by')
+    $14, $15, $16, now(), sqlc.narg('placed_by'),
+    sqlc.narg('sales_channel_id')
 )
 RETURNING *;
 
@@ -88,6 +90,8 @@ WHERE (sqlc.narg('customer_id')::text IS NULL OR customer_id = sqlc.narg('custom
   ) = sqlc.narg('awaiting_payment')::boolean)
   AND (sqlc.narg('placed_by_operator')::boolean IS NULL
        OR (placed_by IS NOT NULL) = sqlc.narg('placed_by_operator')::boolean)
+  AND (sqlc.narg('sales_channel_id')::text IS NULL
+       OR sales_channel_id = sqlc.narg('sales_channel_id')::text)
   AND (created_at, id) < (
     COALESCE(sqlc.narg('after_at')::timestamptz, 'infinity'::timestamptz),
     COALESCE(sqlc.narg('after_id')::text, '')
@@ -118,7 +122,9 @@ WHERE (sqlc.narg('customer_id')::text IS NULL OR customer_id = sqlc.narg('custom
       < orders.total - COALESCE((SELECT SUM(c.amount) FROM order_credit_lines c WHERE c.order_id = orders.id), 0)
   ) = sqlc.narg('awaiting_payment')::boolean)
   AND (sqlc.narg('placed_by_operator')::boolean IS NULL
-       OR (placed_by IS NOT NULL) = sqlc.narg('placed_by_operator')::boolean);
+       OR (placed_by IS NOT NULL) = sqlc.narg('placed_by_operator')::boolean)
+  AND (sqlc.narg('sales_channel_id')::text IS NULL
+       OR sales_channel_id = sqlc.narg('sales_channel_id')::text);
 
 -- GetOrdersByIDs satisfies the Query layer's FetchByIDs call in a SINGLE round
 -- trip; no per-ID query (N+1) is made.

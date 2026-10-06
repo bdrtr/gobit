@@ -31,7 +31,9 @@ import (
 //     order_claim_evidence.upload_id names the file module's record, which
 //     answers for itself. orders.placed_by is a staff member's id, which
 //     resolves through the auth module as the cart's opened_by does and is
-//     judged there (ADR 0298).
+//     judged there (ADR 0298). orders.sales_channel_id names the shop's
+//     channel the cart was opened in, the same for every buyer of it (ADR
+//     0410).
 //   - MONEY, QUANTITY AND TAX (every amount, total, quantity, rate, compound,
 //     is_giftcard, prices_include_tax, difference_due). They describe the sale.
 //   - STATE AND STAMPS (status, claim_type, address_type, price_list_type,
@@ -46,7 +48,7 @@ var notPersonalColumns = map[string][]string{
 		"subtotal", "discount_total", "tax_total", "shipping_total", "total",
 		"placed_at", "completed_at", "canceled_at", "created_at", "updated_at",
 		"archived_at", "personal_data_erased_at", "adds_to_order_id", "prices_include_tax",
-		"placed_by",
+		"placed_by", "sales_channel_id",
 	},
 	"order_line_items": {
 		"id", "order_id", "variant_id", "title", "quantity", "unit_price", "subtotal",

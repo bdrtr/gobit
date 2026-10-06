@@ -25,6 +25,14 @@ exist in total.
     <option value="">every status</option>
     {{ range .Statuses }}<option value="{{ . }}"{{ if eq . $.Status }} selected{{ end }}>{{ . }}</option>{{ end }}
   </select>
+  {{/* The orders placed in one sales channel, the one their cart was opened
+  in (ADR 0410); offered by name when the channels could be read. */}}
+  {{ if .Channels }}
+  <select name="channel" aria-label="sales channel">
+    <option value="">every sales channel</option>
+    {{ range .Channels }}<option value="{{ .ID }}"{{ if eq .ID $.Channel }} selected{{ end }}>{{ .Name }}</option>{{ end }}
+  </select>
+  {{ else }}{{ with .Channel }}<input type="hidden" name="channel" value="{{ . }}">{{ end }}{{ end }}
   <button type="submit">Show</button>
 </form>
 {{/* One customer's orders, which their page links to (ADR 0358). */}}
@@ -64,8 +72,8 @@ exist in total.
 {{ end }}
 
 <nav>
-  {{ if .HasPrev }}<a href="{{ .Path }}?page={{ .PrevPage }}{{ if .Awaiting }}&amp;awaiting=1{{ end }}{{ if .Placed }}&amp;placed=1{{ end }}{{ with .Customer }}&amp;customer={{ . }}{{ end }}{{ with .Status }}&amp;status={{ . }}{{ end }}">Previous</a>{{ end }}
+  {{ if .HasPrev }}<a href="{{ .Path }}?page={{ .PrevPage }}{{ if .Awaiting }}&amp;awaiting=1{{ end }}{{ if .Placed }}&amp;placed=1{{ end }}{{ with .Customer }}&amp;customer={{ . }}{{ end }}{{ with .Status }}&amp;status={{ . }}{{ end }}{{ with .Channel }}&amp;channel={{ . }}{{ end }}">Previous</a>{{ end }}
   <span class="muted">Page {{ .Page }}</span>
-  {{ if .HasNext }}<a href="{{ .Path }}?page={{ .NextPage }}{{ if .Awaiting }}&amp;awaiting=1{{ end }}{{ if .Placed }}&amp;placed=1{{ end }}{{ with .Customer }}&amp;customer={{ . }}{{ end }}{{ with .Status }}&amp;status={{ . }}{{ end }}">Next</a>{{ end }}
+  {{ if .HasNext }}<a href="{{ .Path }}?page={{ .NextPage }}{{ if .Awaiting }}&amp;awaiting=1{{ end }}{{ if .Placed }}&amp;placed=1{{ end }}{{ with .Customer }}&amp;customer={{ . }}{{ end }}{{ with .Status }}&amp;status={{ . }}{{ end }}{{ with .Channel }}&amp;channel={{ . }}{{ end }}">Next</a>{{ end }}
 </nav>
 {{ end }}

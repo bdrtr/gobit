@@ -64,14 +64,15 @@ const (
 // trialFlowAssumptions are what THIS side of the trial sets aside, published
 // beside the promotion module's own.
 //
-// A purchase is rebuilt from its order, and three facts of the moment of sale
-// are not kept on the order: the product's categories, tags and collection, the
-// customer's groups, and the channel the cart was opened in. The first two are
-// read as they are TODAY; the last is absent, so a rule on `sales_channel_id`
-// matches no order (ADR 0397). A cart's metadata reaches no live round either
-// (ADR 0407), so the trial sets nothing aside for it.
+// A purchase is rebuilt from its order, and two facts of the moment of sale are
+// not kept on the order: the product's categories, tags and collection, and the
+// customer's groups. Both are read as they are TODAY. The channel the cart was
+// opened in is kept, and a purchase is priced in the channel its order recorded;
+// an order placed before ADR 0410, or from a cart that named none, recorded none
+// (ADR 0397, ADR 0410). A cart's metadata reaches no live round either (ADR
+// 0407), so the trial sets nothing aside for it.
 var trialFlowAssumptions = []string{
-	"todays_catalog", "todays_customer_groups", "no_sales_channel",
+	"todays_catalog", "todays_customer_groups", "recorded_sales_channel",
 }
 
 // trialRequest is the consumer-side copy of the promotion module's trial
@@ -181,17 +182,20 @@ type trialLine struct {
 
 // trialOrder is one order with its lines, in the order the lines were read.
 type trialOrder struct {
-	id            string
-	displayID     int64
-	status        string
-	regionID      string
-	customerID    string
-	cartID        string
-	currencyCode  string
-	placedAt      time.Time
-	subtotal      int64
-	discountTotal int64
-	lines         []trialLine
+	id           string
+	displayID    int64
+	status       string
+	regionID     string
+	customerID   string
+	cartID       string
+	currencyCode string
+	// salesChannelID is the channel the order recorded; empty when it
+	// recorded none (ADR 0410).
+	salesChannelID string
+	placedAt       time.Time
+	subtotal       int64
+	discountTotal  int64
+	lines          []trialLine
 }
 
 // TrialPromotion prices a promotion against the orders placed in [from, to) as if
@@ -360,11 +364,12 @@ func (w *Workflows) trialAnswer(
 	for i := range orders {
 		order := orders[i]
 		snap := Snapshot{
-			ID:           order.id,
-			RegionID:     order.regionID,
-			CustomerID:   order.customerID,
-			CurrencyCode: order.currencyCode,
-			Items:        make([]SnapshotItem, 0, len(order.lines)),
+			ID:             order.id,
+			RegionID:       order.regionID,
+			SalesChannelID: order.salesChannelID,
+			CustomerID:     order.customerID,
+			CurrencyCode:   order.currencyCode,
+			Items:          make([]SnapshotItem, 0, len(order.lines)),
 		}
 		lines := make([]LineTotals, 0, len(order.lines))
 		for _, line := range order.lines {
@@ -372,9 +377,9 @@ func (w *Workflows) trialAnswer(
 			lines = append(lines, LineTotals{LineItemID: line.id, UnitPrice: line.unitPrice, Subtotal: line.subtotal})
 		}
 
-		// The context depends on the region and the customer alone, so each
-		// pair is resolved once.
-		key := order.regionID + "\x00" + order.customerID
+		// The context depends on the region, the channel and the customer
+		// alone, so each triple is resolved once.
+		key := order.regionID + "\x00" + order.salesChannelID + "\x00" + order.customerID
 		resolved, seen := contexts[key]
 		if !seen {
 			attributes, lists, contextErr := w.priceContext(ctx, priceSubjectOf(snap))
@@ -513,7 +518,7 @@ func (w *Workflows) trialOrders(ctx context.Context, from, to time.Time) ([]tria
 			Entity: trialOrderEntity,
 			Fields: []string{
 				"id", "display_id", "status", "region_id", "customer_id", "cart_id",
-				"currency_code", "placed_at", "discount_total",
+				"currency_code", "placed_at", "discount_total", "sales_channel_id",
 			},
 			Filters: map[string]any{"id": batch},
 			Limit:   len(batch),
@@ -587,6 +592,7 @@ func fillTrialOrder(record query.Record, byID map[string]*trialOrder) error {
 		func() (e error) { order.regionID, e = recordText(record, "region_id"); return },
 		func() (e error) { order.customerID, e = recordOptionalText(record, "customer_id"); return },
 		func() (e error) { order.cartID, e = recordOptionalText(record, "cart_id"); return },
+		func() (e error) { order.salesChannelID, e = recordOptionalText(record, "sales_channel_id"); return },
 		func() (e error) { order.currencyCode, e = recordText(record, "currency_code"); return },
 		func() (e error) { order.placedAt, e = recordTime(record, "placed_at"); return },
 		func() (e error) { order.discountTotal, e = recordAmount(record, "discount_total"); return },

@@ -74,6 +74,10 @@ const (
 	// FilterPlacedByOperator keeps the orders an operator placed when true and
 	// the shoppers' when false (ADR 0298).
 	FilterPlacedByOperator = "placed_by_operator"
+	// FieldSalesChannelID is the sales channel the order's cart was opened in;
+	// empty when it named none (ADR 0410). It is also a filter: the orders
+	// placed in one channel.
+	FieldSalesChannelID = "sales_channel_id"
 )
 
 // The fields read from the order's addresses rather than from its row
@@ -213,10 +217,11 @@ var orderFieldGetters = map[string]func(order models.Order) any{
 		}
 		return *o.ArchivedAt
 	},
-	FieldCreatedAt:     func(o models.Order) any { return o.CreatedAt },
-	FieldUpdatedAt:     func(o models.Order) any { return o.UpdatedAt },
-	FieldAddsToOrderID: func(o models.Order) any { return o.AddsToOrderID },
-	FieldPlacedBy:      func(o models.Order) any { return o.PlacedBy },
+	FieldCreatedAt:      func(o models.Order) any { return o.CreatedAt },
+	FieldUpdatedAt:      func(o models.Order) any { return o.UpdatedAt },
+	FieldAddsToOrderID:  func(o models.Order) any { return o.AddsToOrderID },
+	FieldPlacedBy:       func(o models.Order) any { return o.PlacedBy },
+	FieldSalesChannelID: func(o models.Order) any { return o.SalesChannelID },
 }
 
 // QueryProvider is the read surface the order module opens to the Query layer.
@@ -248,9 +253,9 @@ func (p *QueryProvider) Entity() string {
 //
 // Supported filters: "id" (string or string slice), "customer_id" (string),
 // "region_id" (string), "status" (string), "adds_to_order_id" (string),
-// "awaiting_payment" (bool, ADR 0294) and "placed_by_operator" (bool, ADR
-// 0298). Any other filter or an unrecognized field is rejected with
-// errors.Invalid (ADR 0004).
+// "awaiting_payment" (bool, ADR 0294), "placed_by_operator" (bool, ADR 0298)
+// and "sales_channel_id" (string, ADR 0410). Any other filter or an
+// unrecognized field is rejected with errors.Invalid (ADR 0004).
 //
 // # Why "id" is a filter and not only a batch fetch
 //
@@ -340,6 +345,13 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 					"filter %q has to be boolean (bool), %T given", name, value)
 			}
 			in.PlacedByOperator = &placed
+		case FieldSalesChannelID:
+			channel, ok := value.(string)
+			if !ok {
+				return nil, errors.Invalid(CodeInvalidInput,
+					"filter %q has to be text, %T given", name, value)
+			}
+			in.SalesChannelID = &channel
 		default:
 			return nil, errors.Invalid(CodeInvalidInput,
 				"%q entity'si %q filtresini desteklemiyor", EntityName, name)

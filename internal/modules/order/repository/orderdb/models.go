@@ -35,6 +35,7 @@ type Order struct {
 	AddsToOrderID        *string
 	PricesIncludeTax     bool
 	PlacedBy             *string
+	SalesChannelID       *string
 }
 
 type OrderAddress struct {

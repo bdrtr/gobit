@@ -3,7 +3,7 @@
 **Summary:** A cart records the one sales channel it was opened in, and every round prices
 and discounts it there; a channel names no currency, its country's region does.
 
-- **Status:** Accepted; amended by [0403](0403-a-carts-metadata-chooses-no-price.md), which prices no cart by its metadata, so the list trial sets none aside
+- **Status:** Accepted; amended by [0403](0403-a-carts-metadata-chooses-no-price.md), which prices no cart by its metadata, so the list trial sets none aside, and by [0410](0410-an-order-records-the-channel-it-was-sold-in.md), whose order records the channel
 - **Date:** 2026-10-05
 - **Amends:** [0146](0146-an-operator-can-build-a-cart.md), whose cart opening now may name a channel, and [0216](0216-a-wishlist-item-can-ask-for-its-price.md), whose quote is now a cart's that names none
 

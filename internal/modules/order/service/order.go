@@ -167,6 +167,10 @@ type CreateOrderInput struct {
 	// PlacedBy is the operator placing the order; empty for a shopper (ADR
 	// 0298). The caller passes the identity the guard ring proved.
 	PlacedBy string
+	// SalesChannelID is the sales channel the order's cart was opened in;
+	// empty when it named none (ADR 0410). It is recorded as given: this
+	// module does not read the auth module's channels.
+	SalesChannelID string
 	// Subtotal is the sum of the line subtotals (minor unit).
 	Subtotal int64
 	// DiscountTotal is the total discount; it is given as a POSITIVE number and
@@ -378,6 +382,7 @@ func (s *Service) writeOrder(ctx context.Context, in CreateOrderInput, rule spen
 			IdempotencyKey:   in.IdempotencyKey,
 			AddsToOrderID:    in.AddsToOrderID,
 			PlacedBy:         in.PlacedBy,
+			SalesChannelID:   in.SalesChannelID,
 			Subtotal:         in.Subtotal,
 			DiscountTotal:    in.DiscountTotal,
 			TaxTotal:         in.TaxTotal,
@@ -680,6 +685,9 @@ type ListOrdersInput struct {
 	// PlacedByOperator, when given, returns only the orders an operator placed,
 	// or only the shoppers' (ADR 0298).
 	PlacedByOperator *bool
+	// SalesChannelID, when given, returns only the orders placed in that
+	// sales channel (ADR 0410).
+	SalesChannelID *string
 	// Page holds the pagination parameters.
 	Page Page
 }
@@ -721,6 +729,12 @@ func (s *Service) ListOrders(ctx context.Context, in ListOrdersInput) (OrderPage
 			return OrderPage{}, err
 		}
 		filter.AddsToOrderID = in.AddsToOrderID
+	}
+	if in.SalesChannelID != nil {
+		if err := requireID("sales_channel_id", *in.SalesChannelID); err != nil {
+			return OrderPage{}, err
+		}
+		filter.SalesChannelID = in.SalesChannelID
 	}
 	filter.AwaitingPayment = in.AwaitingPayment
 	filter.PlacedByOperator = in.PlacedByOperator

@@ -226,8 +226,12 @@ past and is not corrected retroactively.
   carts, and so do an operator who names none and every cart opened before the
   upgrade. A channel an operator mistypes is recorded and never matches. A merge
   prices the moved lines in the target's channel.
-- **A channel has no currency, and an order does not record its channel.** The
-  trials price past orders without it and report `no_sales_channel`.
+- **A channel has no currency, and some orders record no channel.** An order
+  records the channel its cart was opened in
+  ([ADR 0410](adr/0410-an-order-records-the-channel-it-was-sold-in.md)); an
+  order from a cart that named none, and every order placed before the
+  upgrade, records none, and the admin list's channel filter and the trials
+  read it as none.
 
 ## The category tree
 

@@ -230,6 +230,7 @@ func (r *Repository) CreateOrder(ctx context.Context, order models.Order) (model
 		AddsToOrderID:    nullString(order.AddsToOrderID),
 		PricesIncludeTax: order.PricesIncludeTax,
 		PlacedBy:         nullString(order.PlacedBy),
+		SalesChannelID:   nullString(order.SalesChannelID),
 	})
 	if err != nil {
 		return models.Order{}, classify(err, codeQueryFailed, "could not create the order")
@@ -337,6 +338,7 @@ func (r *Repository) ListOrders(ctx context.Context, filter models.OrderFilter) 
 		AddsToOrderID:    filter.AddsToOrderID,
 		AwaitingPayment:  filter.AwaitingPayment,
 		PlacedByOperator: filter.PlacedByOperator,
+		SalesChannelID:   filter.SalesChannelID,
 		RowLimit:         filter.Limit,
 		RowOffset:        filter.Offset,
 		AfterAt:          afterAt,
@@ -353,6 +355,7 @@ func (r *Repository) ListOrders(ctx context.Context, filter models.OrderFilter) 
 		AddsToOrderID:    filter.AddsToOrderID,
 		AwaitingPayment:  filter.AwaitingPayment,
 		PlacedByOperator: filter.PlacedByOperator,
+		SalesChannelID:   filter.SalesChannelID,
 	})
 	if err != nil {
 		return nil, 0, classify(err, codeQueryFailed, "could not count the orders")

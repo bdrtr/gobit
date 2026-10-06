@@ -26,9 +26,10 @@ func describeTrial(d *openapi.Doc) {
 			"order the promotion was itself redeemed on is counted apart and not priced " +
 			"again. \n\n" +
 			"WHAT THE ORDERS DID NOT KEEP is read as it is today — the products' categories, " +
-			"tags and collection, and the customer's groups — and the sales channel the cart " +
-			"was opened in is not kept, so a rule on `sales_channel_id` matches no order. A " +
-			"cart's metadata reaches no rule, live or tried. " +
+			"tags and collection, and the customer's groups. An order is tried in the sales " +
+			"channel it recorded, so a rule on `sales_channel_id` matches the orders placed in " +
+			"that channel; an order placed before orders recorded one, or from a cart that " +
+			"named none, is tried in none. A cart's metadata reaches no rule, live or tried. " +
 			"\"assumptions\" lists all of it. \n\n" +
 			"The period is at most 93 days, holds at most 5000 orders and has to be in the " +
 			"past; each is refused with a 422 rather than answered in part. It needs the " +

@@ -40,6 +40,9 @@ func normalizeCreateOrder(in CreateOrderInput) (CreateOrderInput, error) {
 	if err := optionalID("placed_by", in.PlacedBy); err != nil {
 		return CreateOrderInput{}, err
 	}
+	if err := optionalID("sales_channel_id", in.SalesChannelID); err != nil {
+		return CreateOrderInput{}, err
+	}
 
 	currency, err := normalizeCurrency(in.CurrencyCode)
 	if err != nil {
