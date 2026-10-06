@@ -243,11 +243,13 @@ var (
 	// The telephone order's cart (ADR 0290).
 	_ adminui.TelephoneCarts = (*cartapi.TelephoneSurface)(nil)
 	// The ten gap D251 found unpinned.
-	_ adminui.UserLister          = (*authsvc.AccountSurface)(nil)
-	_ adminui.PromotionLister     = (*promotion.AdminSurface)(nil)
-	_ adminui.NotificationLister  = (*notifsvc.AdminSurface)(nil)
-	_ adminui.GroupMembership     = (*customersvc.AdminSurface)(nil)
-	_ adminui.ParcelMover         = (*fulfillsvc.AdminSurface)(nil)
+	_ adminui.UserLister         = (*authsvc.AccountSurface)(nil)
+	_ adminui.PromotionLister    = (*promotion.AdminSurface)(nil)
+	_ adminui.NotificationLister = (*notifsvc.AdminSurface)(nil)
+	_ adminui.GroupMembership    = (*customersvc.AdminSurface)(nil)
+	_ adminui.ParcelMover        = (*fulfillsvc.AdminSurface)(nil)
+	// A return's parcel (ADR 0413).
+	_ adminui.ReturnParcelOpener  = (*fulfillsvc.AdminSurface)(nil)
 	_ adminui.FileUploader        = (*filesvc.AdminSurface)(nil)
 	_ adminui.InvoiceSeriesLister = (*invoicesvc.AdminSurface)(nil)
 	_ adminui.StoreProfileAdmin   = (*settingssvc.AdminSurface)(nil)

@@ -15,17 +15,19 @@ const countFulfillments = `-- name: CountFulfillments :one
 SELECT COUNT(*) FROM fulfillments
 WHERE ($1::text IS NULL OR reference = $1::text)
   AND ($2::text IS NULL OR status = $2::text)
+  AND ($3::text IS NULL OR return_id = $3::text)
 `
 
 type CountFulfillmentsParams struct {
 	Reference *string
 	Status    *string
+	ReturnID  *string
 }
 
 // CountFulfillments applies the SAME filters as ListFulfillments; for the
 // rationale see CountShippingProfiles.
 func (q *Queries) CountFulfillments(ctx context.Context, arg CountFulfillmentsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countFulfillments, arg.Reference, arg.Status)
+	row := q.db.QueryRow(ctx, countFulfillments, arg.Reference, arg.Status, arg.ReturnID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -227,21 +229,29 @@ const listFulfillments = `-- name: ListFulfillments :many
 SELECT id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, returned_at, return_id FROM fulfillments
 WHERE ($1::text IS NULL OR reference = $1::text)
   AND ($2::text IS NULL OR status = $2::text)
+  AND ($3::text IS NULL OR return_id = $3::text)
 ORDER BY created_at DESC, id DESC
-LIMIT $4::bigint OFFSET $3::bigint
+LIMIT $5::bigint OFFSET $4::bigint
 `
 
 type ListFulfillmentsParams struct {
 	Reference *string
 	Status    *string
+	ReturnID  *string
 	RowOffset int64
 	RowLimit  int64
 }
 
+// ListFulfillments lists the fulfillments a page at a time, newest first.
+//
+// return_id finds the parcels bringing one order return back (ADR 0413), over
+// fulfillments_return_idx; it is a return parcel's binding, as the
+// order_fulfillment link is an outgoing one's.
 func (q *Queries) ListFulfillments(ctx context.Context, arg ListFulfillmentsParams) ([]Fulfillment, error) {
 	rows, err := q.db.Query(ctx, listFulfillments,
 		arg.Reference,
 		arg.Status,
+		arg.ReturnID,
 		arg.RowOffset,
 		arg.RowLimit,
 	)

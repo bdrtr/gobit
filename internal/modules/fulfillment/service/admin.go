@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/models"
@@ -42,6 +43,75 @@ func (a *AdminSurface) ReturnParcel(ctx context.Context, id string) error {
 // CancelParcel cancels a parcel that has not left.
 func (a *AdminSurface) CancelParcel(ctx context.Context, id string) error {
 	return a.svc.CancelFulfillment(ctx, id)
+}
+
+// OpenReturnParcel opens a parcel on a return option bringing back the order
+// return returnID names, holding quantities[i] units of the order line
+// lineIDs[i], and reports whether the key had already opened it (ADR 0413,
+// ADR 0384). The bound on what the return still awaits and the option's
+// direction are the service's; the two lists travel side by side because the
+// panel cannot name this module's types. The provider is handed no
+// destination: where a return parcel comes from is the customer's to say.
+func (a *AdminSurface) OpenReturnParcel(
+	ctx context.Context, orderID, returnID, optionID, idempotencyKey string,
+	lineIDs []string, quantities []int64,
+) (fulfillmentID string, alreadyOpen bool, err error) {
+	if strings.TrimSpace(returnID) == "" {
+		return "", false, errors.Invalid(CodeInvalidInput,
+			"a return's parcel names the return it brings back")
+	}
+	if len(lineIDs) != len(quantities) {
+		return "", false, errors.Invalid(CodeInvalidInput,
+			"%d lines and %d quantities were given; each line takes one quantity",
+			len(lineIDs), len(quantities))
+	}
+	items := make([]FulfillmentItemInput, 0, len(lineIDs))
+	for i := range lineIDs {
+		items = append(items, FulfillmentItemInput{LineItemID: lineIDs[i], Quantity: quantities[i]})
+	}
+
+	alreadyOpen = a.svc.isRetry(ctx, strings.TrimSpace(idempotencyKey))
+	ful, err := a.svc.CreateFulfillment(ctx, CreateFulfillmentInput{
+		Reference: orderID, ShippingOptionID: optionID, IdempotencyKey: idempotencyKey,
+		ReturnID: returnID, Items: items,
+	})
+	if err != nil {
+		return "", false, err
+	}
+
+	return ful.ID, alreadyOpen, nil
+}
+
+// returnOptionChoice is one return option the panel's form offers; the json
+// tags are the contract with the panel, which cannot import this package.
+type returnOptionChoice struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// ReturnOptionsJSON lists the return options a region offers in a currency,
+// admin-only ones included (ADR 0413). No cart stands behind a return, so the
+// facts a rule reads are not given: an option ruled on them is not listed, and
+// the API still opens a parcel on it.
+func (a *AdminSurface) ReturnOptionsJSON(ctx context.Context, regionID, currencyCode string) (json.RawMessage, error) {
+	quoted, err := a.svc.ListShippingOptionsFor(ctx, ListOptionsInput{
+		RegionID: regionID, CurrencyCode: currencyCode,
+		IsReturn: true, IncludeAdminOnly: true, TrustedFacts: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	choices := make([]returnOptionChoice, 0, len(quoted))
+	for i := range quoted {
+		choices = append(choices, returnOptionChoice{ID: quoted[i].Option.ID, Name: quoted[i].Option.Name})
+	}
+	body, err := json.Marshal(choices)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, codeAdminEncodeFailed,
+			"the return options could not be encoded")
+	}
+
+	return body, nil
 }
 
 // ReviseShippingOption writes the option's name, fee and storefront

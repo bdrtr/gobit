@@ -70,6 +70,33 @@ type orderAfterSale struct {
 	// EvidenceUnread says they could not be read.
 	Evidence       []evidenceRow
 	EvidenceUnread bool
+	// Parcels are a return's parcels, the ones bringing it back, oldest first
+	// (ADR 0413); ParcelsUnread says they could not be read. ReturnParcel is
+	// the form that opens one, nil when none is offered.
+	Parcels       []orderParcel
+	ParcelsUnread bool
+	ReturnParcel  *returnParcelForm
+	// units are the order lines a return names and how many of each.
+	units []saleUnit
+}
+
+// saleUnit is one line of a return: the order line and its units.
+type saleUnit struct {
+	lineID   string
+	quantity int64
+}
+
+// saleUnits reads a record's lines as the order lines and units they name, in
+// the order the record lists them.
+func saleUnits(value any) []saleUnit {
+	items, _ := value.([]map[string]any)
+	out := make([]saleUnit, 0, len(items))
+	for _, item := range items {
+		quantity, _ := intValue(item[itemQuantity])
+		out = append(out, saleUnit{lineID: stringValue(item[itemLineItemID]), quantity: int64(quantity)})
+	}
+
+	return out
 }
 
 // afterSaleSource is a record a replacement can be opened for (ADR 0272).
@@ -127,6 +154,7 @@ func (u *UI) afterSalesOf(
 				sale := afterSaleOf(kindReturn, rec)
 				sale.Detail = nonEmpty(recordString(rec, fieldReason))
 				sale.Goods = afterSaleGoods(rec[fieldItems], titles)
+				sale.units = saleUnits(rec[fieldItems])
 				sale.Money = refundOf(rec, currency, scales)
 				sale.Since = moments(
 					momentAt("received", recordAt(rec, fieldReceivedAt), recordString(rec, fieldReceivedLocationID)),

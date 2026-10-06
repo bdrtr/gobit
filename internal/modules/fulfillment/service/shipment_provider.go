@@ -55,6 +55,11 @@ const (
 	FieldReturnedAt  = "returned_at"
 	// FieldShipmentCreatedAt is when the shipment was opened.
 	FieldShipmentCreatedAt = "created_at"
+	// FieldShipmentReturnID is the order return the parcel brings back, empty on
+	// an outgoing parcel (ADR 0384). It is a return parcel's binding, as the
+	// "order_fulfillment" link is an outgoing one's: a return parcel is found by
+	// its return, not by the order id it also carries (ADR 0413).
+	FieldShipmentReturnID = "return_id"
 	// FieldShipmentItems is what the parcel holds: one entry per order line
 	// it carries, in the order the items were written (D175), each keyed by
 	// [ItemLineItemID] and [ItemQuantity]. It is read only when asked for,
@@ -91,6 +96,7 @@ var shipmentFieldGetters = map[string]func(models.Fulfillment) any{
 	FieldReturnedAt:         func(f models.Fulfillment) any { return f.ReturnedAt },
 	FieldShipmentCreatedAt:  func(f models.Fulfillment) any { return f.CreatedAt },
 	FieldShipmentItems:      func(f models.Fulfillment) any { return shipmentItemRecords(f.Items) },
+	FieldShipmentReturnID:   func(f models.Fulfillment) any { return f.ReturnID },
 }
 
 // shipmentItemRecords turns a parcel's items into the entries of
@@ -143,7 +149,9 @@ func (p *ShipmentQueryProvider) Entity() string { return FulfillmentEntity }
 
 // List returns the root records.
 //
-// Supported filters: "reference" and "status" (both text). Any other filter or
+// Supported filters: "reference", "status" and "return_id" (all text), and
+// "id" (text), which selects one parcel by identity and stands alone, as the
+// order module's after-sales entities take it (ADR 0413). Any other filter or
 // an unrecognized field is rejected with errors.Invalid (ADR 0004).
 //
 // The limit is CLAMPED to [MaxLimit], silently, for the reason
@@ -154,6 +162,9 @@ func (p *ShipmentQueryProvider) List(
 ) ([]query.Record, error) {
 	if err := validateShipmentFields(opts.Fields); err != nil {
 		return nil, err
+	}
+	if raw, ok := opts.Filters[FieldShipmentID]; ok {
+		return p.byIdentity(ctx, raw, opts)
 	}
 
 	in := ListFulfillmentsInput{
@@ -173,6 +184,8 @@ func (p *ShipmentQueryProvider) List(
 			in.Reference = &text
 		case FieldShipmentStatus:
 			in.Status = &text
+		case FieldShipmentReturnID:
+			in.ReturnID = &text
 		default:
 			return nil, errors.Invalid(CodeInvalidInput,
 				"entity %q does not support the filter %q", FulfillmentEntity, name)
@@ -185,6 +198,26 @@ func (p *ShipmentQueryProvider) List(
 	}
 
 	return shipmentRecords(shipments, opts.Fields), nil
+}
+
+// byIdentity answers the "id" filter: the one parcel it names, or none. It is
+// the panel's read of a parcel it is asked to move, which has to say whose the
+// parcel is before it is moved (ADR 0413, gap D266).
+func (p *ShipmentQueryProvider) byIdentity(
+	ctx context.Context, raw any, opts query.ListOptions,
+) ([]query.Record, error) {
+	if len(opts.Filters) > 1 {
+		return nil, errors.Invalid(CodeInvalidInput,
+			"the %q filter selects a parcel by identity and cannot be combined with another filter",
+			FieldShipmentID)
+	}
+	id, ok := raw.(string)
+	if !ok {
+		return nil, errors.Invalid(CodeInvalidInput,
+			"filter %q has to be text, %T given", FieldShipmentID, raw)
+	}
+
+	return p.FetchByIDs(ctx, []string{id}, opts.Fields)
 }
 
 // FetchByIDs returns the records of the given identifiers as a BATCH.

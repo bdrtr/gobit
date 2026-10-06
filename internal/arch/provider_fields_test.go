@@ -900,6 +900,9 @@ var panelSurfaceContracts = map[string]string{
 	// The three trials' reports and a tax rate's change, as the cart flows
 	// and the tax module write them (ADR 0395).
 	"trial.go": "the promotion, price list and tax rate trials' reports",
+	// The return options a return's parcel is opened on, which the shipping
+	// option provider does not list for a region (ADR 0413).
+	"order_return_parcels.go": "fulfillment.admin's return options",
 }
 
 // panelReadFields returns every field name the admin panel names in its own

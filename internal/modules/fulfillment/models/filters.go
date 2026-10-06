@@ -61,6 +61,9 @@ type FulfillmentFilter struct {
 	Reference *string
 	// Status, when supplied, returns only the fulfillments in that status.
 	Status *string
+	// ReturnID, when supplied, returns only the parcels bringing that order
+	// return back (ADR 0413).
+	ReturnID *string
 	// Limit is the maximum number of rows to return.
 	Limit int64
 	// Offset is the number of rows to skip.

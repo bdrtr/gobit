@@ -3,7 +3,7 @@
 **Summary:** A parcel on a return option names the return it brings back and holds at
 most what it still awaits, bound to no order. It costs a column, one read and an unlisted parcel.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0413](0413-a-returns-parcel-is-opened-from-its-return.md), which opens and lists its parcel from the panel
 - **Date:** 2026-10-04
 - **Amends:** [0135](0135-a-parcel-cannot-hold-more-than-the-order-owes.md), whose bound made no exception for direction, and [0140](0140-a-parcel-records-which-order-it-is-for.md), which bound every parcel to its order
 

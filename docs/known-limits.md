@@ -1033,13 +1033,17 @@ past and is not corrected retroactively.
   units is being opened is seen by neither: the units can end on the shelf
   and in the box ([gaps D265](gaps.md)).
 
-- **A return parcel is an admin API call and buys no label.**
-  `POST /admin/v1/fulfillments` opens one naming its return
+- **A return parcel buys no label.** The order page opens one from its return
+  and moves it like any parcel
+  ([ADR 0413](adr/0413-a-returns-parcel-is-opened-from-its-return.md)), as
+  `POST /admin/v1/fulfillments` does naming its return
   ([ADR 0384](adr/0384-a-return-parcel-brings-back-the-return-it-names.md)); the
-  provider is handed no destination and no direction, the panel and the
-  storefront open none, and the order's shipment list, its timeline and the
-  Parcels screen's order column do not show it. Receiving a return does not
-  look at its parcel, and cancelling a return leaves its parcel to the operator.
+  provider is handed no destination and no direction, the storefront opens and
+  shows none, and the order's shipment list, its timeline and the Parcels
+  screen's order column do not show it. The page offers the order region's
+  return options that no cart fact rules. Receiving a return does not look at
+  its parcel, and cancelling a return leaves its parcel to the operator. A label
+  waits for the first carrier plugin whose API opens one.
 
 - **A shipping quote counts every unit sold but a gift card's.** The cart's
   quote and a delivery change price on the units, and an engraving or a wrap is

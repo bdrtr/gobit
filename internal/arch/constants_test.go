@@ -1072,6 +1072,12 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 	// The channel an order recorded (ADR 0410): a drift reads as "could not
 	// be read" on the order page and the order list.
 	assert.Equal(t, ordersvc.FieldSalesChannelID, adminui.FieldOrderSalesChannel)
+	// A return's parcels and the move's check of whose a parcel is (ADR 0413,
+	// gap D266): a drift reads as no parcel under a return, or as every move
+	// refused.
+	assert.Equal(t, fulfillmentsvc.FieldShipmentReturnID, adminui.FieldParcelReturnID)
+	assert.Equal(t, fulfillmentsvc.FieldReference, adminui.FieldParcelReference)
+	assert.Equal(t, ordersvc.FieldRegionID, adminui.FieldOrderRegion)
 
 	assert.Equal(t, productsvc.LinkVariantPriceSet, adminui.LinkVariantPriceSet,
 		"the panel's price link name must match the product module")

@@ -231,6 +231,19 @@ design. It is fixed with `1.0.0`.
 
 ### Fixes
 
+- **A return's parcel is opened from its return** (ADR 0413, D266). **For
+  operators:** the order page lists each return's parcels under the return and,
+  while it is requested, opens one on a return option for the units it still
+  awaits, under `fulfillment:write`; the parcel is shipped, delivered or
+  canceled from the page like any other. A parcel move names only the order's
+  own parcels: another order's parcel named under this order's page answers 404
+  and is not moved. **For integrators:** the shipment read layer
+  (`fulfillment`) publishes the `return_id` field, filters on `return_id`, and
+  reads one parcel with the `id` filter, which stands alone; the fulfillment
+  module's panel surface gains `OpenReturnParcel` and `ReturnOptionsJSON`. No
+  label is bought and no provider verb is added: they wait for a carrier plugin
+  that opens a return label.
+
 - **The panel shows what an order's goods cost** (ADR 0412). **For
   operators:** the order list has a "Placed margin" column, and the order page
   prints each line's unit cost and the placed margin with its sales and cost;

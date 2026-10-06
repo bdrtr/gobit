@@ -557,6 +557,9 @@ func linkedOrderCatalog(failing ...string) *fakeCatalog {
 			EntityOrderLineItem: {{"id": "oli_ring", "title": "Silver ring", "quantity": int64(1)}},
 		},
 		answer: func(spec query.GraphSpec) ([]query.Record, error, bool) {
+			if spec.Entity == EntityFulfillment {
+				return linkedOrderParcel(spec), nil, true
+			}
 			if spec.Entity != EntityOrder {
 				return nil, nil, false
 			}
@@ -607,6 +610,18 @@ func linkedOrderCatalog(failing ...string) *fakeCatalog {
 			return []query.Record{record}, nil, true
 		},
 	}
+}
+
+// linkedOrderParcel answers a read of one of order_1's parcels by its id, as
+// the move reads it to know it is the order's (gap D266): each carries the
+// order as its reference. A read of a return's parcels answers none.
+func linkedOrderParcel(spec query.GraphSpec) []query.Record {
+	id, _ := spec.Filters[filterID].(string)
+	if !slices.Contains([]string{"ful_late", "ful_early", "ful_same_a", "ful_same_b"}, id) {
+		return nil
+	}
+
+	return []query.Record{{fieldID: id, FieldParcelReference: "order_1"}}
 }
 
 // ptrTo returns a pointer to the value.

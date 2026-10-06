@@ -109,6 +109,7 @@ func (r *Repository) ListFulfillments(
 	rows, err := r.queries(ctx).ListFulfillments(ctx, fulfillmentdb.ListFulfillmentsParams{
 		Reference: filter.Reference,
 		Status:    filter.Status,
+		ReturnID:  filter.ReturnID,
 		RowLimit:  filter.Limit,
 		RowOffset: filter.Offset,
 	})
@@ -119,6 +120,7 @@ func (r *Repository) ListFulfillments(
 	total, err := r.queries(ctx).CountFulfillments(ctx, fulfillmentdb.CountFulfillmentsParams{
 		Reference: filter.Reference,
 		Status:    filter.Status,
+		ReturnID:  filter.ReturnID,
 	})
 	if err != nil {
 		return nil, 0, classify(err, codeQueryFailed, "could not count fulfillments")

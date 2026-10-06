@@ -927,7 +927,7 @@ func TestTheShipmentEntitySaysWhatAParcelHolds(t *testing.T) {
 		service.FieldShipmentProviderID, service.FieldExternalID, service.FieldShipmentStatus,
 		service.FieldTrackingNumber, service.FieldTrackingURL, service.FieldShippedAt,
 		service.FieldDeliveredAt, service.FieldCanceledAt, service.FieldReturnedAt,
-		service.FieldShipmentCreatedAt, service.FieldShipmentItems,
+		service.FieldShipmentCreatedAt, service.FieldShipmentItems, service.FieldShipmentReturnID,
 	}, slices.Collect(maps.Keys(all[0])), "the offered set is exactly these fields")
 	assert.Equal(t, want, all[0][service.FieldShipmentItems], "a read of every field carries the items")
 }

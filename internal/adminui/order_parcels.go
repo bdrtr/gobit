@@ -356,7 +356,9 @@ func (u *UI) openParcel(w http.ResponseWriter, r *http.Request) {
 }
 
 // moveParcel makes the move in the path on the parcel in the path and draws
-// the order again saying what it did (ADR 0324).
+// the order again saying what it did (ADR 0324). The parcel has to be one the
+// order's page shows, its own or one bringing back one of its returns; another
+// order's is refused with 404 and is not moved (ADR 0413, gap D266).
 func (u *UI) moveParcel(w http.ResponseWriter, r *http.Request) {
 	act, ok := parcelActs[chi.URLParam(r, "act")]
 	if !ok {
@@ -373,8 +375,18 @@ func (u *UI) moveParcel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orderID := chi.URLParam(r, "id")
-	done, err := act(r.Context(), u.parcels, r, chi.URLParam(r, "parcel"))
+	orderID, parcelID := chi.URLParam(r, "id"), chi.URLParam(r, "parcel")
+	ours, err := u.parcelOfOrder(r, orderID, parcelID)
+	if err != nil {
+		u.unexpectedFailure(w, r, err, "The parcel could not be moved")
+		return
+	}
+	if !ours {
+		u.renderOrder(w, r, http.StatusNotFound, orderID, &afterSaleOutcome{
+			Refused: "Parcel " + parcelID + " is not one of this order's; nothing was moved."})
+		return
+	}
+	done, err := act(r.Context(), u.parcels, r, parcelID)
 	switch {
 	case err == nil:
 		u.renderOrder(w, r, http.StatusOK, orderID, &afterSaleOutcome{Done: done})

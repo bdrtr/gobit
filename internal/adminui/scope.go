@@ -200,6 +200,9 @@ func builtInScopes() map[string]string {
 		// And cancels the order (ADR 0339).
 		routeKey(post, OrderCancelPath):    scopeOrderWrite,
 		routeKey(post, OrderParcelActPath): scopeFulfillmentWrite,
+		// A return's parcel is opened by the fulfillment module, under the
+		// privilege of POST /admin/v1/fulfillments (ADR 0413).
+		routeKey(post, OrderReturnParcelsPath): scopeFulfillmentWrite,
 		// The store profile is the settings module's (ADR 0336).
 		routeKey(get, StoreProfilePath):  scopeSettingsRead,
 		routeKey(post, StoreProfilePath): scopeSettingsWrite,

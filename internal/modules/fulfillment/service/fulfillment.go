@@ -782,6 +782,9 @@ type ListFulfillmentsInput struct {
 	Reference *string
 	// Status, if given, restricts the result to the fulfillments in that state.
 	Status *string
+	// ReturnID, if given, restricts the result to the parcels bringing that
+	// order return back (ADR 0413).
+	ReturnID *string
 	// Page holds the pagination parameters.
 	Page Page
 }
@@ -809,6 +812,7 @@ func (s *Service) ListFulfillments(
 	list, total, err := s.store.ListFulfillments(ctx, models.FulfillmentFilter{
 		Reference: in.Reference,
 		Status:    in.Status,
+		ReturnID:  in.ReturnID,
 		Limit:     page.Limit,
 		Offset:    page.Offset,
 	})

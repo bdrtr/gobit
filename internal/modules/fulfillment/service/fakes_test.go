@@ -621,6 +621,9 @@ func (f *fakeStore) ListFulfillments(
 		if filter.Status != nil && ful.Status.String() != *filter.Status {
 			continue
 		}
+		if filter.ReturnID != nil && ful.ReturnID != *filter.ReturnID {
+			continue
+		}
 		ful.Items = nil
 		matched = append(matched, ful)
 	}

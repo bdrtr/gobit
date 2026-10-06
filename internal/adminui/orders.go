@@ -531,6 +531,7 @@ func (u *UI) renderOrder(
 	detail.AfterSales, detail.AfterSalesMore, detail.AfterSalesUnread = u.afterSalesOf(
 		r, detail.ID, detail.Currency, scales, detail.Lines)
 	u.withClaimEvidence(r, detail.AfterSales)
+	u.withReturnParcels(r, &detail)
 	detail.NotificationsHidden = !principal.HasScope(scopeNotificationRead)
 	if u.notifications != nil && !detail.NotificationsHidden {
 		detail.Notifications, detail.NotificationsMore, detail.NotificationsUnread = u.notificationsOf(r, detail.ID)
@@ -817,13 +818,7 @@ func (u *UI) paymentOf(r *http.Request, orderID string, scales map[string]int) (
 // titles. A line the page did not read — a parent's line in a parcel an
 // addition joined, or one past the page's hundred — is named by its id.
 func (u *UI) parcelsOf(r *http.Request, orderID string, lines []orderLine) ([]orderParcel, bool) {
-	linked, err := u.linkedTo(r, orderID, query.Expansion{
-		Link: linkOrderFulfillment,
-		Fields: []string{
-			fieldID, fieldStatus, fieldTrackingNumber, fieldTrackingURL, fieldCreatedAt,
-			fieldShippedAt, fieldDeliveredAt, fieldCanceledAt, fieldReturnedAt, fieldItems,
-		},
-	})
+	linked, err := u.linkedTo(r, orderID, query.Expansion{Link: linkOrderFulfillment, Fields: parcelFields})
 	if err != nil {
 		return nil, true
 	}
@@ -833,7 +828,17 @@ func (u *UI) parcelsOf(r *http.Request, orderID string, lines []orderLine) ([]or
 		titles[lines[i].ID] = lines[i].Title
 	}
 
-	records := linkedRecords(linked)
+	return parcelsFrom(linkedRecords(linked), titles), false
+}
+
+// parcelFields are the shipment fields a parcel's row prints.
+var parcelFields = []string{
+	fieldID, fieldStatus, fieldTrackingNumber, fieldTrackingURL, fieldCreatedAt,
+	fieldShippedAt, fieldDeliveredAt, fieldCanceledAt, fieldReturnedAt, fieldItems,
+}
+
+// parcelsFrom turns shipment records into the parcels' rows, oldest first.
+func parcelsFrom(records []query.Record, titles map[string]string) []orderParcel {
 	parcels := make([]orderParcel, 0, len(records))
 	for _, record := range records {
 		parcels = append(parcels, orderParcel{
@@ -858,7 +863,7 @@ func (u *UI) parcelsOf(r *http.Request, orderID string, lines []orderLine) ([]or
 		return strings.Compare(a.ID, b.ID)
 	})
 
-	return parcels, false
+	return parcels
 }
 
 // parcelHolds reads a parcel's items as "title × quantity", in the order the

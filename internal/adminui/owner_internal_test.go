@@ -1024,6 +1024,16 @@ func (p recordingParcels) CancelParcel(context.Context, string) error {
 	return p.surfaces.reach(ServiceFulfillmentAdmin)
 }
 
+func (p recordingParcels) OpenReturnParcel(
+	context.Context, string, string, string, string, []string, []int64,
+) (parcel string, already bool, err error) {
+	return "ful_walk", false, p.surfaces.reach(ServiceFulfillmentAdmin)
+}
+
+func (p recordingParcels) ReturnOptionsJSON(context.Context, string, string) (json.RawMessage, error) {
+	return json.RawMessage(`[{"id":"sopt_walk","name":"Walk"}]`), p.surfaces.reach(ServiceFulfillmentAdmin)
+}
+
 func (p recordingParcels) ReviseShippingOption(context.Context, string, string, int64, bool, string, int64, bool) error {
 	return p.surfaces.reach(ServiceFulfillmentAdmin)
 }
@@ -1199,6 +1209,10 @@ var walkForms = map[string]url.Values{
 	// An order's parcels (ADR 0324).
 	routeKey(http.MethodPost, OrderParcelsPath):   {formParcelKey: {"walk"}, "units_walk": {"1"}},
 	routeKey(http.MethodPost, OrderParcelActPath): {},
+	// Opening a return's parcel (ADR 0413).
+	routeKey(http.MethodPost, OrderReturnParcelsPath): {
+		formParcelKey: {"walk"}, formReturnOption: {"walk"}, "units_walk": {"1"},
+	},
 	// Writing the store profile (ADR 0336).
 	routeKey(http.MethodPost, StoreProfilePath):    {formProfileName: {"Walk"}, formProfileCountry: {"TR"}},
 	routeKey(http.MethodPost, InvoiceStatusPath):   {formInvoiceReadStatus: {"issued"}, formInvoiceTo: {"sent"}},

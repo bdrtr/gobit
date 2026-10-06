@@ -52,10 +52,16 @@ SELECT * FROM fulfillments
 WHERE id = $1
 FOR UPDATE;
 
+-- ListFulfillments lists the fulfillments a page at a time, newest first.
+--
+-- return_id finds the parcels bringing one order return back (ADR 0413), over
+-- fulfillments_return_idx; it is a return parcel's binding, as the
+-- order_fulfillment link is an outgoing one's.
 -- name: ListFulfillments :many
 SELECT * FROM fulfillments
 WHERE (sqlc.narg('reference')::text IS NULL OR reference = sqlc.narg('reference')::text)
   AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
+  AND (sqlc.narg('return_id')::text IS NULL OR return_id = sqlc.narg('return_id')::text)
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('row_limit')::bigint OFFSET sqlc.arg('row_offset')::bigint;
 
@@ -71,7 +77,8 @@ ORDER BY id;
 -- name: CountFulfillments :one
 SELECT COUNT(*) FROM fulfillments
 WHERE (sqlc.narg('reference')::text IS NULL OR reference = sqlc.narg('reference')::text)
-  AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text);
+  AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
+  AND (sqlc.narg('return_id')::text IS NULL OR return_id = sqlc.narg('return_id')::text);
 
 -- UpdateFulfillmentProviderResult writes the provider's response onto the row.
 --

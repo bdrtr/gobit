@@ -559,6 +559,68 @@ the link opens on this order.
       </td>
       {{ end }}
     </tr>
+    {{ if or .Parcels .ParcelsUnread .ReturnParcel }}
+    {{/*
+    A return's parcels are the ones bringing it back, found by the return they
+    name; they are moved like the order's own (ADR 0413). A requested return
+    offers a parcel on a return option for the units it still awaits, those its
+    live parcels hold taken off; the form carries a key, so a second press opens
+    nothing new. No label is bought: that waits for a carrier plugin.
+    */}}
+    <tr>
+      <td colspan="{{ if $.CanAct }}7{{ else }}6{{ end }}">
+        {{ if .ParcelsUnread }}<p class="muted">The parcels bringing this return back could not be read.</p>{{ end }}
+        {{ with .Parcels }}
+        <table>
+          <thead><tr><th>Bringing it back</th><th>Holds</th><th>Tracking</th><th>Opened</th><th>Moments</th>{{ if $.CanMoveParcels }}<th>Move</th>{{ end }}</tr></thead>
+          <tbody>
+            {{ range $parcel := . }}
+            <tr>
+              <td><span class="pill">{{ .Status }}</span> <span class="muted">{{ .ID }}</span></td>
+              <td>{{ range .Holds }}{{ . }}<br>{{ else }}<span class="muted">nothing listed</span>{{ end }}</td>
+              <td>
+                {{ if and .TrackingNumber .TrackingURL }}<a href="{{ .TrackingURL }}" rel="noopener noreferrer">{{ .TrackingNumber }}</a>
+                {{ else if .TrackingNumber }}{{ .TrackingNumber }}
+                {{ else }}<span class="muted">no tracking</span>{{ end }}
+              </td>
+              <td>{{ if not .CreatedAt.IsZero }}{{ .CreatedAt.Format "2006-01-02 15:04" }}{{ end }}</td>
+              <td>
+                {{ with .ShippedAt }}shipped {{ .Format "2006-01-02 15:04" }}<br>{{ end }}
+                {{ with .DeliveredAt }}delivered {{ .Format "2006-01-02 15:04" }}<br>{{ end }}
+                {{ with .CanceledAt }}canceled {{ .Format "2006-01-02 15:04" }}<br>{{ end }}
+                {{ with .ReturnedAt }}returned {{ .Format "2006-01-02 15:04" }}{{ end }}
+              </td>
+              {{ if $.CanMoveParcels }}<td>
+                {{ range index $.ParcelMoves $parcel.Status }}
+                <form method="post" action="{{ $.OrdersPath }}/{{ $.Order.ID }}/parcels/{{ $parcel.ID }}/{{ .Act }}">
+                  {{ if .Tracking }}<input name="tracking_number" placeholder="tracking number" aria-label="tracking number">
+                  <input name="tracking_url" placeholder="tracking page" aria-label="tracking page">{{ end }}
+                  <button type="submit">{{ .Label }}</button>
+                </form>
+                {{ end }}
+              </td>{{ end }}
+            </tr>
+            {{ end }}
+          </tbody>
+        </table>
+        {{ end }}
+        {{ with .ReturnParcel }}
+        {{ if .OptionsUnread }}<p class="muted">The return options could not be read, so no parcel can be opened here.</p>
+        {{ else if .NoOption }}<p class="muted">The order's region offers no return option, so no parcel can be opened here.</p>
+        {{ else }}
+        <form method="post" action="{{ $.OrdersPath }}/{{ $.Order.ID }}/returns/{{ $sale.ID }}/parcels">
+          <input type="hidden" name="key" value="{{ .Key }}">
+          <select name="option" aria-label="return option" required>
+            {{ range .Options }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}
+          </select>
+          {{ range .Lines }}<label>{{ .Title }} <input type="number" name="units_{{ .ID }}" min="0" max="{{ .Awaited }}" value="{{ .Awaited }}" aria-label="units of {{ .Title }} coming back"></label>{{ end }}
+          <button type="submit">Open a parcel bringing it back</button>
+        </form>
+        {{ end }}
+        {{ end }}
+      </td>
+    </tr>
+    {{ end }}
     {{ end }}
   </tbody>
 </table>
