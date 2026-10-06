@@ -57,6 +57,12 @@ type CreateFulfillmentInput struct {
 	// ReturnID is the order return this parcel brings back; required on a return
 	// option and refused on any other (ADR 0384). Not validated here (Principle 2.2).
 	ReturnID string
+	// ItemsRequired refuses an outgoing parcel that names no items and does not
+	// ask for what is owed, with [CodeItemsRequired] (ADR 0409, gap D264). The
+	// module's own route sets it: such a parcel holds units nobody counts. It is
+	// read after the key, so a replay is answered with its parcel, and after the
+	// option's direction, so a return option keeps its own refusal.
+	ItemsRequired bool
 }
 
 // CreateFulfillment opens a fulfillment at the provider and produces its record.
@@ -180,6 +186,11 @@ func (s *Service) CreateFulfillment(
 			return models.Fulfillment{}, err
 		}
 		owedDefault = in.ItemsOwed && len(items) == 0
+		if in.ItemsRequired && returnID == "" && len(items) == 0 && !owedDefault {
+			return models.Fulfillment{}, errors.Invalid(CodeItemsRequired,
+				"an outgoing parcel names the items it holds; a parcel of every unit an order "+
+					"still owes is opened through POST /admin/v1/orders/{id}/fulfillments")
+		}
 
 		// The bound is read BEFORE the transaction opens: asking another module
 		// while holding this one's locks takes a second connection from the same
@@ -968,6 +979,19 @@ func stampFor(status, target models.FulfillmentStatus, now time.Time) *time.Time
 	}
 	stamp := now
 	return &stamp
+}
+
+// CommittedQuantitiesForReference sums, per order line, the units the live
+// outgoing parcels opened for the reference hold, counted by the reference this
+// module stores: the population an open is held to under the order's lock
+// (ADR 0409), so a parcel whose link to its order was not written counts.
+func (s *Service) CommittedQuantitiesForReference(ctx context.Context, reference string) (map[string]int64, error) {
+	reference = strings.TrimSpace(reference)
+	if err := requireText("the reference", reference); err != nil {
+		return nil, err
+	}
+
+	return s.store.CommittedQuantitiesForReference(ctx, reference)
 }
 
 // CommittedQuantities sums, per order line, the units a live outgoing parcel

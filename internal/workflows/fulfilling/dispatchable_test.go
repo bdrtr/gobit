@@ -91,14 +91,27 @@ func TestAnOrderWithNoParcelsOwesEverything(t *testing.T) {
 	t.Parallel()
 
 	h := newDispatchHarnessWithLines(t, []testLine{{LineItemID: testLineID, Bought: 4}}, nil)
-	h.links.bound = map[string][]string{}
 
 	owed, err := h.DispatchableQuantities(t.Context(), testOrderID, []string{testLineID})
 	require.NoError(t, err)
-	assert.Equal(t, int64(4), owed[testLineID],
-		"no parcels, so the fulfillment module is not even asked")
-	assert.Zero(t, h.fulfillments.committedCalls,
-		"and it really was not asked: a link read that came back empty is the answer")
+	assert.Equal(t, int64(4), owed[testLineID], "no parcel holds a unit, so every unit is owed")
+}
+
+// TestAnUnlinkedParcelIsCountedAsTheModuleCountsIt holds the panel's offer to
+// the module's check (ADR 0409): a parcel holding two units whose link to the
+// order was never written is counted, since the module counts parcels by the
+// reference it stores, so the form offers the one unit the module will take.
+func TestAnUnlinkedParcelIsCountedAsTheModuleCountsIt(t *testing.T) {
+	t.Parallel()
+
+	h := newDispatchHarnessWithLines(t, []testLine{{LineItemID: testLineID, Bought: 3}},
+		map[string]int64{testLineID: 2})
+	h.links.bound = map[string][]string{}
+
+	owed, err := h.DispatchableQuantities(t.Context(), testOrderID, nil)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int64{testLineID: 1}, owed,
+		"bought 3, held 2 by a parcel no link names: one is owed")
 }
 
 // TestAFaultInEitherSideIsREPORTED keeps a failure from reading as "owes nothing".
@@ -115,9 +128,6 @@ func TestAFaultInEitherSideIsREPORTED(t *testing.T) {
 	}{
 		{name: "the order cannot be read", break_: func(h *dispatchHarness) {
 			h.orders.linesErr = errors.New("the order module is unreachable")
-		}},
-		{name: "the parcels cannot be read", break_: func(h *dispatchHarness) {
-			h.links.listErr = errors.New("the link service is unreachable")
 		}},
 		{name: "what the parcels hold cannot be read", break_: func(h *dispatchHarness) {
 			h.fulfillments.committedErr = errors.New("the fulfillment module is unreachable")

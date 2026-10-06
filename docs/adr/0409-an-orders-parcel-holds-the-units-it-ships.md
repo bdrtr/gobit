@@ -31,9 +31,11 @@ under that lock.
 
 ## Consequences
 
-- A write-off restocks no unit a parcel holds, a second parcel cannot take
-  units a first one holds, and a canceled parcel releases what it held, for
-  every parcel opened from now on.
+- A second parcel cannot take units a first one holds. A write-off restocks no
+  unit a parcel holds and a canceled parcel releases what it held, for every
+  parcel opened from now on whose link to its order is written: both find
+  parcels through that link, so a parcel whose link write failed is restocked
+  by a write-off and released by nothing (D264).
 - The order route answers 422 `fulfilling_items_required` for an order it
   cannot default and 409 `fulfillment_nothing_owed` for one that owes nothing;
   the module's route answers 422 `fulfillment_items_required` for no items. The

@@ -277,8 +277,9 @@ func describeFulfillments(d *openapi.Doc) {
 			"An outgoing parcel names its \"items\", each within what its line may still ship: " +
 			"what was sold, less what was written off, less what the order's live parcels hold, " +
 			"counted under the order's lock (ADR 0409). With no items it answers 422 " +
-			"fulfillment_items_required; a parcel of every unit still owed is opened through " +
-			"POST /admin/v1/orders/{id}/fulfillments.",
+			"fulfillment_items_required, once its key is read (a replay is answered with its " +
+			"parcel) and its option's direction; a parcel of every unit still owed is opened " +
+			"through POST /admin/v1/orders/{id}/fulfillments.",
 		RequestBody: d.RequestBody(createFulfillmentRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response("The opened fulfillment", d.Item(fulfillmentDTO{})),

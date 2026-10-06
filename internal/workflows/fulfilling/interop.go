@@ -166,16 +166,17 @@ type interopShipment struct {
 }
 
 // DispatchableQuantities answers, per order line, how many units a NEW parcel may
-// still hold.
+// still hold, as the fulfillment module counts them; the rules are
+// [Workflows.DispatchableQuantities]'s.
 //
-// # Who asks, and why it is not the caller's own arithmetic
+// # Who asks
 //
-// The fulfillment module's create endpoint asks, before it opens anything. It has
-// the line identifiers and the quantities an operator sent and can check neither
-// against the order — it does not know this one (Principle 2.1/2.4). So it resolves
-// this flow by name at request time, the way the cart module resolves its pricing
-// flow: the endpoint stays where integrators found it and the cross-module decision
-// lives above it (ADR 0135).
+// The order module's panel surface, to draw its open form (ADR 0409). The
+// fulfillment module's create endpoint asks [Interop.DispatchCeilings] instead
+// and counts the parcels itself under the order's lock: it has the line
+// identifiers and quantities an operator sent and can check neither against the
+// order, which it does not know (Principle 2.1/2.4), so it resolves this flow by
+// name at request time (ADR 0135).
 //
 // A line missing from the map is a line the order does not have, and the caller has
 // to read that as a refusal rather than as an unlimited quantity.

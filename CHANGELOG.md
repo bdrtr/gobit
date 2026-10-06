@@ -36,7 +36,9 @@ design. It is fixed with `1.0.0`.
   `service.DispatchBound` asks `DispatchCeilings` in place of
   `DispatchableQuantities`, its interop gains `CreateFulfillmentHolding`, and
   `service.Store` gains `CommittedQuantitiesForReference` and
-  `LockReferenceDispatch`.
+  `LockReferenceDispatch`, `CreateFulfillmentInput` gains `ItemsRequired`, and
+  the module's interop gains `CommittedQuantitiesForReference`, which the
+  fulfilling flow's `Fulfillments` asks in place of `CommittedQuantities`.
 - **A refund document names the sale it amends** (ADR 0406, D247, D262). **For
   integrators:** `POST /admin/v1/invoices` with `"kind":"refund"` and no
   `amends_invoice_id`, with one of spaces alone, or with a row naming no

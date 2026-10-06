@@ -297,9 +297,10 @@ func (f *fakeFulfillments) ListOptionsJSON(
 	return json.Marshal(map[string]any{"options": f.options})
 }
 
-// CommittedQuantities answers what the live parcels hold.
-func (f *fakeFulfillments) CommittedQuantities(
-	context.Context, []string,
+// CommittedQuantitiesForReference answers what the order's live parcels hold,
+// whatever the links say.
+func (f *fakeFulfillments) CommittedQuantitiesForReference(
+	context.Context, string,
 ) (map[string]int64, error) {
 	f.committedCalls++
 	if f.committedErr != nil {

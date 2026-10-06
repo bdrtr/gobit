@@ -259,3 +259,85 @@ func TestTheHoldingInteropAsksForWhatIsOwedOrHoldsWhatItNames(t *testing.T) {
 	_, err = interop.CreateFulfillmentHolding(context.Background(), "order_1", optionID, "key-bad", nil, []byte(`{`))
 	assert.True(t, errors.IsInvalid(err), "%v", err)
 }
+
+// TestTheModuleRouteRefusesAnOutgoingParcelNamingNone is gap D264 on the module's
+// route (ADR 0409): an outgoing parcel that names no items and does not ask for
+// what is owed is refused before anything is read or written.
+func TestTheModuleRouteRefusesAnOutgoingParcelNamingNone(t *testing.T) {
+	t.Parallel()
+
+	setup := newSetup(t)
+	optionID := readyOption(t, setup)
+
+	_, err := setup.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
+		Reference: "order_1", ShippingOptionID: optionID, IdempotencyKey: "key-none", ItemsRequired: true,
+	})
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalid(err), "%v", err)
+	assert.Equal(t, service.CodeItemsRequired, errors.CodeOf(err))
+	assert.Empty(t, setup.store.fuls, "nothing was written")
+	assert.Zero(t, setup.bound.asked(), "what the order may ship was not even asked")
+}
+
+// TestAReplayOfAnItemlessParcelIsAnsweredWithIt reads the key before the
+// refusal: a parcel opened with no items before ADR 0409, replayed under its
+// key on the module's route, is answered with that parcel, not refused as if
+// nothing had been opened.
+func TestAReplayOfAnItemlessParcelIsAnsweredWithIt(t *testing.T) {
+	t.Parallel()
+
+	setup := newSetup(t)
+	optionID := readyOption(t, setup)
+	in := service.CreateFulfillmentInput{Reference: "order_1", ShippingOptionID: optionID, IdempotencyKey: "key-old"}
+
+	first, err := setup.svc.CreateFulfillment(context.Background(), in)
+	require.NoError(t, err, "an itemless parcel as the module opened one before ADR 0409")
+
+	in.ItemsRequired = true
+	replay, err := setup.svc.CreateFulfillment(context.Background(), in)
+	require.NoError(t, err, "a replay is answered from its key")
+	assert.Equal(t, first.ID, replay.ID)
+}
+
+// TestAReturnOptionWithoutItsReturnKeepsItsRefusal reads the option's
+// direction before the refusal: a return option sent with no return_id and no
+// items answers the direction mismatch the route describes.
+func TestAReturnOptionWithoutItsReturnKeepsItsRefusal(t *testing.T) {
+	t.Parallel()
+
+	setup := newSetup(t)
+	profileID := setup.createProfile(t, "returns")
+	optionID := setup.createOption(t, service.CreateOptionInput{
+		Name: "Return pickup", ShippingProfileID: profileID, Amount: 0, IsReturn: true,
+	})
+
+	_, err := setup.svc.CreateFulfillment(context.Background(), service.CreateFulfillmentInput{
+		Reference: "order_1", ShippingOptionID: optionID, IdempotencyKey: "key-return", ItemsRequired: true,
+	})
+	require.Error(t, err)
+	assert.Equal(t, service.CodeOptionDirectionMismatch, errors.CodeOf(err), "%v", err)
+}
+
+// TestTheInteropCountsTheReferencesLiveOutgoingParcels is the count the panel's
+// offer and the module's check share (ADR 0409): the live outgoing parcels
+// opened for the reference, whether or not anything links them, and neither a
+// canceled one, one bringing a return back, nor another reference's.
+func TestTheInteropCountsTheReferencesLiveOutgoingParcels(t *testing.T) {
+	t.Parallel()
+
+	setup := newSetup(t)
+	setup.store.putLiveParcel("ful_live", "order_1", "li_a", 2)
+	setup.store.putLiveParcel("ful_canceled", "order_1", "li_a", 5)
+	setup.store.cancelParcel("ful_canceled")
+	setup.store.putLiveParcel("ful_return", "order_1", "li_a", 7)
+	setup.store.mu.Lock()
+	ret := setup.store.fuls["ful_return"]
+	ret.ReturnID = "oret_1"
+	setup.store.fuls["ful_return"] = ret
+	setup.store.mu.Unlock()
+	setup.store.putLiveParcel("ful_other", "order_2", "li_a", 11)
+
+	held, err := service.NewInterop(setup.svc).CommittedQuantitiesForReference(context.Background(), "order_1")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int64{"li_a": 2}, held)
+}

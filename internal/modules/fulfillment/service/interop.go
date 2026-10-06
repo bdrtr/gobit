@@ -531,6 +531,17 @@ func interopInt(value json.Number, field string) (int64, error) {
 	return parsed, nil
 }
 
+// CommittedQuantitiesForReference sums, per order line, the units the live
+// outgoing parcels opened for the reference hold, as the module counts them
+// when it holds a new parcel to its order (ADR 0409). The fulfilling flow
+// answers what an order still owes a parcel from it, so the panel's form
+// offers what this module will take.
+func (i *Interop) CommittedQuantitiesForReference(
+	ctx context.Context, reference string,
+) (map[string]int64, error) {
+	return i.svc.CommittedQuantitiesForReference(ctx, reference)
+}
+
 // CommittedQuantities sums, per order line, the units a live outgoing parcel
 // holds.
 //

@@ -373,9 +373,9 @@ func TestFulfillmentCreationTranslatesItems(t *testing.T) {
 }
 
 // TestAnOutgoingParcelNamesItsItemsOnTheModuleRoute is ADR 0409 on the module's
-// own route: an outgoing parcel with no items, or an empty list, is refused
-// with 422 and reaches no service, since it would hold units nobody counts; a
-// parcel bringing a return back keeps its own refusal in the service.
+// own route: every request asks the service to require items, which refuses an
+// outgoing parcel naming none only after its key and its option's direction
+// are read (the service tests hold that order).
 func TestAnOutgoingParcelNamesItsItemsOnTheModuleRoute(t *testing.T) {
 	t.Parallel()
 
@@ -387,17 +387,15 @@ func TestAnOutgoingParcelNamesItsItemsOnTheModuleRoute(t *testing.T) {
 
 	for _, body := range []string{
 		`{"reference":"order_1","shipping_option_id":"sopt_1","idempotency_key":"a"}`,
-		`{"reference":"order_1","shipping_option_id":"sopt_1","idempotency_key":"a","items":[]}`,
+		`{"reference":"order_1","shipping_option_id":"sopt_1","idempotency_key":"b","return_id":"oret_1"}`,
+		`{"reference":"order_1","shipping_option_id":"sopt_1","idempotency_key":"c",` +
+			`"items":[{"line_item_id":"line_1","quantity":1}]}`,
 	} {
+		svc.lastCreateInput = service.CreateFulfillmentInput{}
 		rec := doRequest(t, r, http.MethodPost, "/admin/v1/fulfillments", body)
-		require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
-		assert.Contains(t, rec.Body.String(), service.CodeItemsRequired)
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		assert.True(t, svc.lastCreateInput.ItemsRequired, "the route asks for items: %s", body)
 	}
-	assert.Empty(t, svc.lastCreateInput.IdempotencyKey, "nothing reached the service")
-
-	rec := doRequest(t, r, http.MethodPost, "/admin/v1/fulfillments",
-		`{"reference":"order_1","shipping_option_id":"sopt_1","idempotency_key":"b","return_id":"oret_1"}`)
-	assert.Equal(t, http.StatusCreated, rec.Code, "a return parcel is the service's to judge: %s", rec.Body.String())
 }
 
 // TestFulfillmentResponseCarriesItems proves that the list field is always an

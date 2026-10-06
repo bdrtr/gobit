@@ -18,19 +18,26 @@ type dispatchableLine struct {
 }
 
 // DispatchableQuantities answers, per order line, how many units a NEW parcel may
-// still hold.
+// still hold, counted the way the fulfillment module holds a parcel to its
+// order (ADR 0409).
 //
-// # Why this is a flow's answer and not a module's
+//	dispatchable = ceiling − held = bought − canceled − held
 //
-// It is three records in two modules. What was sold and what was written off are
-// the order's; what is already in a live parcel is the fulfillment module's; and
-// which parcels belong to the order is a Module Link, which neither module reads
-// on the other's behalf. The fulfillment module's create endpoint is where the
-// answer is NEEDED, and it resolves this flow to get it — the same shape the cart
-// module uses for pricing, where the endpoint stays on the module and the
-// cross-module decision lives above it (ADR 0135).
+// # Who asks
 //
-//	dispatchable = bought − canceled − committed
+// The order module's panel surface draws its open form with it, so the form
+// offers each line what the module will take. The module itself asks
+// [Workflows.DispatchCeilings] and counts the parcels under the order's lock;
+// this answer is the same arithmetic read outside that lock, an offer rather
+// than a promise.
+//
+// # Held is counted by reference, not through the link
+//
+// What the order's live outgoing parcels hold is the fulfillment module's sum
+// over the parcels whose reference is the order, the count its open is checked
+// against. A count through the "order_fulfillment" link would miss a parcel
+// whose link write failed, or one opened before ADR 0140, and offer units the
+// module then refuses.
 //
 // A line missing from the answer is a line the order does not have. That is a
 // meaning rather than an absence, and the caller has to treat it as a refusal:
@@ -42,54 +49,34 @@ type dispatchableLine struct {
 // ships again is a new decision rather than a quantity still owed, and subtracting
 // it would bound a parcel by goods that already left once.
 //
-// A parcel bringing a return back is bound to no order, so it is never committed
+// A parcel bringing a return back is not an outgoing one, so it is never held
 // (ADR 0384).
 func (w *Workflows) DispatchableQuantities(
 	ctx context.Context, orderID string, lineItemIDs []string,
 ) (map[string]int64, error) {
-	if w.orders == nil || w.fulfillments == nil || w.links == nil {
+	if w.fulfillments == nil {
 		return nil, errors.Internal(CodeDispatchableUnknown,
 			"the fulfilling flow is not wired, so what a parcel may hold cannot be read")
 	}
 
-	lines, err := w.soldLines(ctx, orderID)
+	ceilings, err := w.DispatchCeilings(ctx, orderID, lineItemIDs)
 	if err != nil {
 		return nil, err
 	}
 
-	committed, err := w.committedUnits(ctx, orderID)
+	held, err := w.fulfillments.CommittedQuantitiesForReference(ctx, orderID)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, errors.KindOf(err), CodeDispatchableUnknown,
+			"the units the parcels of order %s hold could not be read", orderID)
 	}
 
-	// Only the lines the caller ASKED about. Answering for the whole order would
-	// make the map grow with the order and say nothing more: the caller is opening
-	// one parcel and what it needs is the bound for the lines in it.
-	//
-	// A line the order does not have is left OUT, which is the only signal the
-	// caller can read as "not on this order" — an answer of zero would be
-	// indistinguishable from a line that is fully shipped.
-	wanted := make(map[string]struct{}, len(lineItemIDs))
-	for _, id := range lineItemIDs {
-		wanted[id] = struct{}{}
-	}
-
-	out := make(map[string]int64, len(lineItemIDs))
-	for _, line := range lines {
-		if len(wanted) > 0 {
-			if _, asked := wanted[line.LineItemID]; !asked {
-				continue
-			}
-		}
-		// Clamped at zero rather than reported negative. An order whose parcels
-		// already hold more than it sold is a state this flow did not create and
-		// cannot fix, and answering "minus two" would make a caller's comparison
-		// pass for a quantity of minus three.
-		remaining := line.Bought - line.Canceled - committed[line.LineItemID]
-		if remaining < 0 {
-			remaining = 0
-		}
-		out[line.LineItemID] = remaining
+	// Clamped at zero rather than reported negative. An order whose parcels
+	// already hold more than it may ship is a state this flow did not create and
+	// cannot fix, and answering "minus two" would make a caller's comparison
+	// pass for a quantity of minus three.
+	out := make(map[string]int64, len(ceilings))
+	for line, ceiling := range ceilings {
+		out[line] = max(ceiling-held[line], 0)
 	}
 
 	return out, nil
@@ -154,30 +141,4 @@ func (w *Workflows) soldLines(ctx context.Context, orderID string) ([]dispatchab
 	}
 
 	return lines, nil
-}
-
-// committedUnits sums, per line, the units the order's live parcels hold.
-//
-// The parcels come from the "order_fulfillment" LINK rather than from the
-// shipment's free-text reference: the module never validates that field and its
-// own record says reading it as the order is reading a convention.
-func (w *Workflows) committedUnits(ctx context.Context, orderID string) (map[string]int64, error) {
-	byOrder, err := w.links.ListMany(ctx, LinkOrderFulfillment, []string{orderID})
-	if err != nil {
-		return nil, errors.Wrap(err, errors.KindOf(err), CodeDispatchableUnknown,
-			"the parcels of order %s could not be read", orderID)
-	}
-
-	parcels := byOrder[orderID]
-	if len(parcels) == 0 {
-		return map[string]int64{}, nil
-	}
-
-	committed, err := w.fulfillments.CommittedQuantities(ctx, parcels)
-	if err != nil {
-		return nil, errors.Wrap(err, errors.KindOf(err), CodeDispatchableUnknown,
-			"the units already in the parcels of order %s could not be read", orderID)
-	}
-
-	return committed, nil
 }

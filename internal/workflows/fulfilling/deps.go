@@ -161,14 +161,10 @@ type Fulfillments interface {
 	) (string, error)
 	// FulfillmentStatus returns the shipment's status.
 	FulfillmentStatus(ctx context.Context, fulfillmentID string) (string, error)
-	// CommittedQuantities sums, per order line, the units a LIVE outgoing parcel
-	// holds.
-	//
-	// Live means not canceled: a canceled parcel's goods never left, so its units
-	// are still dispatchable. The parcels are named by this flow, because the
-	// binding between an order and its shipments is the "order_fulfillment" LINK
-	// and the fulfillment module does not read another module's links.
-	CommittedQuantities(ctx context.Context, fulfillmentIDs []string) (map[string]int64, error)
+	// CommittedQuantitiesForReference sums, per order line, the units the LIVE
+	// outgoing parcels opened for the order hold, counted by the reference the
+	// module stores: the count it holds a new parcel to (ADR 0409).
+	CommittedQuantitiesForReference(ctx context.Context, reference string) (map[string]int64, error)
 	// ListOptionsJSON prices the shipping options eligible for the facts in
 	// the request (ADR 0199 reads it for an order's delivery change).
 	ListOptionsJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
