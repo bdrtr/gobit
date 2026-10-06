@@ -231,6 +231,19 @@ design. It is fixed with `1.0.0`.
 
 ### Fixes
 
+- **The panel shows what an order's goods cost** (ADR 0412). **For
+  operators:** the order list has a "Placed margin" column, and the order page
+  prints each line's unit cost and the placed margin with its sales and cost;
+  an order with a line that kept no cost, or whose lines are all gift cards,
+  prints no margin and says why. The variant page lists the variant's unit
+  costs to `product:read` and writes one currency's cost at a time under
+  `product:write`, from the cost the form was drawn with: a cost changed since
+  is refused with `product_variant_cost_moved`, and an empty amount clears
+  the cost. **For integrators:** the order module's panel surface gains
+  `PlacedMarginsJSON` (at most 100 orders, refused rather than cut) and
+  `LineCostsJSON`, and the product module's gains `SetVariantCost`;
+  `PUT /admin/v1/variants/{id}/costs` still replaces the whole list.
+
 - **An order read at a moment says where it was going** (ADR 0411). **For API
   consumers:** `GET /admin/v1/orders/{id}/as-of` carries `shipping_address`,
   the shipping row written last at or before the moment (`id`, `since` and

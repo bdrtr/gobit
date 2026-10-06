@@ -352,6 +352,11 @@ func TestTheCostNamesAgree(t *testing.T) {
 	assert.Equal(t, productsvc.FieldUnitCosts, checkoutwf.FieldUnitCosts)
 	assert.Equal(t, productsvc.FieldUnitCostCurrencyCode, checkoutwf.FieldUnitCostCurrencyCode)
 	assert.Equal(t, productsvc.FieldUnitCostAmount, checkoutwf.FieldUnitCostAmount)
+	// The panel's variant page reads the same field (ADR 0412); a renamed one
+	// is refused by the provider and the page cannot be drawn.
+	assert.Equal(t, productsvc.FieldUnitCosts, adminui.FieldVariantUnitCosts)
+	assert.Equal(t, productsvc.FieldUnitCostCurrencyCode, adminui.FieldUnitCostCurrency)
+	assert.Equal(t, productsvc.FieldUnitCostAmount, adminui.FieldUnitCostAmount)
 	assert.Equal(t, productsvc.MaxCostAmount, checkoutwf.MaxAmount)
 	assert.Equal(t, productsvc.MaxCostAmount, ordermodels.MaxAmount)
 }

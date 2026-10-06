@@ -677,7 +677,9 @@ func TestTheVariantPagesReadWhatTheirOperatorMayRead(t *testing.T) {
 
 				prices, stocked := principal.HasScope(scopePricingRead), principal.HasScope(scopeInventoryRead)
 				assert.Equal(t, prices, read[LinkVariantPriceSet], "the prices are read only when they may be")
-				assert.Equal(t, prices, read[EntityRegion], "the currency scales serve only the prices")
+				assert.Equal(t, prices, read[EntityRegion],
+					"the currency scales serve the prices, and the costs only where the variant has one "+
+						"or the operator may write one (ADR 0412); this variant has none")
 				assert.Equal(t, stocked, read[LinkVariantInventory], "the stock is read only when it may be")
 				assert.Equal(t, prices, strings.Contains(body, "199.90"))
 				assert.Equal(t, !prices, strings.Contains(body, "Reading the prices needs the pricing:read privilege."))

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	"github.com/bdrtr/gobit/core/errors"
@@ -76,6 +77,82 @@ func (s *Service) SetVariantCosts(
 		return nil, err
 	}
 	return s.VariantCosts(ctx, variantID)
+}
+
+// CodeVariantCostMoved refuses a unit cost written over one the writer was not
+// shown (ADR 0412), as pricing refuses a price that moved (ADR 0280).
+const CodeVariantCostMoved = "product_variant_cost_moved"
+
+// SetVariantCost writes the variant's unit cost in one currency, or clears it
+// when amount is nil, and leaves its other currencies as they are (ADR 0412).
+//
+// read is the cost the writer was shown, nil for none. The variant's row is
+// held, the lock [Service.SetVariantCosts] takes, and a cost that holds
+// another value under it is refused with [CodeVariantCostMoved] and nothing is
+// written (ADR 0280): two saves drawn from one page do not overwrite each
+// other, and a save never writes back a currency another writer changed. The
+// list that results is held to [Service.SetVariantCosts]' rules.
+func (s *Service) SetVariantCost(ctx context.Context, variantID, currencyCode string, read, amount *int64) error {
+	if _, err := requireID("variant_id", variantID); err != nil {
+		return err
+	}
+	code := strings.ToUpper(strings.TrimSpace(currencyCode))
+	if !isCurrencyCode(code) {
+		return invalid("a cost's currency_code is three letters (ISO 4217), %q given", currencyCode)
+	}
+
+	return s.repo.InTx(ctx, func(ctx context.Context, tx repository.Store) error {
+		locked, err := tx.LockLiveVariantsForBundle(ctx, []string{variantID})
+		if err != nil {
+			return err
+		}
+		if _, ok := locked[variantID]; !ok {
+			return errors.NotFound(codeNotFound, "no such variant: %s", variantID)
+		}
+		byVariant, err := tx.ListVariantCosts(ctx, []string{variantID})
+		if err != nil {
+			return err
+		}
+
+		var held *int64
+		next := make([]models.VariantCost, 0, len(byVariant[variantID])+1)
+		for _, c := range byVariant[variantID] {
+			if c.CurrencyCode == code {
+				held = &c.Amount
+				continue
+			}
+			next = append(next, c)
+		}
+		if !sameCost(held, read) {
+			return errors.Conflict(CodeVariantCostMoved,
+				"the unit cost in %s is %s, not the %s the form was drawn with; nothing was saved",
+				code, costText(held), costText(read))
+		}
+		if amount != nil {
+			next = append(next, models.VariantCost{CurrencyCode: code, Amount: *amount})
+		}
+		normalized, err := normalizeVariantCosts(next)
+		if err != nil {
+			return err
+		}
+		return tx.ReplaceVariantCosts(ctx, variantID, normalized)
+	})
+}
+
+// sameCost reports whether two costs, nil for none, are the same.
+func sameCost(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+// costText prints a cost for a refusal, "none" for nil.
+func costText(cost *int64) string {
+	if cost == nil {
+		return "none"
+	}
+	return strconv.FormatInt(*cost, 10)
 }
 
 // normalizeVariantCosts checks a cost list as given and returns it with every

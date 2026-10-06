@@ -178,3 +178,69 @@ func TestTheVariantRecordCarriesItsCostsOnlyWhenNamed(t *testing.T) {
 	assert.NotContains(t, whole[0], service.FieldUnitCosts, "a cost is never in the default field set")
 	assert.Equal(t, reads, fx.store.callCount("ListVariantCosts"), "a cost not named is not read")
 }
+
+// costPtr takes a cost's address inline.
+func costPtr(v int64) *int64 { return &v }
+
+// TestOneCurrencysCostIsWrittenFromWhatWasRead is the panel's cost write
+// (ADR 0412): one currency's cost is set from none, changed from its value and
+// cleared, and another currency's cost stays through all three; a write drawn
+// from a cost that moved since, or from none when one is held, is refused with
+// product_variant_cost_moved and writes nothing; the currency and the amount
+// are held to the list's rules.
+func TestOneCurrencysCostIsWrittenFromWhatWasRead(t *testing.T) {
+	fx := newChannelFixture(t)
+	ctx := context.Background()
+	variant := seedProduct(t, fx.svc, "kettle", "Kettle").Variants[0].ID
+	_, err := fx.svc.SetVariantCosts(ctx, variant, []models.VariantCost{{CurrencyCode: "USD", Amount: 7}})
+	require.NoError(t, err)
+	usd := models.VariantCost{CurrencyCode: "USD", Amount: 7}
+
+	require.NoError(t, fx.svc.SetVariantCost(ctx, variant, " try ", nil, costPtr(400)))
+	stored, err := fx.svc.VariantCosts(ctx, variant)
+	require.NoError(t, err)
+	assert.Equal(t, []models.VariantCost{{CurrencyCode: "TRY", Amount: 400}, usd}, stored,
+		"a cost in a new currency is added beside the others")
+
+	require.NoError(t, fx.svc.SetVariantCost(ctx, variant, "TRY", costPtr(400), costPtr(450)))
+	stored, err = fx.svc.VariantCosts(ctx, variant)
+	require.NoError(t, err)
+	assert.Equal(t, []models.VariantCost{{CurrencyCode: "TRY", Amount: 450}, usd}, stored, "the cost read is changed")
+
+	for name, read := range map[string]*int64{"a cost that moved": costPtr(400), "none while one is held": nil} {
+		before := fx.store.callCount("ReplaceVariantCosts")
+		err := fx.svc.SetVariantCost(ctx, variant, "TRY", read, costPtr(500))
+		require.Error(t, err, name)
+		assert.True(t, errors.IsConflict(err), "%s: %v", name, err)
+		assert.Equal(t, service.CodeVariantCostMoved, errors.CodeOf(err), name)
+		assert.Equal(t, before, fx.store.callCount("ReplaceVariantCosts"), "%s: nothing is written", name)
+	}
+	err = fx.svc.SetVariantCost(ctx, variant, "EUR", costPtr(1), costPtr(2))
+	require.Error(t, err, "a cost read where none is held has moved too")
+	assert.Equal(t, service.CodeVariantCostMoved, errors.CodeOf(err))
+
+	require.NoError(t, fx.svc.SetVariantCost(ctx, variant, "TRY", costPtr(450), nil))
+	stored, err = fx.svc.VariantCosts(ctx, variant)
+	require.NoError(t, err)
+	assert.Equal(t, []models.VariantCost{usd}, stored, "clearing drops the named currency alone")
+
+	for name, write := range map[string]func() error{
+		"a code of two letters":    func() error { return fx.svc.SetVariantCost(ctx, variant, "TR", nil, costPtr(1)) },
+		"a negative amount":        func() error { return fx.svc.SetVariantCost(ctx, variant, "EUR", nil, costPtr(-1)) },
+		"an amount past the bound": func() error { return fx.svc.SetVariantCost(ctx, variant, "EUR", nil, costPtr(service.MaxCostAmount+1)) },
+	} {
+		err := write()
+		require.Error(t, err, name)
+		assert.True(t, errors.IsInvalid(err), "%s: %v", name, err)
+	}
+	for name, id := range map[string]string{"unknown": "variant_missing", "blank": " "} {
+		err := fx.svc.SetVariantCost(ctx, id, "TRY", nil, costPtr(1))
+		require.Error(t, err, name)
+		assert.False(t, errors.IsConflict(err), "%s: %v", name, err)
+	}
+	err = fx.svc.SetVariantCost(ctx, "variant_missing", "TRY", nil, costPtr(1))
+	assert.True(t, errors.IsNotFound(err), "%v", err)
+	stored, err = fx.svc.VariantCosts(ctx, variant)
+	require.NoError(t, err)
+	assert.Equal(t, []models.VariantCost{usd}, stored, "no refused write moved a cost")
+}

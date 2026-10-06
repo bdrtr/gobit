@@ -109,6 +109,7 @@ timeline and in the person's file, not here.
   <thead>
     <tr>
       <th>Item</th><th class="num">Quantity</th><th class="num">Unit price</th>
+      {{ if $.Costs.Shown }}<th class="num">Unit cost</th>{{ end }}
       <th class="num">Subtotal</th><th class="num">Discount</th><th class="num">Tax</th>
       <th class="num">Total</th><th class="num">Asked back</th><th class="num">Canceled</th>
       {{ if $.CanWriteOff }}<th></th>{{ end }}
@@ -125,6 +126,9 @@ timeline and in the person's file, not here.
       </td>
       <td class="num">{{ .Quantity }}</td>
       <td class="num">{{ .UnitPrice }}</td>
+      {{/* The unit cost the line kept at the sale (ADR 0401); empty on a
+      line that kept none (ADR 0412). */}}
+      {{ if $.Costs.Shown }}<td class="num">{{ index $.Costs.Lines .ID }}</td>{{ end }}
       <td class="num">{{ .Subtotal }}</td>
       <td class="num">{{ .Discount }}</td>
       <td class="num">{{ .Tax }}</td>
@@ -177,6 +181,19 @@ timeline and in the person's file, not here.
         {{ if .Order.Minor }}<span class="muted">(minor units)</span>{{ end }}
       </td>
     </tr>
+    {{/* The margin the order's goods were placed at, the order module's
+    (ADR 0401, ADR 0412): its net sales less what its lines kept as their
+    cost, gift cards left out. */}}
+    {{ if .Costs.Shown }}
+    <tr>
+      <th>Placed margin</th>
+      <td class="num">
+        {{ if .Costs.Unread }}<span class="muted">What the goods cost could not be read.</span>
+        {{ else }}{{ with .Costs.Margin }}{{ if .Known }}{{ .Margin }} <span class="muted">(sales {{ .Sales }}, cost {{ .Cost }})</span>
+        {{ else }}— <span class="muted">{{ .Note }}</span>{{ end }}{{ end }}{{ end }}
+      </td>
+    </tr>
+    {{ end }}
   </tbody>
 </table>
 

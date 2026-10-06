@@ -65,6 +65,13 @@ var costPublishers = map[string]string{
 	"internal/modules/order/api.adminLineItemDTO":         "the admin order's line",
 	"internal/modules/order/api.adminOrderRowDTO":         "a row of the admin order list",
 	"internal/modules/order/api.placedMarginDTO":          "the admin order's placed margin",
+	// The panel's reads (ADR 0412), under order:read as on the admin API.
+	"internal/modules/order.adminMargin":   "the order module's panel read of an order's placed margin",
+	"internal/modules/order.adminLineCost": "the order module's panel read of a line's unit cost",
+	"internal/adminui.placedMarginRecord":  "the panel's decoding of the order module's margin read",
+	"internal/adminui.lineCostRecord":      "the panel's decoding of the order module's line cost read",
+	"internal/adminui.marginView":          "an order's placed margin as the order list and page print it",
+	"internal/adminui.orderCosts":          "the order page's margin and line costs",
 	// The checkout's plan and the snapshot it places the order with.
 	"internal/workflows/checkout.variantFacts":      "what the catalog said about a variant, in process",
 	"internal/workflows/checkout.planLine":          "a line of the checkout's plan, kept in its execution record",

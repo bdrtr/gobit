@@ -39,12 +39,15 @@ exist in total.
 {{ with .Customer }}<p class="muted">The orders of customer {{ . }}. <a href="{{ $.Path }}">Every order</a></p>{{ end }}
 
 {{ if .Orders }}
+{{/* Each order's placed margin, the order module's (ADR 0401, ADR 0412); a
+failed read leaves the list standing and says so once. */}}
+{{ if .MarginsUnread }}<p class="muted">The orders' margins could not be read.</p>{{ end }}
 <div class="scroll">
 <table>
   <thead>
     <tr>
       <th>Order</th><th>Status</th><th>Customer</th>
-      <th class="num">Total</th><th>Placed</th>
+      <th class="num">Total</th>{{ if .MarginsShown }}<th class="num">Placed margin</th>{{ end }}<th>Placed</th>
     </tr>
   </thead>
   <tbody>
@@ -61,6 +64,7 @@ exist in total.
       <td class="num">
         {{ .Total }} {{ .Currency }}{{ if .Minor }} <span class="muted">(minor)</span>{{ end }}
       </td>
+      {{ if $.MarginsShown }}<td class="num">{{ if not $.MarginsUnread }}{{ with index $.Margins .ID }}{{ if .Known }}{{ .Margin }}{{ else }}<span class="muted" title="{{ .Note }}">—</span>{{ end }}{{ end }}{{ end }}</td>{{ end }}
       <td>{{ if not .PlacedAt.IsZero }}{{ .PlacedAt.Format "2006-01-02 15:04" }}{{ end }}</td>
     </tr>
   {{ end }}

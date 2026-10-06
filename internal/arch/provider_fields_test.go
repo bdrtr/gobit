@@ -80,6 +80,9 @@ var panelDecodedProviderFields = map[string]string{
 	// scan finds the name through the variant screen's form contract, which
 	// spells it the same way; the entry holds the order module to it either way.
 	"location_id": "order",
+	// The order list keys each order's placed margin by the id the order
+	// module's surface sends (ADR 0412), the name its line provider publishes.
+	"order_id": "order",
 }
 
 // # The second consumer, and it is not an API client

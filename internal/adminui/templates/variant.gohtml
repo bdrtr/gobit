@@ -129,6 +129,44 @@ section names it.
 </form>
 {{ end }}
 
+{{/*
+What one unit costs the shop, one cost per currency, net of tax (ADR 0401). A
+form writes one currency's cost from the cost it was drawn with, so a cost
+another operator changed since is refused rather than overwritten, and an empty
+amount clears it (ADR 0412). The checkout copies the cost in the order's
+currency onto the order line.
+*/}}
+<h2>Unit cost</h2>
+{{ if .Costs }}
+  {{ range .Costs }}
+    {{ if $.CanCost }}
+    <form method="post" action="{{ $.CostPath }}">
+      <input type="hidden" name="currency" value="{{ .Currency }}">
+      <input type="hidden" name="read_amount" value="{{ .Amount }}">
+      <label>{{ .Currency }}{{ if .Minor }} (minor units){{ end }}
+        <input type="text" name="amount" value="{{ .Amount }}" aria-label="cost in {{ .Currency }}">
+      </label>
+      <button type="submit">Save cost</button>
+    </form>
+    {{ else }}
+    <p>{{ .Currency }}: {{ .Amount }}{{ if .Minor }} (minor units){{ end }}</p>
+    {{ end }}
+  {{ end }}
+  {{ if $.CanCost }}<p class="muted">An empty amount clears the cost in that currency.</p>{{ end }}
+{{ else }}
+  <p class="muted">No unit cost is written for this variant.</p>
+{{ end }}
+{{ if and .CanCost .NewCostCurrencies }}
+<form method="post" action="{{ .CostPath }}">
+  <input type="hidden" name="read_amount" value="">
+  <select name="currency" aria-label="cost currency" required>
+    {{ range .NewCostCurrencies }}<option value="{{ . }}">{{ . }}</option>{{ end }}
+  </select>
+  <input type="text" name="amount" placeholder="cost" aria-label="cost" required>
+  <button type="submit">Add the cost</button>
+</form>
+{{ end }}
+
 <h2>Bundle</h2>
 {{ if .Parts }}
   <p>One of this variant holds these parts. Its stock is theirs: the storefront

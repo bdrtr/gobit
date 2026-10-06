@@ -1065,8 +1065,11 @@ past and is not corrected retroactively.
   and an addition is an order with its own. A line sold before the upgrade or in
   a currency its variant has no cost in has no cost, and the order then states
   no margin; an order whose lines are all gift cards states none at all. A
-  bundle costs its own entry. gobit converts no currency, and the panel shows
-  neither the cost nor the margin.
+  bundle costs its own entry. gobit converts no currency. The panel prints a
+  line's cost and the placed margin on the order page and the margin on the
+  order list, and writes a variant's cost one currency at a time
+  ([ADR 0412](adr/0412-the-panel-shows-what-an-orders-goods-cost.md)); the
+  sales report and the CSV export and import carry neither.
 
 - **The in-process harness consumes events like a server.** `InProcess` opens the
   whole application, so its modules subscribe — which is what a test wants, and

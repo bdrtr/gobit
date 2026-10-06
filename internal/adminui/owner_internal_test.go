@@ -440,6 +440,10 @@ func (s *recordingSurfaces) PriceVariant(context.Context, string, string, int64)
 	return s.reach(ServiceProductAdmin)
 }
 
+func (s *recordingSurfaces) SetVariantCost(context.Context, string, string, *int64, *int64) error {
+	return s.reach(ServiceProductAdmin)
+}
+
 func (s *recordingSurfaces) CreateProduct(context.Context, string, string) (string, error) {
 	return "", s.reach(ServiceProductAdmin)
 }
@@ -777,6 +781,14 @@ func (a recordingAfterSales) CancelOrder(context.Context, string, string) error 
 
 func (a recordingAfterSales) CancelOrderLine(context.Context, string, string, int64, int64, string, string) error {
 	return a.surfaces.reach(ServiceOrderAdmin)
+}
+
+func (a recordingAfterSales) PlacedMarginsJSON(context.Context, []string) (json.RawMessage, error) {
+	return json.RawMessage(`[]`), a.surfaces.reach(ServiceOrderAdmin)
+}
+
+func (a recordingAfterSales) LineCostsJSON(context.Context, string) (json.RawMessage, error) {
+	return json.RawMessage(`[]`), a.surfaces.reach(ServiceOrderAdmin)
 }
 
 func (a recordingAfterSales) CreditLinesJSON(context.Context, string) (json.RawMessage, error) {
@@ -1126,7 +1138,9 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, VariantPricesPath): {"currency": {"TRY"}, "amount": {"1"}},
 	// Keeping a variant's stock (ADR 0310).
 	routeKey(http.MethodPost, VariantStockItemPath): {},
-	routeKey(http.MethodPost, ProductAddOnsPath):    {"add_ons": {""}},
+	// Writing a variant's cost in one currency (ADR 0412).
+	routeKey(http.MethodPost, VariantCostPath):   {"currency": {"TRY"}, "amount": {"1"}, "read_amount": {""}},
+	routeKey(http.MethodPost, ProductAddOnsPath): {"add_ons": {""}},
 	routeKey(http.MethodPost, VariantPricePath): {
 		"price_set_id": {"walk"}, "currency": {"TRY"}, "amount": {"1"}, "read_amount": {"1"}, "minor": {"1"},
 	},

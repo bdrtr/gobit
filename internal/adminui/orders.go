@@ -413,15 +413,21 @@ func (u *UI) listOrders(w http.ResponseWriter, r *http.Request) {
 		rows = append(rows, orderRowOf(rec, scales))
 	}
 
+	// Each order's placed margin, in one read for the page (ADR 0412).
+	margins, marginsShown, marginsUnread := u.marginsOf(r, rows, scales)
+
 	data := map[string]any{
-		titleKey:    ordersLabel,
-		"Orders":    rows,
-		"Awaiting":  awaiting,
-		"Placed":    placed,
-		"Customer":  customer,
-		"Channel":   channel,
-		statusKey:   status,
-		statusesKey: orderStatuses,
+		titleKey:        ordersLabel,
+		"Orders":        rows,
+		"Margins":       margins,
+		"MarginsShown":  marginsShown,
+		"MarginsUnread": marginsUnread,
+		"Awaiting":      awaiting,
+		"Placed":        placed,
+		"Customer":      customer,
+		"Channel":       channel,
+		statusKey:       status,
+		statusesKey:     orderStatuses,
 	}
 	// The channels are offered by name to an operator who may read them, as
 	// the telephone order offers them (ADR 0305); otherwise, or when the list
@@ -537,6 +543,7 @@ func (u *UI) renderOrder(
 		"CanAct":                u.afterSales != nil && principal.HasScope(scopeOrderWrite),
 		"CanRecordPayment":      u.payments != nil && principal.HasScope(scopePaymentWrite),
 		"Order":                 detail,
+		"Costs":                 u.costsOf(r, &detail, scales),
 		ordersPathKey:           OrdersPath,
 		"LinesPerOrder":         linesPerOrder,
 		"PaymentPrivilege":      scopePaymentRead,

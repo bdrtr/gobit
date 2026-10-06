@@ -530,6 +530,84 @@ func (s *AfterSalesSurface) CreditLinesJSON(ctx context.Context, orderID string)
 	return body, nil
 }
 
+// MaxPanelMargins is the most orders one margin read names: four of the
+// panel's order list pages. A longer list is refused rather than cut.
+const MaxPanelMargins = 100
+
+// adminMargin is an order's placed margin as the panel reads it (ADR 0401,
+// ADR 0412); the json tags are the contract with the panel.
+type adminMargin struct {
+	OrderID          string `json:"order_id"`
+	Sales            int64  `json:"sales"`
+	Cost             *int64 `json:"cost,omitempty"`
+	Margin           *int64 `json:"margin,omitempty"`
+	LinesWithoutCost int64  `json:"lines_without_cost"`
+}
+
+// PlacedMarginsJSON returns the placed margin of each given order that has
+// one, as [service.Service.PlacedMargins] computes it, in the order the ids
+// were given; an order with no line that is not a gift card is absent
+// (ADR 0412). At most [MaxPanelMargins] ids are read.
+func (s *AfterSalesSurface) PlacedMarginsJSON(ctx context.Context, orderIDs []string) (json.RawMessage, error) {
+	if s == nil || s.svc == nil {
+		return nil, errors.Unavailable(codeSetupFailed, "the order service is not set up")
+	}
+	if len(orderIDs) > MaxPanelMargins {
+		return nil, errors.Invalid(service.CodeInvalidInput,
+			"a margin read names at most %d orders, %d given", MaxPanelMargins, len(orderIDs))
+	}
+	margins, err := s.svc.PlacedMargins(ctx, orderIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]adminMargin, 0, len(margins))
+	for _, id := range orderIDs {
+		m, ok := margins[id]
+		if !ok {
+			continue
+		}
+		out = append(out, adminMargin{
+			OrderID: m.OrderID, Sales: m.Sales, Cost: m.Cost, Margin: m.Margin,
+			LinesWithoutCost: m.LinesWithoutCost,
+		})
+	}
+	body, err := json.Marshal(out)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, codeSetupFailed, "the margins could not be encoded")
+	}
+
+	return body, nil
+}
+
+// adminLineCost is one order line's unit cost as the panel reads it; the json
+// tags are the contract with the panel.
+type adminLineCost struct {
+	LineItemID string `json:"line_item_id"`
+	UnitCost   *int64 `json:"unit_cost,omitempty"`
+}
+
+// LineCostsJSON returns the unit cost each of the order's lines kept at the
+// sale (ADR 0401), without one on a line that kept none (ADR 0412).
+func (s *AfterSalesSurface) LineCostsJSON(ctx context.Context, orderID string) (json.RawMessage, error) {
+	if s == nil || s.svc == nil {
+		return nil, errors.Unavailable(codeSetupFailed, "the order service is not set up")
+	}
+	detail, err := s.svc.GetOrder(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]adminLineCost, 0, len(detail.Items))
+	for i := range detail.Items {
+		out = append(out, adminLineCost{LineItemID: detail.Items[i].ID, UnitCost: detail.Items[i].UnitCost})
+	}
+	body, err := json.Marshal(out)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, codeSetupFailed, "the line costs could not be encoded")
+	}
+
+	return body, nil
+}
+
 // CreditOrder writes off part of what the order owes, with the reason and
 // the note, as the API's credit does; readCredited is the credited total the
 // operator read, and the module refuses when that has changed, so a form

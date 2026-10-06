@@ -273,6 +273,18 @@ func (a *AdminSurface) PriceVariant(ctx context.Context, variantID, currencyCode
 	return err
 }
 
+// SetVariantCost writes the variant's unit cost in one currency from the cost
+// the form was drawn with, read, nil for none; a nil amount clears it, and
+// another currency's cost is not touched (ADR 0412). A cost that moved since
+// is refused with [CodeVariantCostMoved].
+func (a *AdminSurface) SetVariantCost(ctx context.Context, variantID, currencyCode string, read, amount *int64) error {
+	if a == nil || a.svc == nil {
+		return errors.Unavailable(codeNotReady, "the product service is not set up")
+	}
+
+	return a.svc.SetVariantCost(ctx, variantID, currencyCode, read, amount)
+}
+
 // StockVariant gives the variant an inventory item, created by inventory and
 // linked here, and returns its id; a variant that has one returns it (ADR
 // 0310). Its levels are then set on the stock form, location by location.

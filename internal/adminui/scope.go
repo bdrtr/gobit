@@ -142,6 +142,9 @@ func builtInScopes() map[string]string {
 		// 0310).
 		routeKey(post, VariantStockItemPath): scopeProductWrite,
 		routeKey(post, VariantStockPath):     scopeInventoryWrite,
+		// A variant's unit cost is the product module's, written under its
+		// write as on the admin API (ADR 0401, ADR 0412).
+		routeKey(post, VariantCostPath): scopeProductWrite,
 		// A variant's bundle is a revision of its product (ADR 0236).
 		routeKey(get, VariantBundlePath):  scopeProductWrite,
 		routeKey(post, VariantBundlePath): scopeProductWrite,

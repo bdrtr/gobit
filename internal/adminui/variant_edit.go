@@ -42,6 +42,9 @@ const (
 	// VariantStockItemPath gives a variant without one its inventory item
 	// (ADR 0310).
 	VariantStockItemPath = VariantPath + "/stock-item"
+	// VariantCostPath takes the form that writes the variant's unit cost in
+	// one currency (ADR 0412).
+	VariantCostPath = VariantPath + "/cost"
 )
 
 // PriceWriter is the narrow price surface the panel needs (ADR 0001).
@@ -243,7 +246,7 @@ func (u *UI) renderVariant(
 	access := variantAccessOf(r)
 	records, err := u.catalog.Graph(r.Context(), query.GraphSpec{
 		Entity:  EntityVariant,
-		Fields:  []string{fieldID, fieldTitle, fieldSKU, FieldBundleComponents},
+		Fields:  []string{fieldID, fieldTitle, fieldSKU, FieldBundleComponents, FieldVariantUnitCosts},
 		Filters: map[string]any{filterID: []string{variantID}},
 		Expand:  access.expansions(),
 	})
@@ -295,6 +298,16 @@ func (u *UI) renderVariant(
 		u.catalogFailure(w, r, err, "The variant's bundle could not be read.")
 		return
 	}
+	// The unit costs are the product module's, read with the variant under
+	// product:read (ADR 0401). The scales print them and list the currencies
+	// a cost may be added in, so they are read here, when the prices did not
+	// read them, only where there is a cost to print or a form to offer
+	// (ADR 0412).
+	entries, canCost := costEntries(record), u.canCostVariant(r)
+	if scales == nil && (len(entries) > 0 || canCost) {
+		scales = u.currencyScales(r.Context())
+	}
+	costs := variantCosts(entries, scales)
 
 	u.templates.render(w, r, status, "variant.gohtml", map[string]any{
 		titleKey:        recordString(record, fieldTitle),
@@ -331,6 +344,11 @@ func (u *UI) renderVariant(
 		"ListPriceForm":    listPriceForm,
 		"ListPricesPath":   variantURL(productID, variantID) + "/list-prices",
 		"CanRemoveList":    u.canWriteListPrices(r),
+		// The unit costs and the form that writes one (ADR 0412).
+		"Costs":             costs,
+		"CanCost":           canCost,
+		"NewCostCurrencies": uncostedCurrencies(scales, costs),
+		"CostPath":          variantURL(productID, variantID) + "/cost",
 	})
 }
 
