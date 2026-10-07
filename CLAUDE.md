@@ -60,6 +60,27 @@ them as the argument for its own shape.
 The gap inventory it used to carry closed on 2026-09-08; new work is decided in
 an ADR, not queued here.
 
+## A new record needs a fault someone meets
+
+The feature list closed on 2026-10-06. What is left is a tail of edge cases,
+most of them in after-sales, where each new rule meets every rule already
+there, and a fix's review finds the next case. That tail does not converge by
+adding records.
+
+**A new ADR is written for one of two things:**
+
+- a fault a consumer of gobit reports, or
+- a defect reproducible on the default path: the route or panel screen an
+  operator or shopper uses as documented, without a workaround.
+
+A window that needs two acts on one order to meet inside another act, or a
+state reached only through a workaround, is not decided record by record. It
+is one sentence in `docs/known-limits.md` under its subject, and a ledger row
+only when it is a fault this repository found in itself.
+
+A fix whose review finds a defect on the default path amends that fix before
+it lands; it does not open a new record.
+
 ## Verification
 
 `make lint`, `make vuln`, `go test ./...`, `make test` (race),
