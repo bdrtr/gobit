@@ -693,7 +693,9 @@ past and is not corrected retroactively.
   later, smaller claims are filled first. A warehouse opened or bound to the
   channel after the order does not fill its claim, a claim the checkout could not
   rank is filled from nowhere, and a line whose claim the checkout failed to
-  record and an order placed before the upgrade have none. A claim the checkout
+  record and an order placed before the upgrade have none: written off, such a
+  line puts units that never left on the shelf whenever another line of the
+  order sold the same item ([gaps D242](gaps.md)). A claim the checkout
   recorded but could not settle (a warning on its answer) still owes the units
   written off before it. A filled claim opens no parcel, no date is promised,
   and nothing caps how many units are sold ahead of a receipt
