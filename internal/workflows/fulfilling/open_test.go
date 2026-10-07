@@ -169,6 +169,7 @@ type testLine struct {
 	LineItemID string `json:"line_item_id"`
 	Bought     int64  `json:"bought"`
 	Canceled   int64  `json:"canceled"`
+	SpokenFor  int64  `json:"spoken_for,omitempty"`
 }
 
 // ShippingAddressJSON reports whether the order exists, and where it goes.
@@ -258,6 +259,9 @@ type fakeFulfillments struct {
 	// committedCalls counts the questions, which is how a test proves an order with
 	// no parcels is not asked at all.
 	committedCalls int
+	// spokenAsked is what the flow passed as the order's returns on the last
+	// count (ADR 0423).
+	spokenAsked map[string]int64
 	// links is where this fake writes the binding, because the real module writes
 	// one inside CreateFulfillment (ADR 0140).
 	//
@@ -300,9 +304,10 @@ func (f *fakeFulfillments) ListOptionsJSON(
 // CommittedQuantitiesForReference answers what the order's live parcels hold,
 // whatever the links say.
 func (f *fakeFulfillments) CommittedQuantitiesForReference(
-	context.Context, string,
+	_ context.Context, _ string, spoken map[string]int64,
 ) (map[string]int64, error) {
 	f.committedCalls++
+	f.spokenAsked = spoken
 	if f.committedErr != nil {
 		return nil, f.committedErr
 	}

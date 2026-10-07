@@ -148,7 +148,13 @@ func unitsThatWillNotLeave(bought, canceled, committed int64) int64 {
 
 // committedQuantities answers, per order line, the units the order's live
 // parcels hold. The parcels are found through the "order_fulfillment" link, as
-// the cancellation flow finds them.
+// the cancellation flow found them before ADR 0420. A parcel that came back
+// undelivered counts whole here, where the fulfillment module's count by
+// reference holds it only as far as a return or a replacement speaks for its
+// units (ADR 0423):
+// this step runs at the checkout, and a recovery that runs it after one of the
+// order's parcels came back withdraws fewer written-off units from the claim
+// than the cancellation flow would (gaps D268).
 func (s *clearCartStep) committedQuantities(ctx context.Context, orderID string) (map[string]int64, error) {
 	byOrder, err := s.w.links.ListMany(ctx, LinkOrderFulfillment, []string{orderID})
 	if err != nil {

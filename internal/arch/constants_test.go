@@ -1105,6 +1105,9 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 	// refused.
 	assert.Equal(t, fulfillmentsvc.FieldShipmentReturnID, adminui.FieldParcelReturnID)
 	assert.Equal(t, fulfillmentsvc.FieldReference, adminui.FieldParcelReference)
+	// A parcel held whole since before ADR 0423: a drift reads as the page
+	// offering its units again.
+	assert.Equal(t, fulfillmentsvc.FieldShipmentHeldWhole, adminui.FieldParcelHeldWhole)
 	assert.Equal(t, ordersvc.FieldRegionID, adminui.FieldOrderRegion)
 
 	assert.Equal(t, productsvc.LinkVariantPriceSet, adminui.LinkVariantPriceSet,

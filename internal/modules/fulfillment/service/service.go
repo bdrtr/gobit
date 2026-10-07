@@ -319,10 +319,12 @@ type Store interface {
 	// bringing order return returnID back hold — pending, shipped or delivered
 	// (ADR 0384).
 	ReturningQuantities(ctx context.Context, returnID string) (map[string]int64, error)
-	// CommittedQuantitiesForReference sums, per order line, the units the LIVE
-	// outgoing parcels opened for the reference hold, found by the reference
-	// rather than by the order's link (ADR 0409).
-	CommittedQuantitiesForReference(ctx context.Context, reference string) (map[string]int64, error)
+	// HeldQuantitiesForReference sums, per order line, the units of the
+	// outgoing parcels opened for the reference, found by the reference rather
+	// than by the order's link (ADR 0409): the live parcels' and the units of
+	// those that came back undelivered, apart, a parcel that came back before
+	// ADR 0423 among the live ones (migration 000008).
+	HeldQuantitiesForReference(ctx context.Context, reference string) (map[string]models.HeldUnits, error)
 	// LockReferenceDispatch serializes the outgoing parcels opened for the
 	// reference until the transaction ends (ADR 0409, gap D265); it is called
 	// inside WithTx.

@@ -108,6 +108,9 @@ const (
 	fieldCanceledAt     = "canceled_at"
 	fieldReturnedAt     = "returned_at"
 	fieldItems          = "items"
+	// FieldParcelHeldWhole is the fulfillment module's mark on a parcel that
+	// came back before ADR 0423 and still holds every unit.
+	FieldParcelHeldWhole = "held_whole"
 
 	// The keys of one of a parcel's items.
 	itemLineItemID = "line_item_id"
@@ -268,6 +271,15 @@ type orderParcel struct {
 	// Holds is what the parcel carries, one "title × quantity" per line
 	// (ADR 0252).
 	Holds []string
+	// Lines are the order lines the parcel holds units of.
+	Lines []string
+	// HeldWhole says the parcel came back before ADR 0423 and still holds
+	// every unit, so nothing of it is owed again.
+	HeldWhole bool
+	// OwedAgain says the parcel came back undelivered, is not held whole, and
+	// the order owes units of its lines, which the open form below offers
+	// (ADR 0423).
+	OwedAgain bool
 }
 
 // orderLine is one line of the order page.
@@ -538,6 +550,8 @@ func (u *UI) renderOrder(
 	}
 
 	deliveries, deliveriesRead := u.deliveriesOf(r, detail.ID)
+	opening := u.parcelOpeningFor(r, detail.ID, detail.Lines, deliveries, deliveriesRead)
+	markOwedAgain(detail.Parcels, opening)
 	u.templates.render(w, r, status, "order.gohtml", map[string]any{
 		titleKey:                "Order " + detail.DisplayID,
 		"Outcome":               outcome,
@@ -551,7 +565,7 @@ func (u *UI) renderOrder(
 		"FulfillmentPrivilege":  scopeFulfillmentRead,
 		"ParcelMoves":           parcelMoves,
 		"CanMoveParcels":        u.canMoveParcels(r),
-		"ParcelOpening":         u.parcelOpeningFor(r, detail.ID, detail.Lines, deliveries, deliveriesRead),
+		"ParcelOpening":         opening,
 		"Deliveries":            u.deliveriesView(r, &detail, deliveries, deliveriesRead, scales),
 		"Invoice":               u.invoiceOf(r, detail.ID, detail.Currency, scales),
 		"CanCancel":             u.canCancelOrder(r, detail.Status),
@@ -834,7 +848,7 @@ func (u *UI) parcelsOf(r *http.Request, orderID string, lines []orderLine) ([]or
 // parcelFields are the shipment fields a parcel's row prints.
 var parcelFields = []string{
 	fieldID, fieldStatus, fieldTrackingNumber, fieldTrackingURL, fieldCreatedAt,
-	fieldShippedAt, fieldDeliveredAt, fieldCanceledAt, fieldReturnedAt, fieldItems,
+	fieldShippedAt, fieldDeliveredAt, fieldCanceledAt, fieldReturnedAt, fieldItems, FieldParcelHeldWhole,
 }
 
 // parcelsFrom turns shipment records into the parcels' rows, oldest first.
@@ -852,6 +866,8 @@ func parcelsFrom(records []query.Record, titles map[string]string) []orderParcel
 			CanceledAt:     recordAt(record, fieldCanceledAt),
 			ReturnedAt:     recordAt(record, fieldReturnedAt),
 			Holds:          parcelHolds(record[fieldItems], titles),
+			Lines:          parcelLineIDs(record[fieldItems]),
+			HeldWhole:      recordBool(record, FieldParcelHeldWhole),
 		})
 	}
 	// The link promises no order, so the page gives its own: oldest first, the
@@ -882,6 +898,43 @@ func parcelHolds(value any, titles map[string]string) []string {
 	}
 
 	return out
+}
+
+// parcelLineIDs reads the order lines a parcel's items name.
+func parcelLineIDs(value any) []string {
+	items, _ := value.([]map[string]any)
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if line := stringValue(item[itemLineItemID]); line != "" {
+			out = append(out, line)
+		}
+	}
+
+	return out
+}
+
+// markOwedAgain marks each parcel that came back undelivered and holds a line
+// the open form offers units of (ADR 0423). The owed units may be its own or
+// never-shipped ones, so the page names the lines rather than a cause. A parcel
+// holding no order line, such as a replacement's, one held whole since before
+// ADR 0423, and one whose lines owe nothing are left unmarked, so the page
+// never asks the operator to send what is not owed.
+func markOwedAgain(parcels []orderParcel, opening *parcelOpening) {
+	if opening == nil {
+		return
+	}
+	owed := make(map[string]bool, len(opening.Lines))
+	for i := range opening.Lines {
+		if opening.Lines[i].Owed > 0 {
+			owed[opening.Lines[i].ID] = true
+		}
+	}
+	for i := range parcels {
+		if parcels[i].Status != parcelReturned || parcels[i].HeldWhole {
+			continue
+		}
+		parcels[i].OwedAgain = slices.ContainsFunc(parcels[i].Lines, func(line string) bool { return owed[line] })
+	}
 }
 
 // linkedRecords reads an expansion's value as records: a one-ended link

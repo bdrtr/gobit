@@ -103,7 +103,7 @@ func TestTheHeldCountRefusesAtOnceWhileTheLockIsHeld(t *testing.T) {
 	setup.store.putLiveParcel("ful_before", "order_1", "li_a", 1)
 	setup.store.busy = map[string]bool{"order_1": true}
 
-	held, err := setup.svc.HeldForReferenceLocked(context.Background(), "order_1")
+	held, err := setup.svc.HeldForReferenceLocked(context.Background(), "order_1", nil)
 
 	require.Error(t, err, "a held lock is not waited for")
 	assert.Equal(t, coreerrors.KindUnavailable, coreerrors.KindOf(err), "the refusal is one a retry may pass")
@@ -125,7 +125,7 @@ func TestTheHeldCountIsReadUnderTheOrdersLock(t *testing.T) {
 		f.putLiveParcel("ful_meanwhile", "order_1", "li_a", 2)
 	}
 
-	held, err := setup.svc.HeldForReferenceLocked(context.Background(), " order_1 ")
+	held, err := setup.svc.HeldForReferenceLocked(context.Background(), " order_1 ", nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, map[string]int64{"li_a": 3}, held, "the parcel committed while it waited is counted")

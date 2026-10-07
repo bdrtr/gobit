@@ -1069,7 +1069,28 @@ past and is not corrected retroactively.
   was written off before it waits for the order's lock, and a write-off
   committing during that wait, which can last another open's carrier call, is
   seen by neither: the units can end on the shelf and in the box, or the box
-  can ship units that were written off ([gaps D265](gaps.md)).
+  can ship units that were written off ([gaps D265](gaps.md)). A parcel that
+  came back undelivered holds its units only as far as a return or a
+  replacement speaks for them
+  ([ADR 0423](adr/0423-a-parcel-that-came-back-holds-only-what-a-return-or-a-replacement-speaks-for.md)):
+  the rest are owed again, to a new parcel or to a write-off that puts them
+  back on the shelf, made before or after the parcel came back. A claim
+  refunded in money names no line, so the goods it paid for are offered to a
+  new parcel. On a line whose returns or replacements also cover delivered
+  goods, as many of the units that came back as are spoken for stay held. A
+  return or a replacement written or withdrawn while an open waits for the
+  order's lock is not seen by that open, and nothing recounts a withdrawal: a
+  parcel come back, a replacement recorded for its units, the line written off
+  and the replacement then withdrawn leaves the units off the books (a
+  withdrawn return does the same on a line that also has a live parcel), and a
+  stock adjustment is the remedy. A parcel already come back when fulfillment
+  migration 000008 ran is held whole and goes back on the shelf through an
+  order return and its receipt; a stock adjustment made by hand for one marked
+  come back afterwards is counted again by a write-off. An instance still on
+  the old code that marks a parcel come back during a rolling deploy leaves it
+  not held whole and announces nothing, so upgrade with that report idle; and
+  rolling 000008 back and forth marks every parcel then come back held whole
+  ([gaps D268](gaps.md)).
 
 - **A return parcel buys no label.** The order page opens one from its return
   and moves it like any parcel

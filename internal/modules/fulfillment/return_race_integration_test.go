@@ -41,8 +41,8 @@ func newGatedReturn(returnID string, named map[string]int64, callers int) *gated
 }
 
 // DispatchCeilings answers owed for an outgoing parcel.
-func (g *gatedReturn) DispatchCeilings(context.Context, string, []string) (map[string]int64, error) {
-	return g.owed, nil
+func (g *gatedReturn) DispatchCeilings(context.Context, string, []string) (ceilings, spoken map[string]int64, err error) {
+	return g.owed, nil, nil
 }
 
 // ReturnLines answers the return's units once every caller has asked; another
@@ -213,7 +213,7 @@ func TestTheHeldCountRefusesWhileAParcelIsBeingOpened(t *testing.T) {
 	// only comes after it; the deadline turns that wait into a failure.
 	busyCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	held, err := svc.HeldForReferenceLocked(busyCtx, reference)
+	held, err := svc.HeldForReferenceLocked(busyCtx, reference, nil)
 	require.Error(t, err, "the count does not wait for the open")
 	assert.Equal(t, errors.KindUnavailable, errors.KindOf(err), "a busy answer is one a retry may pass")
 	assert.Equal(t, service.CodeDispatchBusy, errors.CodeOf(err))
@@ -222,24 +222,31 @@ func TestTheHeldCountRefusesWhileAParcelIsBeingOpened(t *testing.T) {
 	close(provider.release)
 	require.NoError(t, <-opened)
 
-	held, err = svc.HeldForReferenceLocked(ctx, reference)
+	held, err = svc.HeldForReferenceLocked(ctx, reference, nil)
 	require.NoError(t, err)
 	assert.Equal(t, map[string]int64{line: 3}, held, "asked again, the count includes the parcel that committed")
 }
 
-// TestAReturnedParcelStillCountsAsGone is the status set of the count under the
-// lock, which this record keeps from ADR 0409: a parcel that came back
-// undelivered still counts and a canceled one does not.
-func TestAReturnedParcelStillCountsAsGone(t *testing.T) {
+// TestEachParcelCountsAsItsStatusSays is the status sets of the count under the
+// lock on the real schema (ADR 0409, ADR 0420, ADR 0423): a pending, a shipped
+// and a delivered parcel hold their units, a parcel that came back undelivered
+// holds its units only as far as a return or a replacement speaks for them, one
+// that came back before ADR 0423 (held_whole) holds them all, and a canceled
+// parcel, one bringing a return back and another reference's parcel hold none.
+func TestEachParcelCountsAsItsStatusSays(t *testing.T) {
 	ctx := context.Background()
 	reference := "order_gone_" + models.NewFulfillmentID()
-	const line = "line_gone"
+	// The line every return answers for, so a parcel bringing a return back can
+	// sit on the same line as the outgoing ones and be seen to count for none.
+	const line = generousReturnLine
 
 	svc := raceService(t, generousBound{}, nil)
-	option := newOption(ctx, t, svc, newProfile(ctx, t, svc).ID, 2_500)
-	open := func(key string, units int64) models.Fulfillment {
+	profileID := newProfile(ctx, t, svc).ID
+	option := newOption(ctx, t, svc, profileID, 2_500)
+	returnOption := newReturnOption(ctx, t, svc, profileID)
+	open := func(ref, key string, units int64) models.Fulfillment {
 		ful, err := svc.CreateFulfillment(ctx, service.CreateFulfillmentInput{
-			Reference: reference, ShippingOptionID: option.ID, IdempotencyKey: reference + key,
+			Reference: ref, ShippingOptionID: option.ID, IdempotencyKey: reference + key,
 			Items: []service.FulfillmentItemInput{{LineItemID: line, Quantity: units}},
 		})
 		require.NoError(t, err)
@@ -247,16 +254,49 @@ func TestAReturnedParcelStillCountsAsGone(t *testing.T) {
 		return ful
 	}
 
-	returned := open("-returned", 2)
-	_, err := svc.MarkShipped(ctx, returned.ID, "TRK-1", "")
+	open(reference, "-pending", 1)
+	shipped := open(reference, "-shipped", 10)
+	_, err := svc.MarkShipped(ctx, shipped.ID, "TRK-S", "")
+	require.NoError(t, err)
+	delivered := open(reference, "-delivered", 100)
+	_, err = svc.MarkShipped(ctx, delivered.ID, "TRK-D", "")
+	require.NoError(t, err)
+	_, err = svc.MarkDelivered(ctx, delivered.ID)
+	require.NoError(t, err)
+	returned := open(reference, "-returned", 200)
+	_, err = svc.MarkShipped(ctx, returned.ID, "TRK-R", "")
 	require.NoError(t, err)
 	_, err = svc.MarkReturned(ctx, returned.ID)
 	require.NoError(t, err)
-	canceled := open("-canceled", 5)
-	require.NoError(t, svc.CancelFulfillment(ctx, canceled.ID))
-
-	held, err := svc.HeldForReferenceLocked(ctx, reference)
+	before := open(reference, "-returned-before", 500)
+	_, err = svc.MarkShipped(ctx, before.ID, "TRK-B", "")
 	require.NoError(t, err)
-	assert.Equal(t, map[string]int64{line: 2}, held,
-		"the returned parcel counts as gone and the canceled one does not")
+	_, err = svc.MarkReturned(ctx, before.ID)
+	require.NoError(t, err)
+	// What fulfillment migration 000008 wrote on a parcel already returned.
+	_, err = testPool.Pool().Exec(ctx, `UPDATE fulfillments SET held_whole = true WHERE id = $1`, before.ID)
+	require.NoError(t, err)
+	canceled := open(reference, "-canceled", 300)
+	require.NoError(t, svc.CancelFulfillment(ctx, canceled.ID))
+	open("order_other_"+models.NewFulfillmentID(), "-other", 400)
+	_, err = svc.CreateFulfillment(ctx, service.CreateFulfillmentInput{
+		Reference: reference, ShippingOptionID: returnOption.ID, IdempotencyKey: reference + "-bringing",
+		ReturnID: "oret_" + models.NewFulfillmentID(),
+		Items:    []service.FulfillmentItemInput{{LineItemID: line, Quantity: 5}},
+	})
+	require.NoError(t, err)
+
+	held, err := svc.HeldForReferenceLocked(ctx, reference, nil)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int64{line: 611}, held,
+		"with nothing spoken for the units that came back are owed again, except the "+
+			"parcel held whole; the canceled, the returning and the other order's parcels hold none")
+
+	held, err = svc.HeldForReferenceLocked(ctx, reference, map[string]int64{line: 150})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int64{line: 761}, held, "150 spoken for keep 150 of those that came back")
+
+	held, err = svc.HeldForReferenceLocked(ctx, reference, map[string]int64{line: 999})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int64{line: 811}, held, "never more than came back")
 }

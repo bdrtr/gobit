@@ -60,6 +60,11 @@ const (
 	// "order_fulfillment" link is an outgoing one's: a return parcel is found by
 	// its return, not by the order id it also carries (ADR 0413).
 	FieldShipmentReturnID = "return_id"
+	// FieldShipmentHeldWhole says the parcel came back before ADR 0423 and is
+	// counted as holding every unit (fulfillment migration 000008); false on
+	// every other parcel. The order page reads it so it never offers such a
+	// parcel's units again.
+	FieldShipmentHeldWhole = "held_whole"
 	// FieldShipmentItems is what the parcel holds: one entry per order line
 	// it carries, in the order the items were written (D175), each keyed by
 	// [ItemLineItemID] and [ItemQuantity]. It is read only when asked for,
@@ -97,6 +102,7 @@ var shipmentFieldGetters = map[string]func(models.Fulfillment) any{
 	FieldShipmentCreatedAt:  func(f models.Fulfillment) any { return f.CreatedAt },
 	FieldShipmentItems:      func(f models.Fulfillment) any { return shipmentItemRecords(f.Items) },
 	FieldShipmentReturnID:   func(f models.Fulfillment) any { return f.ReturnID },
+	FieldShipmentHeldWhole:  func(f models.Fulfillment) any { return f.HeldWhole },
 }
 
 // shipmentItemRecords turns a parcel's items into the entries of

@@ -15,6 +15,9 @@ type dispatchableLine struct {
 	LineItemID string `json:"line_item_id"`
 	Bought     int64  `json:"bought"`
 	Canceled   int64  `json:"canceled"`
+	// SpokenFor is how many of the line's units a return or a replacement
+	// speaks for (ADR 0423).
+	SpokenFor int64 `json:"spoken_for"`
 }
 
 // DispatchableQuantities answers, per order line, how many units a NEW parcel may
@@ -33,7 +36,7 @@ type dispatchableLine struct {
 //
 // # Held is counted by reference, not through the link
 //
-// What the order's live outgoing parcels hold is the fulfillment module's sum
+// What the order's outgoing parcels hold is the fulfillment module's sum
 // over the parcels whose reference is the order, the count its open is checked
 // against. A count through the "order_fulfillment" link would miss a parcel
 // whose link write failed, or one opened before ADR 0140, and offer units the
@@ -49,6 +52,10 @@ type dispatchableLine struct {
 // ships again is a new decision rather than a quantity still owed, and subtracting
 // it would bound a parcel by goods that already left once.
 //
+// What a return or a replacement speaks for reaches the count in one place: a
+// parcel that came back to the sender undelivered holds its units only so far,
+// and the units neither speaks for are owed again (ADR 0423).
+//
 // A parcel bringing a return back is not an outgoing one, so it is never held
 // (ADR 0384).
 func (w *Workflows) DispatchableQuantities(
@@ -59,12 +66,12 @@ func (w *Workflows) DispatchableQuantities(
 			"the fulfilling flow is not wired, so what a parcel may hold cannot be read")
 	}
 
-	ceilings, err := w.DispatchCeilings(ctx, orderID, lineItemIDs)
+	ceilings, spoken, err := w.DispatchCeilings(ctx, orderID, lineItemIDs)
 	if err != nil {
 		return nil, err
 	}
 
-	held, err := w.fulfillments.CommittedQuantitiesForReference(ctx, orderID)
+	held, err := w.fulfillments.CommittedQuantitiesForReference(ctx, orderID, spoken)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindOf(err), CodeDispatchableUnknown,
 			"the units the parcels of order %s hold could not be read", orderID)
@@ -96,34 +103,42 @@ func (w *Workflows) DispatchableQuantities(
 // holds a parcel to this ceiling instead and counts the parcels itself, by the
 // reference it stores, under the order's lock: both sides of the comparison are
 // then read the same way at the same moment.
+//
+// spoken answers, for the same lines, how many units a return or a
+// replacement speaks for: a parcel that came back undelivered holds its units
+// only so far (ADR 0423). A line neither names is absent from it.
 func (w *Workflows) DispatchCeilings(
 	ctx context.Context, orderID string, lineItemIDs []string,
-) (map[string]int64, error) {
+) (ceilings, spoken map[string]int64, err error) {
 	if w.orders == nil {
-		return nil, errors.Internal(CodeDispatchableUnknown,
+		return nil, nil, errors.Internal(CodeDispatchableUnknown,
 			"the fulfilling flow is not wired, so what an order may ship cannot be read")
 	}
 
 	lines, err := w.soldLines(ctx, orderID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	wanted := make(map[string]struct{}, len(lineItemIDs))
 	for _, id := range lineItemIDs {
 		wanted[id] = struct{}{}
 	}
-	out := make(map[string]int64, len(lines))
+	ceilings = make(map[string]int64, len(lines))
+	spoken = map[string]int64{}
 	for _, line := range lines {
 		if len(wanted) > 0 {
 			if _, asked := wanted[line.LineItemID]; !asked {
 				continue
 			}
 		}
-		out[line.LineItemID] = max(line.Bought-line.Canceled, 0)
+		ceilings[line.LineItemID] = max(line.Bought-line.Canceled, 0)
+		if line.SpokenFor > 0 {
+			spoken[line.LineItemID] = line.SpokenFor
+		}
 	}
 
-	return out, nil
+	return ceilings, spoken, nil
 }
 
 // soldLines reads, per line, what the order sold and what was written off.

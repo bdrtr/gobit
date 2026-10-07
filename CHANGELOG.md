@@ -11,6 +11,45 @@ design. It is fixed with `1.0.0`.
 
 ### Breaking changes
 
+- **A parcel that came back holds only what a return or a replacement speaks
+  for** (ADR 0423, D268). **For operators:** a parcel marked come back
+  undelivered no longer keeps its units: unless the order's live returns ask
+  them back or its live replacements send them again, the order owes them
+  again, so the order page's open form offers them, a new parcel takes them,
+  and a write-off of the line puts them back on the shelf; the page says so
+  under the parcel when the order owes them. A line written off while its
+  parcel was on the way gets its units back when the parcel is marked come
+  back, as far as nothing speaks for them then; withdrawing a return or a
+  replacement after the line was written off recounts nothing, and a stock
+  adjustment repairs it. Parcels already come back when you upgrade are held
+  whole, as before (fulfillment migration 000008), and an order return and
+  its receipt put their units back on the shelf. Run the upgrade while nobody
+  marks parcels come back: an instance on the old code that does so after the
+  migration leaves the parcel not held whole and announces nothing. Do not
+  roll 000008 back and apply it again on a live database: the re-applied
+  backfill marks every parcel then come back as held whole. A claim refunded
+  in money names no line, so read the order's claims before sending the units
+  of a parcel that came back; and do not adjust stock by hand for a parcel
+  marked come back after the upgrade, since a write-off now puts its units
+  back. **For integrators:**
+  `POST /admin/v1/orders/{id}/fulfillments` and `POST /admin/v1/fulfillments`
+  open a parcel for such units where they answered 409
+  `fulfillment_line_not_dispatchable` or `fulfillment_nothing_owed`. Marking a
+  parcel come back publishes `fulfillment.returned` (`fulfillment_id`,
+  `reference`, `return_id`, `returned_at`), through the outbox, and the
+  webhook plugin forwards it. The `fulfillment` read-layer entity offers
+  `held_whole`. **For plugin authors:** `fulfillment.interop`'s
+  `HeldForReferenceLocked` and `CommittedQuantitiesForReference` take a third
+  argument, per line what returns and replacements speak for, and the order
+  cancellation flow and the fulfilling flow resolve them with it; an
+  installation that registers its own `fulfillment.interop` without it fails
+  at startup. The fulfilling flow's `Interop.DispatchCeilings` and the
+  fulfillment module's `service.DispatchBound` answer a second map, that
+  figure per line; `service.Store` replaces `CommittedQuantitiesForReference`
+  with `HeldQuantitiesForReference`, which answers `models.HeldUnits` per line;
+  the lines `DispatchableLinesJSON` answers carry `spoken_for`; the order
+  cancellation flow subscribes to `fulfillment.returned`.
+
 - **Every parcel waits for its order's lock** (ADR 0420, D264, D265). **For
   plugin authors:** the order cancellation flow resolves `fulfillment.interop`
   as an interface that now requires `HeldForReferenceLocked(ctx, reference)`

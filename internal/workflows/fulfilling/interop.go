@@ -189,10 +189,11 @@ func (i *Interop) DispatchableQuantities(
 // DispatchCeilings answers, per order line, how many units the order may ship
 // at all, whatever any parcel holds; the rules are [Workflows.DispatchCeilings]'s.
 // The fulfillment module holds every outgoing parcel to it under the order's
-// lock (ADR 0409).
+// lock (ADR 0409). spoken is, for the same lines, how many units a return or a
+// replacement speaks for (ADR 0423).
 func (i *Interop) DispatchCeilings(
 	ctx context.Context, orderID string, lineItemIDs []string,
-) (map[string]int64, error) {
+) (ceilings, spoken map[string]int64, err error) {
 	return i.w.DispatchCeilings(ctx, orderID, lineItemIDs)
 }
 

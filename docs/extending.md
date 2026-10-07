@@ -287,10 +287,11 @@ browser push plugin `web-push`
 (`order.placed`), the **order module** itself (`payment.captured`,
 `payment.refunded`), the **payment module** (`order.canceled`, ADR 0288), the
 **gift card sale flow** (`payment.captured`, ADR 0210), the **cancellation
-flow** (`order.line_canceled`, `fulfillment.canceled`, ADR 0134 and 0139), the
+flow** (`order.line_canceled`, `fulfillment.canceled`, `fulfillment.returned`,
+ADR 0134, 0139 and 0423), the
 **return flow** (`fulfillment.canceled`, ADR 0239), the analytics plugin
 `analytics` (`cart.created`, `cart.completed`, `order.placed`, ADR 0153) and the
-outbound webhook plugin `webhook-out` (all twelve topics below; a receiver
+outbound webhook plugin `webhook-out` (all thirteen topics below; a receiver
 narrows them by topic, filter and field, ADR 0218).
 
 The order and payment modules subscribe to each other for the reason a plugin
@@ -314,6 +315,7 @@ bus.
 | `product.deleted` | `product_id` |
 | `payment.captured` / `payment.refunded` | `payment_collection_id`, `occurred_at` |
 | `fulfillment.canceled` | `fulfillment_id`, `reference`, `return_id` (empty for a parcel that went out), `canceled_at` |
+| `fulfillment.returned` | `fulfillment_id`, `reference`, `return_id` (empty for a parcel that went out), `returned_at` |
 | `cart.created` / `cart.completed` | `cart_id`, `region_id`, `currency_code`, `occurred_at` |
 
 `plugins/webhookout` lists the same fields, `customer_id` withheld, as
@@ -322,8 +324,8 @@ filter or field list can name only a field the topic carries.
 
 `placed_at` is a timestamp, but it too is a string: the moment the order was
 placed, converted to UTC and formatted with `time.RFC3339Nano`
-(`EventFieldPlacedAt`). `occurred_at`, `canceled_at` and `completed_at` are the
-same shape.
+(`EventFieldPlacedAt`). `occurred_at`, `canceled_at`, `completed_at` and
+`returned_at` are the same shape.
 
 The payment events carry **no amount**, and it is worth saying why the narrow
 rule below is not the whole reason. A refund is deliberately not idempotent, so

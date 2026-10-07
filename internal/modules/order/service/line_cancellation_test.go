@@ -405,3 +405,46 @@ func TestTheDispatchableLinesCountNoRETURNS(t *testing.T) {
 		"two units of this line are on a RETURN and none is canceled; this surface "+
 			"reports write-offs only, because a returned unit already shipped")
 }
+
+// TestTheDispatchableLinesCarryWhatAReturnOrAReplacementSpeaksFor is ADR 0423:
+// each line carries what its live returns ask back plus what its live
+// replacements send again, apart from what was written off, so a parcel that
+// came back undelivered can be held to it; a withdrawn return or replacement
+// speaks for nothing.
+func TestTheDispatchableLinesCarryWhatAReturnOrAReplacementSpeaksFor(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	claim, lineID := claimToReplace(t, e)
+
+	_, err := e.svc.CreateReturn(ctx, service.CreateReturnInput{
+		OrderID: claim.OrderID, RefundAmount: 600,
+		Lines: []service.ReturnLineInput{{OrderLineItemID: lineID, Quantity: 1, RefundAmount: 600}},
+	})
+	require.NoError(t, err)
+	withdrawn, err := e.svc.CreateReturn(ctx, service.CreateReturnInput{
+		OrderID: claim.OrderID, RefundAmount: 600,
+		Lines: []service.ReturnLineInput{{OrderLineItemID: lineID, Quantity: 1, RefundAmount: 600}},
+	})
+	require.NoError(t, err)
+	_, err = e.svc.CancelReturn(ctx, withdrawn.ID)
+	require.NoError(t, err)
+	_, err = e.svc.CreateReplacement(ctx, replacementOf(claim.ID, lineID, 1))
+	require.NoError(t, err)
+	recalled, err := e.svc.CreateReplacement(ctx, replacementOf(claim.ID, lineID, 1))
+	require.NoError(t, err)
+	_, err = e.svc.CancelReplacement(ctx, recalled.ID)
+	require.NoError(t, err)
+
+	raw, err := service.NewInterop(e.svc).DispatchableLinesJSON(ctx, claim.OrderID)
+	require.NoError(t, err)
+
+	var lines []struct {
+		Canceled  int64 `json:"canceled"`
+		SpokenFor int64 `json:"spoken_for"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &lines))
+	require.Len(t, lines, 1)
+	assert.Equal(t, int64(2), lines[0].SpokenFor,
+		"the live return asks one back and the live replacement sends one again; the withdrawn ones speak for nothing")
+	assert.Zero(t, lines[0].Canceled, "and none of them is written off")
+}

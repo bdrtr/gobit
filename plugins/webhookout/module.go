@@ -59,7 +59,7 @@ var migrationsRoot = mustSub(migrationFiles, "migrations")
 //
 // So the list is written out, and it is the WHOLE set: a static census of every
 // eventbus.Event this repository can publish resolves to exactly this slice —
-// the twelve topics plugins/webhookout forwards.
+// the thirteen topics plugins/webhookout forwards.
 //
 // The number and the path sit on ONE line deliberately. It is the only place
 // the size is written, and the count gate is LINE-ANCHORED: a sentence whose
@@ -101,6 +101,7 @@ var ForwardedTopics = []string{
 	topicProductDeleted,
 	topicOrderLineCanceled,
 	topicFulfillmentCanceled,
+	topicFulfillmentReturned,
 	topicCartCreated,
 	topicCartCompleted,
 	topicOrderCanceled,
@@ -150,6 +151,13 @@ const (
 	// system wants it for the reason gobit does: units that were counted as
 	// leaving the building are not leaving after all.
 	topicFulfillmentCanceled = "fulfillment.canceled"
+	// topicFulfillmentReturned is published when a parcel came back to the
+	// sender undelivered (ADR 0423). It carries the same identities as the
+	// cancel and the moment, so it needs no new redaction rule; an operator's
+	// own system wants it because units that were counted as gone are back in
+	// the building and owed again unless a return or a replacement speaks for
+	// them.
+	topicFulfillmentReturned = "fulfillment.returned"
 	// topicCartCreated is published when a cart is opened (ADR 0153). It is the
 	// cart module's FIRST event.
 	//
@@ -448,9 +456,10 @@ func (m *webhookModule) Routes(r chi.Router) {
 // was made, "order.placed" was the only topic written to the outbox and the
 // coverage would have been one in four. ADR 0121 put the payment module's
 // capture and refund there as well, and the order's write-offs, the parcel's
-// cancellation, the cart's two events and the order's cancel and completion
-// followed, so it is now nine of the twelve this plugin forwards; the three
-// product events are still published directly. Nine in twelve is still partial
+// cancellation and its coming back, the cart's two events and the order's
+// cancel and completion followed, so it is now ten of the thirteen this plugin
+// forwards; the three product events are still published directly. Ten in
+// thirteen is still partial
 // and the shape of the objection is unchanged,
 // which is why the refusal stands; the number is corrected here because a record whose stated
 // reason has quietly halved in force is the kind that gets rebuilt on.
@@ -737,6 +746,7 @@ var TopicFields = map[string][]string{
 		fieldOrderID, "order_line_item_id", "variant_id",
 	},
 	topicFulfillmentCanceled: {fieldCanceledAt, "fulfillment_id", "reference", "return_id"},
+	topicFulfillmentReturned: {"fulfillment_id", "reference", "return_id", "returned_at"},
 	topicCartCreated:         {fieldCartID, fieldCurrencyCode, fieldOccurredAt, fieldRegionID},
 	topicCartCompleted:       {fieldCartID, fieldCurrencyCode, fieldOccurredAt, fieldRegionID},
 	topicOrderCanceled:       {fieldCanceledAt, fieldOrderID},

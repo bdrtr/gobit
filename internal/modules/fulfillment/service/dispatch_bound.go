@@ -24,9 +24,13 @@ type DispatchBound interface {
 	// ship at all: what it sold less what was written off, whatever any parcel
 	// holds (ADR 0409). nil lineItemIDs asks for every line, and a line the
 	// order does not have is ABSENT from the map.
+	//
+	// spoken answers, for the same lines, how many units a return or a
+	// replacement speaks for, which a parcel that came back undelivered holds
+	// its units to (ADR 0423); a line neither names is absent from it.
 	DispatchCeilings(
 		ctx context.Context, orderID string, lineItemIDs []string,
-	) (map[string]int64, error)
+	) (ceilings, spoken map[string]int64, err error)
 	// ReturnLines answers whether order orderID's return returnID still awaits its
 	// goods and, per order line it names, how many units it brings back. A return of
 	// another order awaits nothing on this one.
@@ -85,13 +89,15 @@ type DispatchBound interface {
 // ADR 0420).
 func (s *Service) refuseOverDispatch(
 	ctx context.Context, reference, returnID string, items []FulfillmentItemInput,
-) (map[string]int64, error) {
+) (ceilings, spoken map[string]int64, err error) {
 	if returnID != "" {
-		return s.refuseOverReturn(ctx, reference, returnID, items)
+		named, err := s.refuseOverReturn(ctx, reference, returnID, items)
+
+		return named, nil, err
 	}
 
 	if s.bound == nil {
-		return nil, errors.Internal(CodeDispatchBoundUnknown,
+		return nil, nil, errors.Internal(CodeDispatchBoundUnknown,
 			"the fulfillment module has no way to check what order %s may ship, so a "+
 				"parcel cannot be opened; the fulfilling flow is what answers it and it "+
 				"was not bound", reference)
@@ -103,21 +109,21 @@ func (s *Service) refuseOverDispatch(
 	for _, item := range items {
 		lineIDs = append(lineIDs, item.LineItemID)
 	}
-	ceilings, err := s.bound.DispatchCeilings(ctx, reference, lineIDs)
+	ceilings, spoken, err = s.bound.DispatchCeilings(ctx, reference, lineIDs)
 	if err != nil {
-		return nil, errors.Wrap(err, errors.KindOf(err), CodeDispatchBoundUnknown,
+		return nil, nil, errors.Wrap(err, errors.KindOf(err), CodeDispatchBoundUnknown,
 			"what order %s may ship could not be read, so nothing was opened", reference)
 	}
 
 	for _, item := range items {
 		ceiling, onTheOrder := ceilings[item.LineItemID]
 		if !onTheOrder {
-			return nil, errors.Invalid(CodeLineNotDispatchable,
+			return nil, nil, errors.Invalid(CodeLineNotDispatchable,
 				"line %s is not on order %s; a parcel cannot hold goods the order did "+
 					"not sell", item.LineItemID, reference)
 		}
 		if item.Quantity > ceiling {
-			return nil, errors.Conflict(CodeLineNotDispatchable,
+			return nil, nil, errors.Conflict(CodeLineNotDispatchable,
 				"line %s of order %s may ship %d unit(s) at all and the parcel asks for %d; "+
 					"what was sold minus what was written off is the ceiling",
 				item.LineItemID, reference, ceiling, item.Quantity)
@@ -127,14 +133,14 @@ func (s *Service) refuseOverDispatch(
 		ceilings = map[string]int64{}
 	}
 
-	return ceilings, nil
+	return ceilings, spoken, nil
 }
 
 // holdToCeiling holds an outgoing parcel to what its order may still ship, and
 // fills the list of one asked to hold what is owed (ADR 0409, gaps D264, D265).
 //
 // It runs inside the transaction, after the order's dispatch lock: the units
-// the order's live outgoing parcels hold are read there, by the reference this
+// the order's outgoing parcels hold are read there, by the reference this
 // module stores, so a parcel committed by the lock's last holder is counted
 // whether or not its link to the order is written yet. A line may still take
 // its ceiling less what they hold; a parcel asking for more is refused, and a
@@ -142,13 +148,21 @@ func (s *Service) refuseOverDispatch(
 // is above zero, or is refused when it is zero everywhere. The ceiling is read
 // before the transaction, so a write-off landing between that read and this
 // one is not seen here (D265).
+//
+// A parcel that came back undelivered holds its units only as far as a return
+// or a replacement speaks for them, spoken (ADR 0423): the rest the order owes
+// again, so a parcel may take them. spoken is read with the ceiling, so a
+// return or a replacement written or withdrawn after that read is not seen
+// here either.
 func (s *Service) holdToCeiling(
-	ctx context.Context, reference string, items []FulfillmentItemInput, ceilings map[string]int64, owedDefault bool,
+	ctx context.Context, reference string, items []FulfillmentItemInput, ceilings, spoken map[string]int64,
+	owedDefault bool,
 ) ([]FulfillmentItemInput, error) {
-	held, err := s.store.CommittedQuantitiesForReference(ctx, reference)
+	units, err := s.store.HeldQuantitiesForReference(ctx, reference)
 	if err != nil {
 		return nil, err
 	}
+	held := heldOf(units, spoken)
 
 	if owedDefault {
 		items = nil
@@ -159,8 +173,9 @@ func (s *Service) holdToCeiling(
 		}
 		if len(items) == 0 {
 			return nil, errors.Conflict(CodeNothingOwed,
-				"order %s owes no unit to a parcel: what it sold is written off or already "+
-					"in a live parcel, so nothing was opened", reference)
+				"order %s owes no unit to a parcel: what it sold is written off, in a live "+
+					"parcel, or came back undelivered and is spoken for by a return or a "+
+					"replacement, so nothing was opened", reference)
 		}
 
 		return normalizeItems(items)
@@ -170,8 +185,9 @@ func (s *Service) holdToCeiling(
 		if left := ceilings[item.LineItemID] - held[item.LineItemID]; left < item.Quantity {
 			return nil, errors.Conflict(CodeLineNotDispatchable,
 				"line %s of order %s owes %d more unit(s) and the parcel asks for %d; "+
-					"what was sold minus what was written off minus what the order's live "+
-					"parcels hold is the bound",
+					"what was sold minus what was written off minus what the order's parcels "+
+					"hold is the bound, and a parcel that came back undelivered holds only "+
+					"what a return or a replacement speaks for",
 				item.LineItemID, reference, max(left, 0), item.Quantity)
 		}
 	}

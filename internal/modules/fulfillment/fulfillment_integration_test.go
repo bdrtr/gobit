@@ -928,6 +928,7 @@ func TestTheShipmentEntitySaysWhatAParcelHolds(t *testing.T) {
 		service.FieldTrackingNumber, service.FieldTrackingURL, service.FieldShippedAt,
 		service.FieldDeliveredAt, service.FieldCanceledAt, service.FieldReturnedAt,
 		service.FieldShipmentCreatedAt, service.FieldShipmentItems, service.FieldShipmentReturnID,
+		service.FieldShipmentHeldWhole,
 	}, slices.Collect(maps.Keys(all[0])), "the offered set is exactly these fields")
 	assert.Equal(t, want, all[0][service.FieldShipmentItems], "a read of every field carries the items")
 }
@@ -1746,13 +1747,13 @@ type generousBound struct{}
 // DispatchCeilings answers generously for whatever it is asked about.
 func (generousBound) DispatchCeilings(
 	_ context.Context, _ string, lineItemIDs []string,
-) (map[string]int64, error) {
+) (ceilings, spoken map[string]int64, err error) {
 	out := make(map[string]int64, len(lineItemIDs))
 	for _, id := range lineItemIDs {
 		out[id] = 1000
 	}
 
-	return out, nil
+	return out, nil, nil
 }
 
 // ReturnLines answers that every return awaits a thousand units of

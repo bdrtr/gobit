@@ -27,6 +27,7 @@ type Fulfillment struct {
 	UpdatedAt        pgtype.Timestamptz
 	ReturnedAt       pgtype.Timestamptz
 	ReturnID         *string
+	HeldWhole        bool
 }
 
 type FulfillmentItem struct {

@@ -203,12 +203,12 @@ func TestTheCeilingCountsNoParcel(t *testing.T) {
 
 	h := newDispatchHarness(t, 5, 2, 3)
 
-	ceilings, err := h.DispatchCeilings(t.Context(), testOrderID, nil)
+	ceilings, _, err := h.DispatchCeilings(t.Context(), testOrderID, nil)
 	require.NoError(t, err)
 	assert.Equal(t, map[string]int64{testLineID: 3}, ceilings,
 		"bought 5, canceled 2: the 3 units in a live parcel are not taken off")
 
-	asked, err := h.DispatchCeilings(t.Context(), testOrderID, []string{"oli_not_on_the_order"})
+	asked, _, err := h.DispatchCeilings(t.Context(), testOrderID, []string{"oli_not_on_the_order"})
 	require.NoError(t, err)
 	assert.Empty(t, asked, "a line the order does not have is absent")
 }

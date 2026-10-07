@@ -40,8 +40,10 @@ type CreateFulfillmentInput struct {
 	// what the order still owes (ADR 0409).
 	Items []FulfillmentItemInput
 	// ItemsOwed asks the module to fill an empty Items with every line's units
-	// the order still owes to a parcel: its ceiling less what the order's live
-	// parcels hold, counted under the order's lock (ADR 0409).
+	// the order still owes to a parcel: its ceiling less what the order's
+	// outgoing parcels hold, counted under the order's lock (ADR 0409), one that
+	// came back undelivered as far as a return or a replacement speaks for its
+	// units (ADR 0423).
 	// A retry is answered from its key and fills nothing, and a parcel bringing a
 	// return back names its units instead (ADR 0384).
 	ItemsOwed bool
@@ -181,8 +183,10 @@ func (s *Service) CreateFulfillment(
 	// ceilings is, per line, what the order may ship for an outgoing parcel or
 	// what the return names for one bringing it back, read when the request is
 	// not a retry; the transaction holds the parcel to it under the order's
-	// lock. It stays nil on a retry.
-	var ceilings map[string]int64
+	// lock. It stays nil on a retry. spoken is, per line, how many units a
+	// return or a replacement speaks for, read with it for an outgoing parcel
+	// (ADR 0423).
+	var ceilings, spoken map[string]int64
 	owedDefault := false
 	if !retry {
 		// A parcel bringing a return back with no items is refused here, so the
@@ -200,7 +204,7 @@ func (s *Service) CreateFulfillment(
 		// The bound is read BEFORE the transaction opens: asking another module
 		// while holding this one's locks takes a second connection from the same
 		// pool (ADR 0130's measurement, ADR 0135's reason).
-		if ceilings, err = s.refuseOverDispatch(ctx, reference, returnID, items); err != nil {
+		if ceilings, spoken, err = s.refuseOverDispatch(ctx, reference, returnID, items); err != nil {
 			return models.Fulfillment{}, err
 		}
 	}
@@ -267,7 +271,7 @@ func (s *Service) CreateFulfillment(
 				return err
 			}
 		default:
-			if items, err = s.holdToCeiling(ctx, reference, items, ceilings, owedDefault); err != nil {
+			if items, err = s.holdToCeiling(ctx, reference, items, ceilings, spoken, owedDefault); err != nil {
 				return err
 			}
 		}
@@ -717,7 +721,13 @@ func (s *Service) MarkDelivered(ctx context.Context, id string) (models.Fulfillm
 //
 // THE PROVIDER IS NOT CALLED; the rationale is the same as for
 // [Service.MarkShipped]. The status is terminal and a second call returns no
-// error (idempotency).
+// error (idempotency) and announces nothing.
+//
+// The parcel then holds its units only as far as a return or a replacement
+// speaks for them, and the order owes the rest again (ADR 0423). The report
+// writes [EventFulfillmentReturned] into the outbox in its transaction and
+// publishes it after the commit, so the order cancellation flow recounts a line
+// written off while the parcel was on the way.
 //
 // # What this is NOT
 //
@@ -739,7 +749,12 @@ func (s *Service) MarkReturned(ctx context.Context, id string) (models.Fulfillme
 		return models.Fulfillment{}, err
 	}
 
-	var out models.Fulfillment
+	var (
+		out models.Fulfillment
+		// cameBack is the moment of a report this call recorded; it stays zero
+		// for a parcel that had already come back, which announces nothing.
+		cameBack time.Time
+	)
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {
 		ful, err := s.store.LockFulfillment(ctx, id)
 		if err != nil {
@@ -766,12 +781,25 @@ func (s *Service) MarkReturned(ctx context.Context, id string) (models.Fulfillme
 		if err != nil {
 			return err
 		}
-		out = updated
+
+		// The outbox row commits with the status: the parcel now holds its
+		// units only as far as a return or a replacement speaks for them, and a
+		// line written off while it was on the way is recounted when this event
+		// is heard (ADR 0423).
+		if err := s.recordFulfillmentReturned(ctx, ful.ID, ful.Reference, ful.ReturnID, now); err != nil {
+			return err
+		}
+		out, cameBack = updated, now
+
 		return nil
 	})
 	if err != nil {
 		return models.Fulfillment{}, err
 	}
+	if !cameBack.IsZero() {
+		s.publishFulfillmentReturned(ctx, out.ID, out.Reference, out.ReturnID, cameBack)
+	}
+
 	return out, nil
 }
 
@@ -997,17 +1025,38 @@ func stampFor(status, target models.FulfillmentStatus, now time.Time) *time.Time
 	return &stamp
 }
 
-// CommittedQuantitiesForReference sums, per order line, the units the live
-// outgoing parcels opened for the reference hold, counted by the reference this
-// module stores: the population an open is held to under the order's lock
-// (ADR 0409), so a parcel whose link to its order was not written counts.
-func (s *Service) CommittedQuantitiesForReference(ctx context.Context, reference string) (map[string]int64, error) {
+// CommittedQuantitiesForReference sums, per order line, the units the outgoing
+// parcels opened for the reference hold, counted by the reference this module
+// stores: the population an open is held to under the order's lock (ADR 0409),
+// so a parcel whose link to its order was not written counts.
+//
+// spoken is, per line, how many units a return or a replacement speaks for: a
+// parcel that came back undelivered holds its units only so far
+// ([models.HeldUnits.Held], ADR 0423). A line it does not name reads zero.
+func (s *Service) CommittedQuantitiesForReference(
+	ctx context.Context, reference string, spoken map[string]int64,
+) (map[string]int64, error) {
 	reference = strings.TrimSpace(reference)
 	if err := requireText("the reference", reference); err != nil {
 		return nil, err
 	}
 
-	return s.store.CommittedQuantitiesForReference(ctx, reference)
+	units, err := s.store.HeldQuantitiesForReference(ctx, reference)
+	if err != nil {
+		return nil, err
+	}
+
+	return heldOf(units, spoken), nil
+}
+
+// heldOf applies the held rule to every line's units (ADR 0423).
+func heldOf(units map[string]models.HeldUnits, spoken map[string]int64) map[string]int64 {
+	out := make(map[string]int64, len(units))
+	for line, u := range units {
+		out[line] = u.Held(spoken[line])
+	}
+
+	return out
 }
 
 // CodeDispatchBusy refuses a count asked while a parcel of the same order is
@@ -1025,8 +1074,11 @@ const CodeDispatchBusy = "fulfillment_dispatch_busy"
 // passes, and the caller asks again: once the open commits, its parcel is
 // counted, and a write-off therefore puts back no unit the new parcel holds. A
 // parcel whose link to its order was not written is counted, since the
-// reference is what this module stores.
-func (s *Service) HeldForReferenceLocked(ctx context.Context, reference string) (map[string]int64, error) {
+// reference is what this module stores. spoken is read as
+// [Service.CommittedQuantitiesForReference] reads it (ADR 0423).
+func (s *Service) HeldForReferenceLocked(
+	ctx context.Context, reference string, spoken map[string]int64,
+) (map[string]int64, error) {
 	reference = strings.TrimSpace(reference)
 	if err := requireText("the reference", reference); err != nil {
 		return nil, err
@@ -1043,7 +1095,8 @@ func (s *Service) HeldForReferenceLocked(ctx context.Context, reference string) 
 				"a parcel of %s is being opened, so what its parcels hold cannot be counted "+
 					"yet; ask again once it commits", reference)
 		}
-		held, err = s.store.CommittedQuantitiesForReference(ctx, reference)
+		units, err := s.store.HeldQuantitiesForReference(ctx, reference)
+		held = heldOf(units, spoken)
 
 		return err
 	})

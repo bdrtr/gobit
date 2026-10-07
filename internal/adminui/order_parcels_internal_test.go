@@ -246,7 +246,7 @@ func TestTheParcelFormOffersEachLineWhatItOwes(t *testing.T) {
 
 	one.owed = map[string]int64{"oli_ring": 0}
 	body = campaignsRequest(panel, http.MethodGet, page, nil, all...).Body.String()
-	assert.Contains(t, body, "Every unit of this order is in a parcel or written off")
+	assert.Contains(t, body, "Every unit of this order is in a parcel, written off, or spoken for by a return or a replacement")
 	assert.Empty(t, parcelKey.FindStringSubmatch(body), "an order owing nothing is drawn no open form")
 
 	one.owedErr = errors.Unavailable("bound_unknown", "the bound could not be read")

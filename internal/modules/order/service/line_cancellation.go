@@ -397,3 +397,38 @@ func (s *Service) CanceledUnits(ctx context.Context, lineItemIDs []string) (map[
 
 	return s.store.CanceledQuantities(ctx, lineItemIDs)
 }
+
+// SpokenForUnits answers, per line, how many of its units a return or a
+// replacement speaks for: what the line's requested and received returns ask
+// back plus what its requested and dispatched replacements send again. A
+// withdrawn return or replacement speaks for nothing, and a replacement item
+// naming a variant rather than a line is no line's (ADR 0423).
+//
+// It is not [Service.CanceledUnits]'s partner in a bound: a dispatch is held to
+// what was sold less what was written off. It is what a parcel that came back
+// undelivered holds its units to, read with the ceiling. A claim settled with
+// money names no line, so what it paid for is not here.
+func (s *Service) SpokenForUnits(ctx context.Context, lineItemIDs []string) (map[string]int64, error) {
+	if len(lineItemIDs) == 0 {
+		return map[string]int64{}, nil
+	}
+
+	returned, err := s.store.ReturnedQuantities(ctx, lineItemIDs)
+	if err != nil {
+		return nil, err
+	}
+	replaced, err := s.store.ReplacedQuantities(ctx, lineItemIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(map[string]int64, len(returned)+len(replaced))
+	for line, units := range returned {
+		out[line] += units
+	}
+	for line, units := range replaced {
+		out[line] += units
+	}
+
+	return out, nil
+}

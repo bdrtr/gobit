@@ -3,6 +3,8 @@ package repository
 import (
 	"context"
 	"hash/fnv"
+
+	"github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 )
 
 // dispatchLockSQL takes the transaction-lifetime advisory lock per reference.
@@ -74,20 +76,21 @@ func dispatchLockKey(reference string) int64 {
 	return dispatchLockClass<<32 | int64(h.Sum32())
 }
 
-// CommittedQuantitiesForReference sums, per order line, the units the LIVE
-// outgoing parcels opened for the reference hold, found by the reference this
-// module stores (ADR 0409).
-func (r *Repository) CommittedQuantitiesForReference(
+// HeldQuantitiesForReference sums, per order line, the units of the outgoing
+// parcels opened for the reference, found by the reference this module stores
+// (ADR 0409): those of its live parcels and those of its parcels that came back
+// undelivered, apart (ADR 0423).
+func (r *Repository) HeldQuantitiesForReference(
 	ctx context.Context, reference string,
-) (map[string]int64, error) {
-	rows, err := r.queries(ctx).CommittedQuantitiesForReference(ctx, reference)
+) (map[string]models.HeldUnits, error) {
+	rows, err := r.queries(ctx).HeldQuantitiesForReference(ctx, reference)
 	if err != nil {
 		return nil, classify(err, codeQueryFailed, "could not sum the units the reference's parcels hold")
 	}
 
-	out := make(map[string]int64, len(rows))
+	out := make(map[string]models.HeldUnits, len(rows))
 	for i := range rows {
-		out[rows[i].LineItemID] = rows[i].Quantity
+		out[rows[i].LineItemID] = models.HeldUnits{Live: rows[i].Live, Back: rows[i].Back}
 	}
 
 	return out, nil

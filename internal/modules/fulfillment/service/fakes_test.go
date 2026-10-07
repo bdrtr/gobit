@@ -830,24 +830,37 @@ func (f *fakeStore) ReturningQuantities(
 	return out, nil
 }
 
-// CommittedQuantitiesForReference sums the units of the live outgoing parcels
-// opened for the reference, the way the SQL does (ADR 0409).
-func (f *fakeStore) CommittedQuantitiesForReference(
+// HeldQuantitiesForReference sums the units of the outgoing parcels opened for
+// the reference, live and come back apart, the way the SQL does (ADR 0409,
+// ADR 0423).
+func (f *fakeStore) HeldQuantitiesForReference(
 	_ context.Context,
 	reference string,
-) (map[string]int64, error) {
+) (map[string]models.HeldUnits, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	out := map[string]int64{}
+	out := map[string]models.HeldUnits{}
 	for _, id := range slices.Sorted(maps.Keys(f.items)) {
 		item := f.items[id]
 		parcel, known := f.fuls[item.FulfillmentID]
-		if !known || parcel.Reference != reference || parcel.Status == models.StatusCanceled ||
-			parcel.ReturnID != "" {
+		if !known || parcel.Reference != reference || parcel.ReturnID != "" {
 			continue
 		}
-		out[item.LineItemID] += item.Quantity
+		units := out[item.LineItemID]
+		switch parcel.Status {
+		case models.StatusPending, models.StatusShipped, models.StatusDelivered:
+			units.Live += item.Quantity
+		case models.StatusReturned:
+			if parcel.HeldWhole {
+				units.Live += item.Quantity
+			} else {
+				units.Back += item.Quantity
+			}
+		case models.StatusCanceled:
+			continue
+		}
+		out[item.LineItemID] = units
 	}
 
 	return out, nil
@@ -914,10 +927,26 @@ func (f *fakeStore) putLiveReturnParcel(id, reference, returnID, lineID string, 
 
 // cancelParcel marks a parcel canceled, as a cancel that committed would.
 func (f *fakeStore) cancelParcel(id string) {
+	f.setParcelStatus(id, models.StatusCanceled)
+}
+
+// markHeldWhole marks a parcel as fulfillment migration 000008 marks one that
+// came back before ADR 0423.
+func (f *fakeStore) markHeldWhole(id string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	parcel := f.fuls[id]
-	parcel.Status = models.StatusCanceled
+	parcel.HeldWhole = true
+	f.fuls[id] = parcel
+}
+
+// setParcelStatus moves a parcel to status, as the transition that wrote it
+// would have left it.
+func (f *fakeStore) setParcelStatus(id string, status models.FulfillmentStatus) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	parcel := f.fuls[id]
+	parcel.Status = status
 	f.fuls[id] = parcel
 }
 
@@ -1222,6 +1251,9 @@ type fakeDispatchBound struct {
 	// test changes the store after the open read the ceiling and before it
 	// takes the order's lock (ADR 0409, gap D265).
 	during func()
+	// spoken is how many units a return or a replacement speaks for, per line
+	// (ADR 0423).
+	spoken map[string]int64
 }
 
 // returnAsked returns how many return questions this fake was given.
@@ -1265,7 +1297,7 @@ func (f *fakeDispatchBound) asked() int {
 // held, what it owes.
 func (f *fakeDispatchBound) DispatchCeilings(
 	_ context.Context, _ string, lineItemIDs []string,
-) (map[string]int64, error) {
+) (ceilings, spoken map[string]int64, err error) {
 	f.mu.Lock()
 	f.calls++
 	during := f.during
@@ -1275,10 +1307,10 @@ func (f *fakeDispatchBound) DispatchCeilings(
 		during()
 	}
 	if f.err != nil {
-		return nil, f.err
+		return nil, nil, f.err
 	}
 	if f.owed != nil {
-		return f.owed, nil
+		return f.owed, f.spoken, nil
 	}
 
 	// Generous by default: every line asked about owes a thousand. It is what lets
@@ -1288,7 +1320,7 @@ func (f *fakeDispatchBound) DispatchCeilings(
 		out[id] = 1000
 	}
 
-	return out, nil
+	return out, f.spoken, nil
 }
 
 // createProfile creates a shipping profile for the test and returns its

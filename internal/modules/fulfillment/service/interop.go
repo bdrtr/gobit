@@ -551,34 +551,39 @@ func interopInt(value json.Number, field string) (int64, error) {
 	return parsed, nil
 }
 
-// CommittedQuantitiesForReference sums, per order line, the units the live
-// outgoing parcels opened for the reference hold, as the module counts them
-// when it holds a new parcel to its order (ADR 0409). The fulfilling flow
-// answers what an order still owes a parcel from it, so the panel's form
-// offers what this module will take.
+// CommittedQuantitiesForReference sums, per order line, the units the outgoing
+// parcels opened for the reference hold, as the module counts them when it
+// holds a new parcel to its order (ADR 0409). The fulfilling flow answers what
+// an order still owes a parcel from it, so the panel's form offers what this
+// module will take.
+//
+// spoken is, per line, how many units a return or a replacement speaks for: a
+// parcel that came back undelivered holds its units only so far, and the rest
+// are owed again (ADR 0423).
 func (i *Interop) CommittedQuantitiesForReference(
-	ctx context.Context, reference string,
+	ctx context.Context, reference string, spoken map[string]int64,
 ) (map[string]int64, error) {
-	return i.svc.CommittedQuantitiesForReference(ctx, reference)
+	return i.svc.CommittedQuantitiesForReference(ctx, reference, spoken)
 }
 
-// HeldForReferenceLocked sums, per order line, the units the live outgoing
-// parcels opened for the reference hold, read under the order's dispatch lock
+// HeldForReferenceLocked sums, per order line, the units the outgoing parcels
+// opened for the reference hold, read under the order's dispatch lock
 // (ADR 0420). A cancellation asks it before putting stock back. It does not
 // wait for the lock: while a parcel of the order is being opened it answers
 // [errors.KindUnavailable] with [CodeDispatchBusy], and asked again after the
 // open commits it counts that parcel. It counts a parcel whose link to the
-// order was not written.
+// order was not written. spoken is read as [Interop.CommittedQuantitiesForReference]
+// reads it (ADR 0423).
 //
 // The counterpart on the consumer side:
 //
 //	type Fulfillment interface {
-//	    HeldForReferenceLocked(ctx context.Context, reference string) (map[string]int64, error)
+//	    HeldForReferenceLocked(ctx context.Context, reference string, spoken map[string]int64) (map[string]int64, error)
 //	}
 func (i *Interop) HeldForReferenceLocked(
-	ctx context.Context, reference string,
+	ctx context.Context, reference string, spoken map[string]int64,
 ) (map[string]int64, error) {
-	return i.svc.HeldForReferenceLocked(ctx, reference)
+	return i.svc.HeldForReferenceLocked(ctx, reference, spoken)
 }
 
 // CommittedQuantities sums, per order line, the units a live outgoing parcel
@@ -594,13 +599,18 @@ func (i *Interop) HeldForReferenceLocked(
 // # What counts as gone
 //
 // Everything but a CANCELED parcel. A canceled one's goods never left the
-// building; a shipped or delivered one's did. A RETURNED parcel's units also did
-// leave — their coming back is the return flow's receipt, which puts its own stock
-// back, so counting them as gone here is what keeps each act with one effect. And
-// a PENDING parcel counts as gone because the warehouse is already picking it, and
-// treating those units as available would let a cancellation put back goods that
-// are in a box. A parcel bringing a return back never counts, whatever list names
-// it: its units never left with the order's goods (ADR 0384).
+// building; a shipped or delivered one's did. A PENDING parcel counts as gone
+// because the warehouse is already picking it, and treating those units as
+// available would let a cancellation put back goods that are in a box. A parcel
+// bringing a return back never counts, whatever list names it: its units never
+// left with the order's goods (ADR 0384).
+//
+// A RETURNED parcel counts whole here. This count's one reader in this tree is
+// the backorder claim at the checkout, which a recovery can run after the
+// order's parcels exist (gaps D268); the counts by reference that open a parcel
+// and restock a write-off hold one that came back undelivered only as far as
+// a return or a replacement speaks for its units ([Interop.HeldForReferenceLocked],
+// ADR 0423).
 //
 // The parcels are named by the caller rather than looked up from an order,
 // because the binding between the two is the "order_fulfillment" LINK and this

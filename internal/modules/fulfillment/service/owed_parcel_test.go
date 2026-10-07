@@ -337,7 +337,7 @@ func TestTheInteropCountsTheReferencesLiveOutgoingParcels(t *testing.T) {
 	setup.store.mu.Unlock()
 	setup.store.putLiveParcel("ful_other", "order_2", "li_a", 11)
 
-	held, err := service.NewInterop(setup.svc).CommittedQuantitiesForReference(context.Background(), "order_1")
+	held, err := service.NewInterop(setup.svc).CommittedQuantitiesForReference(context.Background(), "order_1", nil)
 	require.NoError(t, err)
 	assert.Equal(t, map[string]int64{"li_a": 2}, held)
 }

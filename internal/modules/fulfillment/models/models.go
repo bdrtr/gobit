@@ -342,6 +342,12 @@ type Fulfillment struct {
 	// exactly the shipments whose Status is [StatusReturned] and on no others —
 	// a database CHECK enforces both directions.
 	ReturnedAt *time.Time
+	// HeldWhole marks a parcel that came back before ADR 0423, which fulfillment
+	// migration 000008 found 'returned': the held count reads it as holding
+	// every unit, as it did when it came back, since what settled those units
+	// then may be nothing a return or a replacement records. Every other parcel
+	// carries false.
+	HeldWhole bool
 	// Data is the provider's raw data; it is stored as is and not interpreted.
 	Data json.RawMessage
 	// Metadata is the caller's free-form extra data.

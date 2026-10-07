@@ -1252,11 +1252,19 @@ type interopDispatchableLine struct {
 	Bought int64 `json:"bought"`
 	// Canceled is how many of them were written off and will not be delivered.
 	//
-	// Returns are NOT here and it is not an omission. A returned unit shipped,
-	// came back and was restocked on receipt; whether it ships again is a new
-	// decision rather than a quantity still owed. What a dispatch must not exceed
-	// is what was sold minus what was written off.
+	// Returns are NOT subtracted from it and it is not an omission. A returned
+	// unit shipped, came back and was restocked on receipt; whether it ships
+	// again is a new decision rather than a quantity still owed. What a dispatch
+	// must not exceed is what was sold minus what was written off.
 	Canceled int64 `json:"canceled"`
+	// SpokenFor is how many of the line's units a return or a replacement
+	// speaks for: what its requested and received returns ask back plus what
+	// its requested and dispatched replacements send again. It bounds nothing:
+	// it is what a parcel that came back to the sender undelivered holds its
+	// units to (ADR 0423). A return recorded for those units restocks them on
+	// receipt, a replacement sends goods in their place, and the units neither
+	// speaks for are owed again.
+	SpokenFor int64 `json:"spoken_for"`
 	// VariantID is the product variant the line sells.
 	//
 	// It is here for a reader this answer did not originally have. A parcel being
@@ -1313,6 +1321,10 @@ func (i *Interop) DispatchableLinesJSON(ctx context.Context, orderID string) (js
 	if err != nil {
 		return nil, err
 	}
+	spoken, err := i.svc.SpokenForUnits(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
 
 	lines := make([]interopDispatchableLine, 0, len(detail.Items))
 	for i := range detail.Items {
@@ -1320,6 +1332,7 @@ func (i *Interop) DispatchableLinesJSON(ctx context.Context, orderID string) (js
 			LineItemID: detail.Items[i].ID,
 			Bought:     detail.Items[i].Quantity,
 			Canceled:   canceled[detail.Items[i].ID],
+			SpokenFor:  spoken[detail.Items[i].ID],
 			VariantID:  detail.Items[i].VariantID,
 			Components: interopLineComponents(detail.Items[i].Components),
 		})

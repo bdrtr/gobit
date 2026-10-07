@@ -280,8 +280,11 @@ func describeFulfillments(d *openapi.Doc) {
 			"422 fulfillment_option_direction_mismatch; a return that awaits nothing is 409 " +
 			"fulfillment_return_not_awaited. " +
 			"An outgoing parcel names its \"items\", each within what its line may still ship: " +
-			"what was sold, less what was written off, less what the order's live parcels hold, " +
-			"counted under the order's lock (ADR 0409). With no items it answers 422 " +
+			"what was sold, less what was written off, less what the order's parcels hold, " +
+			"counted under the order's lock (ADR 0409): a pending, shipped or delivered parcel " +
+			"holds its units, one that came back before ADR 0423 (held_whole) holds them all, " +
+			"and one that came back after it only as far as a return or a replacement speaks " +
+			"for them (ADR 0423). With no items it answers 422 " +
 			"fulfillment_items_required, once its key is read (a replay is answered with its " +
 			"parcel) and its option's direction; a parcel of every unit still owed is opened " +
 			"through POST /admin/v1/orders/{id}/fulfillments.",
@@ -389,7 +392,11 @@ func describeFulfillments(d *openapi.Doc) {
 			"not the same thing as a customer sending goods back after receiving them — " +
 			"that is a new fulfillment on a shipping option with is_return set, opened with " +
 			"POST /admin/v1/fulfillments naming its return_id (ADR 0384). Only a " +
-			"shipped fulfillment can come back; anything else is a 409.",
+			"shipped fulfillment can come back; anything else is a 409. The parcel then " +
+			"holds its units only as far as a return or a replacement speaks for them, so " +
+			"the order owes the rest again, and the first report publishes " +
+			"fulfillment.returned, on which a line written off while the parcel was on the " +
+			"way puts its units back on the shelf as far as nothing speaks for them (ADR 0423).",
 		Responses: map[string]any{
 			"200": openapi.Response("The returned fulfillment", d.Item(fulfillmentDTO{})),
 		},

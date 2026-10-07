@@ -15,15 +15,21 @@ import (
 // constant across that line would tie them together at compile time.
 const topicFulfillmentCanceled = "fulfillment.canceled"
 
+// topicFulfillmentReturned is the third: a parcel that came back undelivered
+// holds its units only as far as a return or a replacement speaks for them, so
+// marking it come back is an input of the same window (ADR 0423). The name is
+// repeated for [topicLineCanceled]'s reason.
+const topicFulfillmentReturned = "fulfillment.returned"
+
 // fieldFulfillmentID is the parcel the event names; what it held is asked for
 // by identity.
 const fieldFulfillmentID = "fulfillment_id"
 
-// fieldReference is what the canceled parcel was opened for: its order in every
+// fieldReference is what the parcel was opened for: its order in every
 // flow this repository ships (ADR 0409).
 const fieldReference = "reference"
 
-// fieldReturnID is the order return a canceled parcel was bringing back, empty
+// fieldReturnID is the order return a parcel was bringing back, empty
 // for a parcel that went out (ADR 0420).
 const fieldReturnID = "return_id"
 
@@ -57,6 +63,29 @@ const linkOrderFulfillment = "order_fulfillment"
 // inventory write failing — because those the bus tries again, twice within a
 // second and a quarter (ADR 0240).
 func (w *Workflow) HandleFulfillmentCanceled(ctx context.Context, e eventbus.Event) error {
+	return w.recountParcel(ctx, e)
+}
+
+// HandleFulfillmentReturned puts back the written-off units of a parcel that
+// came back to the sender undelivered (ADR 0423).
+//
+// A line written off while its parcel was on the way put nothing back: the
+// units had left, and the window [targetOnShelf] computes was empty. Once the
+// parcel is marked come back it holds its units only as far as a return or a
+// replacement speaks for them, so the window opens, and this recounts it as
+// [Workflow.HandleFulfillmentCanceled] does for a canceled parcel: the same
+// target under the order's dispatch lock, brought up to and never past, so a
+// redelivery or a write-off arriving after it puts nothing back twice. A parcel
+// bringing a return back holds none of the order's outgoing units, and its
+// coming back puts nothing back, as its cancel does not.
+func (w *Workflow) HandleFulfillmentReturned(ctx context.Context, e eventbus.Event) error {
+	return w.recountParcel(ctx, e)
+}
+
+// recountParcel brings each line a parcel held up to its shelf target, after
+// the parcel was canceled or came back: both lower what the order's parcels
+// hold, and the target is computed from the state the act finds.
+func (w *Workflow) recountParcel(ctx context.Context, e eventbus.Event) error {
 	fulfillmentID := text(e, fieldFulfillmentID)
 	if fulfillmentID == "" {
 		return errors.Invalid(CodeEventUnusable,
@@ -64,7 +93,7 @@ func (w *Workflow) HandleFulfillmentCanceled(ctx context.Context, e eventbus.Eve
 	}
 	if w.links == nil || w.fulfillment == nil || w.orders == nil || w.inventory == nil {
 		return errors.Internal(CodeNotReady,
-			"the cancellation flow is not wired, so a canceled parcel cannot be acted on")
+			"the cancellation flow is not wired, so a parcel's units cannot be acted on")
 	}
 
 	// The orders are read from the LINK first. A parcel is bound to MORE than one
@@ -108,8 +137,8 @@ func (w *Workflow) HandleFulfillmentCanceled(ctx context.Context, e eventbus.Eve
 	owners, err := w.lineOwners(ctx, orderIDs)
 	if err != nil {
 		if byReference && errors.KindOf(err) == errors.KindNotFound {
-			w.log.DebugContext(ctx, "a canceled parcel's reference names no order, so nothing was put back",
-				"fulfillment_id", fulfillmentID, "reference", orderIDs[0])
+			w.log.DebugContext(ctx, "a parcel's reference names no order, so nothing was put back",
+				"event", e.Name, "fulfillment_id", fulfillmentID, "reference", orderIDs[0])
 
 			return nil
 		}
@@ -124,18 +153,20 @@ func (w *Workflow) HandleFulfillmentCanceled(ctx context.Context, e eventbus.Eve
 			// now refuses to create. An older one can exist, and nothing here can
 			// decide what it means.
 			w.log.WarnContext(ctx,
-				"a canceled parcel held a line no bound order has, so nothing was put back",
-				"fulfillment_id", fulfillmentID, "order_ids", orderIDs,
+				"a parcel held a line no bound order has, so nothing was put back",
+				"event", e.Name, "fulfillment_id", fulfillmentID, "order_ids", orderIDs,
 				"order_line_item_id", lineItemID)
 
 			continue
 		}
 		orderID, line := owner.orderID, owner.line
 
-		// The live parcels AFTER this one was canceled. The canceled parcel is
-		// already excluded by the module's own answer, which is what makes the
-		// arithmetic below a difference between two states rather than a
-		// subtraction this flow has to remember.
+		// What the order's parcels hold AFTER this one was canceled or came
+		// back. The module's own answer already excludes a canceled parcel and
+		// holds one that came back only as far as a return or a replacement
+		// speaks for it (ADR 0423), which is what makes the arithmetic below a
+		// difference between two states rather than a subtraction this flow
+		// has to remember.
 		committedAfter, err := owner.committed(ctx)
 		if err != nil {
 			return err
@@ -161,8 +192,8 @@ func (w *Workflow) HandleFulfillmentCanceled(ctx context.Context, e eventbus.Eve
 		}
 
 		w.log.InfoContext(ctx,
-			"a canceled parcel let a line's written-off units reach the shelf",
-			"fulfillment_id", fulfillmentID, "order_id", orderID,
+			"a parcel canceled or come back let a line's written-off units reach the shelf",
+			"event", e.Name, "fulfillment_id", fulfillmentID, "order_id", orderID,
 			"order_line_item_id", lineItemID, "target", target,
 			"released_by_this_parcel", releasedByParcel)
 	}
@@ -189,7 +220,10 @@ type orderLine struct {
 	LineItemID string `json:"line_item_id"`
 	Bought     int64  `json:"bought"`
 	Canceled   int64  `json:"canceled"`
-	VariantID  string `json:"variant_id"`
+	// SpokenFor is how many of the line's units a return or a replacement
+	// speaks for (ADR 0423).
+	SpokenFor int64  `json:"spoken_for"`
+	VariantID string `json:"variant_id"`
 	// Components are what one unit of a bundle line held when it was sold
 	// (ADR 0235); empty for any other line.
 	Components []lineComponent `json:"components,omitempty"`
@@ -241,6 +275,19 @@ func (w *Workflow) orderLines(ctx context.Context, orderID string) (map[string]o
 	return out, nil
 }
 
+// spokenOf is, per line, how many units a return or a replacement speaks for:
+// the figure a parcel that came back undelivered holds its units to (ADR 0423).
+func spokenOf(lines map[string]orderLine) map[string]int64 {
+	spoken := make(map[string]int64, len(lines))
+	for id, line := range lines {
+		if line.SpokenFor > 0 {
+			spoken[id] = line.SpokenFor
+		}
+	}
+
+	return spoken
+}
+
 // ordersOfParcel answers which orders a parcel is bound to: the one it was
 // opened for and the additions that joined it (ADR 0197).
 //
@@ -255,7 +302,7 @@ func (w *Workflow) ordersOfParcel(ctx context.Context, fulfillmentID string) ([]
 
 	orders := byParcel[fulfillmentID]
 	if len(orders) == 0 {
-		w.log.DebugContext(ctx, "a canceled parcel is bound to no order",
+		w.log.DebugContext(ctx, "a parcel is bound to no order",
 			"fulfillment_id", fulfillmentID)
 	}
 
@@ -287,11 +334,12 @@ func (w *Workflow) lineOwners(ctx context.Context, orderIDs []string) (map[strin
 			cached map[string]int64
 			read   bool
 		)
+		spoken := spokenOf(lines)
 		committed := func(ctx context.Context) (map[string]int64, error) {
 			if read {
 				return cached, nil
 			}
-			out, err := w.committedQuantities(ctx, orderID)
+			out, err := w.committedQuantities(ctx, orderID, spoken)
 			if err != nil {
 				return nil, err
 			}
@@ -316,9 +364,9 @@ func (w *Workflow) lineOwners(ctx context.Context, orderIDs []string) (map[strin
 // cancellation asks about one line and this asks about every line the canceled
 // parcel held, and issuing one query per line would be a round trip per item.
 func (w *Workflow) committedQuantities(
-	ctx context.Context, orderID string,
+	ctx context.Context, orderID string, spoken map[string]int64,
 ) (map[string]int64, error) {
-	committed, err := w.heldUnderLock(ctx, orderID)
+	committed, err := w.heldUnderLock(ctx, orderID, spoken)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindOf(err), CodeEventUnusable,
 			"the units still in the parcels of order %s could not be read", orderID)

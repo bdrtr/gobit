@@ -161,10 +161,14 @@ type Fulfillments interface {
 	) (string, error)
 	// FulfillmentStatus returns the shipment's status.
 	FulfillmentStatus(ctx context.Context, fulfillmentID string) (string, error)
-	// CommittedQuantitiesForReference sums, per order line, the units the LIVE
+	// CommittedQuantitiesForReference sums, per order line, the units the
 	// outgoing parcels opened for the order hold, counted by the reference the
-	// module stores: the count it holds a new parcel to (ADR 0409).
-	CommittedQuantitiesForReference(ctx context.Context, reference string) (map[string]int64, error)
+	// module stores: the count it holds a new parcel to (ADR 0409). spoken is,
+	// per line, how many units a return or a replacement speaks for, which a
+	// parcel that came back undelivered holds its units to (ADR 0423).
+	CommittedQuantitiesForReference(
+		ctx context.Context, reference string, spoken map[string]int64,
+	) (map[string]int64, error)
 	// ListOptionsJSON prices the shipping options eligible for the facts in
 	// the request (ADR 0199 reads it for an order's delivery change).
 	ListOptionsJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)

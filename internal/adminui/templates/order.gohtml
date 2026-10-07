@@ -348,7 +348,7 @@ credits the order; a dearer one names the collection that took the difference
   <tbody>
     {{ range $parcel := .Order.Parcels }}
     <tr>
-      <td><span class="pill">{{ .Status }}</span></td>
+      <td><span class="pill">{{ .Status }}</span>{{ if .OwedAgain }}<br><span class="muted">This order owes units of this parcel's lines again: open a parcel to send them, or write them off to put them back on the shelf.</span>{{ end }}</td>
       <td>{{ range .Holds }}{{ . }}<br>{{ else }}<span class="muted">nothing listed</span>{{ end }}</td>
       <td>
         {{ if and .TrackingNumber .TrackingURL }}<a href="{{ .TrackingURL }}" rel="noopener noreferrer">{{ .TrackingNumber }}</a>
@@ -393,7 +393,7 @@ nothing (ADR 0409).
 {{ if .NoDelivery }}
 <p class="muted">This order was sold no delivery, so there is none to open a parcel on.</p>
 {{ else if .NothingOwed }}
-<p class="muted">Every unit of this order is in a parcel or written off, so there is nothing to open a parcel for.</p>
+<p class="muted">Every unit of this order is in a parcel, written off, or spoken for by a return or a replacement, so there is nothing to open a parcel for.</p>
 {{ else if .OwedUnread }}
 <p class="muted">What this order still owes a parcel could not be read, so no parcel can be opened here.</p>
 {{ else }}

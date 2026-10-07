@@ -40,7 +40,7 @@ func newGatedBound(owed map[string]int64, callers int) *gatedBound {
 // DispatchCeilings answers the fixed ceiling once every caller has asked.
 func (b *gatedBound) DispatchCeilings(
 	_ context.Context, _ string, lineItemIDs []string,
-) (map[string]int64, error) {
+) (ceilings, spoken map[string]int64, err error) {
 	b.arrived.Done()
 	b.arrived.Wait()
 
@@ -51,7 +51,7 @@ func (b *gatedBound) DispatchCeilings(
 		}
 	}
 
-	return out, nil
+	return out, nil, nil
 }
 
 // ReturnLines awaits nothing; these parcels go out.

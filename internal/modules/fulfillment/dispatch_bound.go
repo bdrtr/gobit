@@ -48,7 +48,8 @@ func newDispatchBound(c *container.Container, log *slog.Logger) *dispatchBound {
 	return &dispatchBound{c: c, log: log}
 }
 
-// DispatchCeilings answers what the order may ship at all, per line (ADR 0409).
+// DispatchCeilings answers what the order may ship at all, per line (ADR 0409),
+// and how many units a return or a replacement speaks for (ADR 0423).
 //
 // An unresolvable flow answers an ERROR rather than an empty map, and the
 // difference is the whole point: the service treats a line missing from the map as
@@ -57,10 +58,10 @@ func newDispatchBound(c *container.Container, log *slog.Logger) *dispatchBound {
 // actually wrong — nobody is answering.
 func (b *dispatchBound) DispatchCeilings(
 	ctx context.Context, orderID string, lineItemIDs []string,
-) (map[string]int64, error) {
+) (ceilings, spoken map[string]int64, err error) {
 	svc, err := b.resolve(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	return svc.DispatchCeilings(ctx, orderID, lineItemIDs)

@@ -287,6 +287,9 @@ type harness struct {
 	committedByRef map[string]map[string]int64
 	// heldAsked records every reference the module's count was asked about.
 	heldAsked []string
+	// spokenAsked records, for every count, what the flow passed as the
+	// order's returns (ADR 0423).
+	spokenAsked []map[string]int64
 	// busyFor is how many times the module's count answers that a parcel of
 	// the order is being opened before it answers.
 	busyFor int
@@ -337,8 +340,11 @@ func (h *harness) handle(t *testing.T, e eventbus.Event) error {
 
 // HeldForReferenceLocked answers what the order's live parcels hold, counted
 // by reference: whatever the links say, which is the point (ADR 0420).
-func (h *harness) HeldForReferenceLocked(_ context.Context, reference string) (map[string]int64, error) {
+func (h *harness) HeldForReferenceLocked(
+	_ context.Context, reference string, spoken map[string]int64,
+) (map[string]int64, error) {
 	h.heldAsked = append(h.heldAsked, reference)
+	h.spokenAsked = append(h.spokenAsked, spoken)
 	if h.committedErr != nil {
 		return nil, h.committedErr
 	}

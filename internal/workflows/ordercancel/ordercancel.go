@@ -29,13 +29,17 @@
 // shelf the units left and holds the ledger they go back into. Deciding across
 // them is this layer's job.
 //
-// # TWO events, because the window has two edges
+// # THREE events, because the window has two edges and one moves twice
 //
 // How many of a line's units belong on the shelf is
 // `min(canceled, bought − in a live parcel)`, and both sides of that move. A write
 // off grows the left side and this flow hears it as "order.line_canceled"; a
 // parcel being canceled shrinks the right side and it hears that as
-// "fulfillment.canceled" (ADR 0139).
+// "fulfillment.canceled" (ADR 0139). Since ADR 0423 a parcel coming back
+// undelivered shrinks it too, as far as no return or replacement speaks for its
+// units, and the flow hears that as "fulfillment.returned" and recounts as for
+// a canceled parcel. A return or a replacement withdrawn later moves it as well,
+// and no event says so (docs/known-limits.md).
 //
 // The second one was missing for a while and the gap had teeth, because the
 // missing half was the resolution the first half's record RECOMMENDED: ADR 0135
@@ -134,10 +138,12 @@ type Inventory interface {
 
 // Fulfillment is the slice of the fulfillment module this flow calls.
 type Fulfillment interface {
-	// HeldForReferenceLocked sums, per order line, the units the order's live
+	// HeldForReferenceLocked sums, per order line, the units the order's
 	// outgoing parcels hold, counted by the reference the module stores and
-	// under the order's dispatch lock (ADR 0420).
-	HeldForReferenceLocked(ctx context.Context, reference string) (map[string]int64, error)
+	// under the order's dispatch lock (ADR 0420). spoken is, per line, how many
+	// units a return or a replacement speaks for, which a parcel that came back
+	// undelivered holds its units to (ADR 0423).
+	HeldForReferenceLocked(ctx context.Context, reference string, spoken map[string]int64) (map[string]int64, error)
 	// QuantitiesOfFulfillment sums, per order line, the units ONE parcel holds —
 	// a CANCELED one included, which is the whole reason it is separate from the
 	// method above.
@@ -150,8 +156,9 @@ type Fulfillment interface {
 // gets those numbers on the event; a parcel cancellation has no such event to read
 // them from, so it asks.
 type Orders interface {
-	// DispatchableLinesJSON answers, per line, the bought and canceled counts
-	// and the variant, as a JSON array. The schema is repeated in [orderLine].
+	// DispatchableLinesJSON answers, per line, the bought and canceled counts,
+	// spoken_for (what a return or a replacement speaks for, ADR 0423) and the
+	// variant, as a JSON array. The schema is repeated in [orderLine].
 	DispatchableLinesJSON(ctx context.Context, orderID string) (json.RawMessage, error)
 }
 
@@ -289,7 +296,7 @@ func (w *Workflow) HandleLineCanceled(ctx context.Context, e eventbus.Event) err
 
 	// The window of units that can come back: bought minus those a live parcel
 	// holds. A parcel that was canceled never left, so its units are still here.
-	committed, err := w.committedQuantity(ctx, in.orderID, in.lineItemID)
+	committed, lines, err := w.committedQuantity(ctx, in.orderID, in.lineItemID)
 	if err != nil {
 		return err
 	}
@@ -304,10 +311,7 @@ func (w *Workflow) HandleLineCanceled(ctx context.Context, e eventbus.Event) err
 		return nil
 	}
 
-	parts, err := w.lineStock(ctx, in.orderID, in.lineItemID, in.variantID)
-	if err != nil {
-		return err
-	}
+	parts := w.lineStock(ctx, lines, in.orderID, in.lineItemID, in.variantID)
 
 	owed, settleErr := w.settle(ctx, in.orderID, in.lineItemID, in.bought, target)
 	if owed == nil {
@@ -396,24 +400,24 @@ type stockPart struct {
 // lineStock answers what a written-off line's units are made of.
 //
 // The composition is the ORDER's, as the line was sold (ADR 0235), read from
-// the answer the parcel act reads too: the bundle may have been edited since,
-// and the parts to put back are the ones the sale took. A line the answer does
-// not carry is read as the event names it, its own variant once — the shape
-// every line had before bundles, and the one a bundle line cannot have.
-func (w *Workflow) lineStock(ctx context.Context, orderID, lineItemID, variantID string) ([]stockPart, error) {
-	lines, err := w.orderLines(ctx, orderID)
-	if err != nil {
-		return nil, err
-	}
+// the answer the parcel act reads too, passed in by the caller, which read it
+// for what a return or a replacement speaks for ([Workflow.committedQuantity]):
+// the bundle may have been edited since, and the parts to put back are the ones
+// the sale took. A line the answer does not carry is read as the event names
+// it, its own variant once — the shape every line had before bundles, and the
+// one a bundle line cannot have.
+func (w *Workflow) lineStock(
+	ctx context.Context, lines map[string]orderLine, orderID, lineItemID, variantID string,
+) []stockPart {
 	line, ok := lines[lineItemID]
 	if !ok {
 		w.log.WarnContext(ctx, "a canceled line is missing from its order's lines; its own variant is put back",
 			"order_id", orderID, "order_line_item_id", lineItemID)
 
-		return []stockPart{{variantID: variantID, perUnit: 1}}, nil
+		return []stockPart{{variantID: variantID, perUnit: 1}}
 	}
 
-	return line.stockParts(), nil
+	return line.stockParts()
 }
 
 // targetOnShelf is how many of a line's written-off units will not leave.
@@ -471,19 +475,40 @@ func targetOnShelf(bought, canceledTotal, committed int64) int64 {
 // (ADR 0409), so a parcel whose link to the order was not written counts, and a
 // parcel being opened while the units are written off is counted once it
 // commits rather than missed and its units put back on the shelf.
-func (w *Workflow) committedQuantity(ctx context.Context, orderID, lineItemID string) (int64, error) {
-	if w.fulfillment == nil {
-		return 0, errors.Internal(CodeNotReady,
+//
+// A parcel that came back undelivered holds its units only as far as a return
+// or a replacement speaks for them (ADR 0423), so that figure is read first,
+// from the order's lines as the parcel cancellation reads them, and the lines
+// are answered with the count; a read that fails is a fault that may pass, and
+// the bus calls the handler again.
+//
+// The figure is the one standing when it is read, once, before the count
+// waits for a parcel being opened ([Workflow.heldUnderLock]), and nothing
+// recounts when it later moves. A return written after the write-off cannot
+// name the written-off units: returns and write-offs share one limit, what was
+// bought. A replacement has no such limit, so the outcome depends on the order
+// of the acts: one recorded after this count is not seen and the units that
+// came back go on the shelf, and one withdrawn after it leaves the units it
+// spoke for off the books (docs/known-limits.md).
+func (w *Workflow) committedQuantity(
+	ctx context.Context, orderID, lineItemID string,
+) (committed int64, lines map[string]orderLine, err error) {
+	if w.fulfillment == nil || w.orders == nil {
+		return 0, nil, errors.Internal(CodeNotReady,
 			"the cancellation flow is not wired, so a canceled line cannot be acted on")
 	}
 
-	committed, err := w.heldUnderLock(ctx, orderID)
+	if lines, err = w.orderLines(ctx, orderID); err != nil {
+		return 0, nil, err
+	}
+
+	held, err := w.heldUnderLock(ctx, orderID, spokenOf(lines))
 	if err != nil {
-		return 0, errors.Wrap(err, errors.KindOf(err), CodeEventUnusable,
+		return 0, nil, errors.Wrap(err, errors.KindOf(err), CodeEventUnusable,
 			"the shipped units of order %s could not be read", orderID)
 	}
 
-	return committed[lineItemID], nil
+	return held[lineItemID], lines, nil
 }
 
 // heldUnderLock asks the fulfillment module what the order's live outgoing
@@ -497,12 +522,14 @@ func (w *Workflow) committedQuantity(ctx context.Context, orderID, lineItemID st
 // next ask. Past the last wait, when the context ends or when the flow is shut
 // down, the busy answer goes to the bus, which calls the handler twice more
 // (ADR 0240), all of it inside [busyBudget]. The event is not stored after
-// that, but both topics are outbox topics, so the relay delivers it once more
+// that, but all three topics are outbox topics, so the relay delivers it once more
 // within about a minute, and the restock is a target the line's next act
 // brings the shelf up to (ADR 0142).
-func (w *Workflow) heldUnderLock(ctx context.Context, orderID string) (map[string]int64, error) {
+func (w *Workflow) heldUnderLock(
+	ctx context.Context, orderID string, spoken map[string]int64,
+) (map[string]int64, error) {
 	for attempt := 0; ; attempt++ {
-		held, err := w.fulfillment.HeldForReferenceLocked(ctx, orderID)
+		held, err := w.fulfillment.HeldForReferenceLocked(ctx, orderID, spoken)
 		if err == nil || errors.KindOf(err) != errors.KindUnavailable || attempt >= len(w.busyWaits) {
 			return held, err
 		}
@@ -673,6 +700,10 @@ func FromContainer(c *container.Container, log *slog.Logger) (*Workflow, error) 
 	if err := bus.Subscribe(topicFulfillmentCanceled, w.HandleFulfillmentCanceled); err != nil {
 		return nil, errors.Wrap(err, errors.KindOf(err), CodeNotReady,
 			"the cancellation flow could not subscribe to %q", topicFulfillmentCanceled)
+	}
+	if err := bus.Subscribe(topicFulfillmentReturned, w.HandleFulfillmentReturned); err != nil {
+		return nil, errors.Wrap(err, errors.KindOf(err), CodeNotReady,
+			"the cancellation flow could not subscribe to %q", topicFulfillmentReturned)
 	}
 
 	// Registered so that the container closes it, and closes it BEFORE the bus,

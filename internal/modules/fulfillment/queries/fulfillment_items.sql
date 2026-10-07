@@ -30,10 +30,11 @@ ORDER BY fulfillment_id, created_at, seq;
 -- left with the order's goods (ADR 0384).
 --
 -- "Live" means not canceled: a canceled parcel's goods never left the building,
--- so its units are still in the warehouse and still sellable, while a shipped,
--- delivered or even RETURNED parcel's units did leave. A returned one coming back
--- is the return flow's receipt and puts its own stock back, so counting it here
--- as still gone is the answer that leaves each act with one effect.
+-- so its units are still in the warehouse and still sellable. A parcel that came
+-- back undelivered counts whole. The one reader in this tree is the backorder
+-- claim at the checkout (gap D268); the counts that open a parcel and restock a
+-- write-off are HeldQuantitiesForReference's, which tells such a parcel apart
+-- (ADR 0423).
 --
 -- 'pending' counts as gone as well. That is deliberate: a pending parcel is one
 -- the warehouse is already picking, its stock was deducted at checkout, and
@@ -49,18 +50,29 @@ WHERE i.fulfillment_id = ANY (sqlc.arg('fulfillment_ids')::text[])
 GROUP BY i.line_item_id
 ORDER BY i.line_item_id;
 
--- CommittedQuantitiesForReference sums, per order line, the units the live
--- outgoing parcels opened for one reference hold, by the reference this module
--- stores rather than by the order's link (ADR 0409, gap D265). It is read once,
--- under the reference's dispatch lock: by a parcel opening, which may take its
--- line's ceiling less this, and by a cancellation, which puts back none of it
--- (ADR 0420).
--- name: CommittedQuantitiesForReference :many
-SELECT i.line_item_id, SUM(i.quantity)::bigint AS quantity
+-- HeldQuantitiesForReference sums, per order line, the units of the outgoing
+-- parcels opened for one reference, by the reference this module stores rather
+-- than by the order's link (ADR 0409, gap D265), in two figures (ADR 0423):
+--
+--   - live: the pending, shipped and delivered parcels', which hold their units,
+--     and those of a parcel that came back before ADR 0423 (held_whole,
+--     migration 000008), which holds them as it did then;
+--   - back: the other returned parcels', which came back to the sender
+--     undelivered and hold their units only as far as a return or a
+--     replacement speaks for them.
+--
+-- A canceled parcel is in neither: its goods never left. It is read under the
+-- reference's dispatch lock, by a parcel opening and by a cancellation (ADR
+-- 0420), and outside it by the panel's offer.
+-- name: HeldQuantitiesForReference :many
+SELECT i.line_item_id,
+       COALESCE(SUM(i.quantity) FILTER (WHERE f.status IN ('pending', 'shipped', 'delivered')
+                                           OR (f.status = 'returned' AND f.held_whole)), 0)::bigint AS live,
+       COALESCE(SUM(i.quantity) FILTER (WHERE f.status = 'returned' AND NOT f.held_whole), 0)::bigint AS back
 FROM fulfillment_items i
 JOIN fulfillments f ON f.id = i.fulfillment_id
 WHERE f.reference = sqlc.arg('reference')
-  AND f.status <> 'canceled'
+  AND f.status IN ('pending', 'shipped', 'delivered', 'returned')
   AND f.return_id IS NULL
 GROUP BY i.line_item_id
 ORDER BY i.line_item_id;
