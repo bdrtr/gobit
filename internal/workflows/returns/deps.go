@@ -93,7 +93,16 @@ const (
 	CodeStockNotReleased = "returns_workflow_stock_not_released"
 	// CodeStockNotTaken reports that the promised units could not be deducted.
 	CodeStockNotTaken = "returns_workflow_stock_not_taken"
+	// CodeReturnSettledByExchange reports a refund asked of a return a live
+	// exchange takes back (ADR 0432).
+	CodeReturnSettledByExchange = "returns_workflow_return_settled_by_exchange"
 )
+
+// codeExchangeDifferenceHeld is the order module's code for a replacement a
+// funded exchange holds money for (ADR 0432), repeated here for the reason
+// [LinkVariantInventory] is: the withdrawal refuses it before any release, and
+// a client sees the one code whichever side refuses.
+const codeExchangeDifferenceHeld = "order_exchange_difference_held"
 
 // Orders is the surface of the order module used by this flow.
 type Orders interface {
@@ -125,8 +134,10 @@ type Orders interface {
 	//
 	// It records the subject of the answer and never its arithmetic: the amount
 	// belongs to the payment module and a copy of it on an order row is a claim
-	// a route that module publishes can invalidate in silence (ADR 0119).
-	FundExchange(ctx context.Context, exchangeID, collectionID string) error
+	// a route that module publishes can invalidate in silence (ADR 0119). owed
+	// is the difference the collection was checked against; the order module
+	// refuses it when the row owes another figure by then (ADR 0432).
+	FundExchange(ctx context.Context, exchangeID, collectionID string, owed int64) error
 
 	// ReplacementDetailJSON returns what a flow needs to send a replacement.
 	ReplacementDetailJSON(ctx context.Context, replacementID string) (json.RawMessage, error)

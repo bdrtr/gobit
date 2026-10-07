@@ -313,9 +313,12 @@ past and is not corrected retroactively.
   act, correct no tax, and an order canceled under a live refund document owes
   negative tax on these books until the document is canceled.
 - **An exchange's money is on no document.** Its funding and its refund are
-  booked by the order journal and printed on nothing: the figure is typed by
-  the operator and names neither goods nor tax, so no row of the sale could
-  carry it (D247).
+  booked by the order journal and printed on nothing. An exchange written
+  without a return carries a figure the operator typed, which names neither
+  goods nor tax, so no row of the sale could carry it (D247). One that names
+  its return prices its goods and their tax when they are written
+  ([ADR 0432](adr/0432-an-exchange-names-its-return-and-prices-what-it-sends.md)),
+  and the documents that carry them are not issued yet.
 - **A tax charged too low is the shop's, and the order journal does not say
   so.** A placed order keeps the tax it charged on its lines, its invoice and its
   `tax_payable`, which then understates what the shop owes by the difference
@@ -819,16 +822,45 @@ past and is not corrected retroactively.
   secret read from storage and compared in a file that imports none of those
   packages is not seen, and timing itself is still observed by no test.
 
-- **An exchange's goods and its money are related only by a human.**
-  `order_exchanges` carries no items and its `difference_due` is a figure the
-  operator types; the dispatch guard compares the payment collection against that
-  figure and nothing else. Since ADR 0145 a replacement can send a variant the
-  order never sold, so an operator can promise a jacket against a shirt's
-  difference and nothing will object. Pricing the item at settlement needs a
-  pricing read and a decision about which price applies to a replacement, and
-  neither has been made. An exchange that sends the line's own variant at a
-  difference is a sold line's price raised, which ADR 0394 forbids and nothing
-  refuses, and it is printed on no document.
+- **An exchange written without a return relates its goods and its money only
+  by a human.** Its `difference_due` is a figure the operator types; the
+  dispatch guard compares the payment collection against that figure and
+  nothing else, so a jacket can be promised against a shirt's difference, and
+  one that sends the line's own variant at a difference is a sold line's price
+  raised, which ADR 0394 forbids and nothing refuses. An exchange that names
+  its return prices what it sends and derives its difference
+  ([ADR 0432](adr/0432-an-exchange-names-its-return-and-prices-what-it-sends.md)),
+  with these limits:
+  - It fixes the figure, not the dispatch: its goods still leave before an
+    unfunded difference is collected (ADR 0124), and the exchange stays open.
+  - It names the return only while the return is requested, so a return
+    received first is not taken back by one.
+  - A difference it owes the buyer has no route of its own, and the return it
+    names refunds nothing; the payment module's refund route is the only one
+    that pays it.
+  - The returned units are worth what they were sold for: a credit or a
+    claim's refund already given for the same goods is not taken off.
+  - Once it is settled or withdrawn its items are not priced again: a
+    replacement withdrawn then leaves the buyer owed its share, which only that
+    refund route pays, and
+    one withdrawn from an exchange funded and then settled lets its goods go
+    while the collection keeps the buyer's money, which only the payment
+    module's refund route pays back.
+  - A rate stack whose cumulative split would take one of its rates below
+    nothing splits that item's tax on its own, so the per-rate figures of a
+    line sent in pieces can differ from the line's while their totals agree;
+    the documents of the second commit have to carry that.
+  - A line worth under one minor unit a unit can give a piece of it a share
+    of the tax above its share of the total, which no row may carry: the write,
+    or the withdrawal that would price it so, answers 409
+    `order_replacement_tax_above_total`.
+  - An exchange funded between the withdrawal flow's read of a replacement and
+    its write is refused after the units went back: the operator sees 409
+    `order_exchange_difference_held`, and the line keeps naming a promise that
+    no longer holds, which a later dispatch confirms in vain.
+  - A replacement request takes no idempotency key: a repeated one writes a
+    second replacement and raises the difference by it, and a funding checked
+    against the first figure is refused (409 `order_exchange_difference_moved`).
 
 - **A lost authenticator is answered only at the machine.** A person enrolls,
   replaces and removes their own factor in the panel
@@ -1031,19 +1063,20 @@ past and is not corrected retroactively.
   a return with each line's part of the refund and a replacement with one
   variant the order never sold
   ([ADR 0279](adr/0279-the-panel-opens-a-return-and-a-replacement-with-their-detail.md)).
-  A replacement that sends more than one such variant is still an `/admin/v1`
-  call.
+  A replacement that sends more than one such variant, or one at an operator's
+  unit price (ADR 0432), is still an `/admin/v1` call.
 
-- **The order page corrects an order as the API does, and only an exchange can
-  raise a sold line's price.** Any order but a canceled one takes a credit, and
+- **The order page corrects an order as the API does, and only an exchange
+  written without a return can raise a sold line's price.** Any order but a canceled one takes a credit, and
   a pending one has its delivery put on a quoted option and its shipping address
   corrected
   ([ADR 0388](adr/0388-the-order-page-credits-changes-a-delivery-and-corrects-the-address.md)).
   A price or tax charged too low is not raised after the sale
   ([ADR 0394](adr/0394-a-sold-lines-price-and-tax-are-not-raised.md)): the buyer
   buys the line again before it is written off or returned, or the shop bears
-  it. An exchange that sends the line's own variant at a difference raises it
-  anyway, and nothing refuses that (above). The billing address is not
+  it. An exchange written without a return that sends the line's own variant
+  at a difference raises it anyway, and nothing refuses that (above); one that
+  names its return sends the line at what it charged (ADR 0432). The billing address is not
   corrected before an invoice is issued
   ([ADR 0195](adr/0195-a-shipping-address-can-be-corrected.md)), and opening a
   parcel on an option no delivery stands on stays an `/admin/v1` call

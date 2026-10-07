@@ -1,6 +1,7 @@
 package cart
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"time"
@@ -306,6 +307,29 @@ func (i *Interop) TrialTaxRateJSON(
 	}
 
 	return json.Marshal(report)
+}
+
+// QuoteExchangeLinesJSON prices and taxes the variants an exchange sends
+// ([Workflows.QuoteExchangeLines], ADR 0432); the request is an
+// [ExchangeQuoteInput] and the answer an [ExchangeQuote], both as JSON. A
+// field the request's schema does not know refuses it.
+//
+// Its consumer is the order module, which copies the answer onto the
+// replacement item it writes; it writes nothing here.
+func (i *Interop) QuoteExchangeLinesJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error) {
+	decoder := json.NewDecoder(bytes.NewReader(request))
+	decoder.DisallowUnknownFields()
+	var in ExchangeQuoteInput
+	if err := decoder.Decode(&in); err != nil {
+		return nil, errors.Wrap(err, errors.KindInvalid, CodeInvalidInput,
+			"the exchange quote request could not be read")
+	}
+	quote, err := i.w.QuoteExchangeLines(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(quote)
 }
 
 // RepriceAfter runs a write the cart module makes on its own and then recomputes

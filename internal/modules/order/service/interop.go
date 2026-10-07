@@ -535,9 +535,11 @@ func (i *Interop) CompleteClaim(ctx context.Context, claimID string) error {
 // The caller is the flow that holds both sides: it asked the payment module
 // what that collection holds and this records the answer's SUBJECT, never its
 // arithmetic (ADR 0119). A second call with the same collection returns
-// quietly; with a different one it is refused.
-func (i *Interop) FundExchange(ctx context.Context, exchangeID, collectionID string) error {
-	_, err := i.svc.FundExchange(ctx, exchangeID, collectionID)
+// quietly; with a different one it is refused. owed is the difference the
+// flow checked the collection against, and a row that owes another figure
+// refuses it (ADR 0432).
+func (i *Interop) FundExchange(ctx context.Context, exchangeID, collectionID string, owed int64) error {
+	_, err := i.svc.FundExchange(ctx, exchangeID, collectionID, owed)
 
 	return err
 }
@@ -1259,7 +1261,8 @@ type interopDispatchableLine struct {
 	Canceled int64 `json:"canceled"`
 	// SpokenFor is how many of the line's units a return or a replacement
 	// speaks for: what its requested and received returns ask back plus what
-	// its requested and dispatched replacements send again. It bounds nothing:
+	// its requested and dispatched replacements send again, an exchange that
+	// names its return counted once, the more of the two (ADR 0432). It bounds nothing:
 	// it is what a parcel that came back to the sender undelivered holds its
 	// units to (ADR 0423). A return recorded for those units restocks them on
 	// receipt, a replacement sends goods in their place, and the units neither

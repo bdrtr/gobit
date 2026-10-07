@@ -1051,7 +1051,7 @@ func (p recordingParcels) CreateShippingOption(
 	return "sopt_walk", p.surfaces.reach(ServiceFulfillmentAdmin)
 }
 
-func (a recordingAfterSales) OpenExchange(context.Context, string, int64, string) (string, error) {
+func (a recordingAfterSales) OpenExchange(context.Context, string, string, int64, string) (string, error) {
 	return "", a.surfaces.reach(ServiceOrderAdmin)
 }
 

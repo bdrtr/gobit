@@ -131,6 +131,8 @@ func TestAHeldDifferenceIsRecorded(t *testing.T) {
 	assert.Equal(t, "exch_1", h.orders.fundedExchange)
 	assert.Equal(t, "paycol_1", h.orders.fundedCollection,
 		"the record keeps the collection's identifier and never its amount")
+	assert.Equal(t, int64(1000), h.orders.fundedOwed,
+		"the order module is told the difference the collection was checked against (ADR 0432)")
 }
 
 // TestTheExitSendsTheMoneyBackBeforeItWithdraws pins the order of the two

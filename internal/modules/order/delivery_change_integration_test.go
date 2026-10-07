@@ -296,7 +296,7 @@ func TestAnExchangeWaitsForAChangeTakingItsCollection(t *testing.T) {
 
 	funded := make(chan error, 1)
 	go func() {
-		_, err := plain.FundExchange(ctx, exchange.ID, collectionID)
+		_, err := plain.FundExchange(ctx, exchange.ID, collectionID, exchange.DifferenceDue)
 		funded <- err
 	}()
 	require.Eventually(t, func() bool {
@@ -338,7 +338,7 @@ func TestAChangeRefusesACollectionAnExchangeTook(t *testing.T) {
 	exchange, err := svc.CreateExchange(ctx, service.CreateExchangeInput{OrderID: placed.ID, DifferenceDue: 1500})
 	require.NoError(t, err)
 	collectionID := fmt.Sprintf("pay_col_exchange_%d", time.Now().UnixNano())
-	_, err = svc.FundExchange(ctx, exchange.ID, collectionID)
+	_, err = svc.FundExchange(ctx, exchange.ID, collectionID, exchange.DifferenceDue)
 	require.NoError(t, err)
 
 	_, err = svc.ChangeDelivery(ctx, placed.ID, paidChangeTo(methodID, "so_same_day", 4000, collectionID, 1500))

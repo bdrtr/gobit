@@ -69,6 +69,7 @@ func (s *Service) ReplacementDetailJSON(
 		LocationID:       record.LocationID,
 		FulfillmentID:    record.FulfillmentID,
 		Recalls:          record.Recalls,
+		Withdrawable:     record.Status != models.ReplacementDispatched && !source.held,
 		Lines:            make([]replacementLineJSON, 0, len(items)),
 	}
 	for i := range items {
@@ -148,8 +149,14 @@ type replacementDetailJSON struct {
 	FulfillmentID    string `json:"fulfillment_id"`
 	// Recalls counts the parcels canceled under this replacement (ADR 0239);
 	// the flow names it in the next parcel's key.
-	Recalls int                   `json:"recalls"`
-	Lines   []replacementLineJSON `json:"lines"`
+	Recalls int `json:"recalls"`
+	// Withdrawable reports whether [Service.CancelReplacement] would take the
+	// replacement back (or answer it as already withdrawn) rather than refuse
+	// it: it has not left, and no funded exchange that names its return holds
+	// money for it (ADR 0432). The withdrawal flow reads it before it gives back
+	// any units, so a refusal it can know of comes before the release.
+	Withdrawable bool                  `json:"withdrawable"`
+	Lines        []replacementLineJSON `json:"lines"`
 }
 
 // replacementSourceOf reads the record a replacement settles and returns the
@@ -172,6 +179,7 @@ func (s *Service) replacementSourceOf(
 			status:     exchange.Status.String(),
 			settleable: exchange.Settleable(),
 			open:       exchange.Status.CompleteAction() == models.AfterSalesProceed,
+			held:       heldByItsExchange(exchange, record.ID) != nil,
 		}, nil
 	}
 
@@ -200,6 +208,9 @@ type replacementSource struct {
 	settleable bool
 	// open reports whether the source is still waiting to be settled.
 	open bool
+	// held reports whether the source holds money for the replacement, so
+	// that withdrawing it is refused (ADR 0432).
+	held bool
 }
 
 // replacementLineJSON is one line of a replacement on the wire.

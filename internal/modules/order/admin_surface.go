@@ -255,12 +255,13 @@ func (s *AfterSalesSurface) OpenClaim(
 }
 
 // OpenExchange opens an exchange on the order; a negative difference is paid
-// to the customer.
+// to the customer. With a return it takes that return's goods back and derives
+// its difference, which is then left zero (ADR 0432).
 func (s *AfterSalesSurface) OpenExchange(
-	ctx context.Context, orderID string, differenceDue int64, note string,
+	ctx context.Context, orderID, returnID string, differenceDue int64, note string,
 ) (string, error) {
 	exchange, err := s.svc.CreateExchange(ctx, service.CreateExchangeInput{
-		OrderID: orderID, DifferenceDue: differenceDue, Note: note,
+		OrderID: orderID, ReturnID: returnID, DifferenceDue: differenceDue, Note: note,
 	})
 
 	return exchange.ID, err

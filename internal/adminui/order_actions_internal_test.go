@@ -115,8 +115,10 @@ func (f *fakeAfterSales) OpenClaim(
 	return "claim_new", f.err
 }
 
-func (f *fakeAfterSales) OpenExchange(_ context.Context, orderID string, due int64, note string) (string, error) {
-	f.note("open-exchange", orderID, "", due, note)
+func (f *fakeAfterSales) OpenExchange(
+	_ context.Context, orderID, returnID string, due int64, note string,
+) (string, error) {
+	f.note("open-exchange", orderID, returnID, due, note)
 	return "exch_new", f.err
 }
 

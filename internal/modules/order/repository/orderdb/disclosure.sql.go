@@ -124,7 +124,7 @@ func (q *Queries) ListOrderCreditLinesForDisclosure(ctx context.Context, orderId
 }
 
 const listOrderExchangesForDisclosure = `-- name: ListOrderExchangesForDisclosure :many
-SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at FROM order_exchanges
+SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at, order_return_id FROM order_exchanges
 WHERE order_id = ANY ($1::text[])
 ORDER BY order_id, created_at, id
 `
@@ -153,6 +153,7 @@ func (q *Queries) ListOrderExchangesForDisclosure(ctx context.Context, orderIds 
 			&i.CompletedAt,
 			&i.PaymentCollectionID,
 			&i.FundedAt,
+			&i.OrderReturnID,
 		); err != nil {
 			return nil, err
 		}

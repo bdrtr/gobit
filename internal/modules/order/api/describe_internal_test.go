@@ -272,7 +272,9 @@ func describedEndpoints() []endpointExpectation {
 		},
 		{
 			method: http.MethodPost, path: "/admin/v1/orders/{id}/exchanges", status: "201",
-			request: createExchangeRequest{}, response: filledExchange(),
+			// The return is filled for the reason the response sample is: an
+			// omitempty field left out would describe a body that hides it.
+			request: createExchangeRequest{ReturnID: "ret_1"}, response: filledExchange(),
 		},
 		{
 			method: http.MethodGet, path: "/admin/v1/orders/{id}/exchanges/{exchangeId}",
@@ -757,6 +759,7 @@ func filledExchange() exchangeDTO {
 	return exchangeDTO{
 		Note:                "size exchange",
 		Metadata:            map[string]any{"k": "v"},
+		ReturnID:            "ret_1",
 		PaymentCollectionID: "paycol_1",
 		FundedAt:            &now,
 		CompletedAt:         &now,
@@ -808,7 +811,10 @@ func filledReplacement() replacementDTO {
 		Note:             "the box arrived open",
 		FulfillmentID:    "ful_1",
 		Items: []replacementItemDTO{
-			{ID: "oreplitem_1", ReservationID: "invres_1"},
+			{ID: "oreplitem_1", ReservationID: "invres_1", Price: &replacementPriceDTO{
+				UnitPrice: 1000, Total: 1200, TaxTotal: 200, TaxRateBps: 2000, PricedBy: "quote",
+				TaxComponents: []replacementTaxDTO{{RateID: "txr_1", RateBps: 2000, TaxableAmount: 1000, TaxAmount: 200}},
+			}},
 		},
 		CanceledAt:   &now,
 		DispatchedAt: &now,

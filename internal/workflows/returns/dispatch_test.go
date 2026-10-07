@@ -30,6 +30,7 @@ func dispatchHarness(t *testing.T) *harness {
 		Status:           statusReplacementRequested,
 		ShippingOptionID: testOptionID,
 		LocationID:       testLocationID,
+		Withdrawable:     ptr(true),
 		Lines: []replacementLine{
 			{
 				ReplacementItemID: "oreplitem_a", OrderLineItemID: "oli_a",

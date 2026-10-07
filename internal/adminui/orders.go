@@ -581,6 +581,7 @@ func (u *UI) renderOrder(
 		"NotificationsPerOrder": notificationsPerOrder,
 		"AfterSalesPerKind":     afterSalesPerKind,
 		"ReplacementSources":    replacementSources(detail.AfterSales),
+		"ExchangeReturns":       exchangeReturns(detail.AfterSales),
 	})
 }
 

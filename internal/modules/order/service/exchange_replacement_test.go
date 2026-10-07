@@ -325,7 +325,7 @@ func TestANegativeDifferenceCannotBeFunded(t *testing.T) {
 	e := newEnv(t)
 	exchange, _ := exchangeToSend(t, e, -500)
 
-	_, err := e.svc.FundExchange(ctx, exchange.ID, "paycol_1")
+	_, err := e.svc.FundExchange(ctx, exchange.ID, "paycol_1", exchange.DifferenceDue)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
@@ -343,15 +343,15 @@ func TestASecondCollectionCannotBeNamed(t *testing.T) {
 	e := newEnv(t)
 	exchange, _ := exchangeToSend(t, e, 500)
 
-	funded, err := e.svc.FundExchange(ctx, exchange.ID, "paycol_1")
+	funded, err := e.svc.FundExchange(ctx, exchange.ID, "paycol_1", exchange.DifferenceDue)
 	require.NoError(t, err)
 	assert.Equal(t, models.ExchangeFunded, funded.Status)
 
-	again, err := e.svc.FundExchange(ctx, exchange.ID, "paycol_1")
+	again, err := e.svc.FundExchange(ctx, exchange.ID, "paycol_1", exchange.DifferenceDue)
 	require.NoError(t, err, "the retry path names the same collection and is quiet")
 	assert.Equal(t, funded.FundedAt, again.FundedAt, "the FIRST funding keeps its moment")
 
-	_, err = e.svc.FundExchange(ctx, exchange.ID, "paycol_2")
+	_, err = e.svc.FundExchange(ctx, exchange.ID, "paycol_2", exchange.DifferenceDue)
 	require.Error(t, err, "a different collection is not a retry")
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 	assert.Contains(t, err.Error(), "paycol_1", "the refusal names the collection already recorded")
@@ -363,7 +363,7 @@ func TestAFundedExchangeRefusesTheOrdinaryWithdrawal(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	exchange, _ := exchangeToSend(t, e, 500)
-	_, err := e.svc.FundExchange(ctx, exchange.ID, "paycol_1")
+	_, err := e.svc.FundExchange(ctx, exchange.ID, "paycol_1", exchange.DifferenceDue)
 	require.NoError(t, err)
 
 	_, err = e.svc.CancelExchange(ctx, exchange.ID)
@@ -382,7 +382,7 @@ func TestTheFundedExchangeHasAnExit(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	exchange, _ := exchangeToSend(t, e, 500)
-	_, err := e.svc.FundExchange(ctx, exchange.ID, "paycol_1")
+	_, err := e.svc.FundExchange(ctx, exchange.ID, "paycol_1", exchange.DifferenceDue)
 	require.NoError(t, err)
 
 	withdrawn, err := e.svc.WithdrawFundedExchange(ctx, exchange.ID)
@@ -409,7 +409,7 @@ func TestAFundedExchangeIsSettleableAndAnUnfundedOneIsNot(t *testing.T) {
 
 	assert.False(t, owing.Settleable(), "money is owed and nothing answers it yet")
 
-	funded, err := e.svc.FundExchange(ctx, owing.ID, "paycol_1")
+	funded, err := e.svc.FundExchange(ctx, owing.ID, "paycol_1", owing.DifferenceDue)
 	require.NoError(t, err)
 	assert.True(t, funded.Settleable(), "the difference is answered; the goods decide the rest")
 	assert.False(t, funded.OwesNothing(), "it still OWES; what changed is that it was paid")

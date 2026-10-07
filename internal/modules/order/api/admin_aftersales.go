@@ -337,8 +337,13 @@ func (h *Handler) adminCancelReturn(w http.ResponseWriter, r *http.Request) {
 
 // createExchangeRequest is the body of POST /admin/v1/orders/{id}/exchanges.
 type createExchangeRequest struct {
+	// ReturnID is the return whose goods the exchange takes back (ADR 0432).
+	// With it the exchange prices what it sends and derives its difference,
+	// so difference_due is left out.
+	ReturnID string `json:"return_id,omitempty"`
 	// DifferenceDue, when positive, is collected from the customer; when
-	// negative it is paid to the customer.
+	// negative it is paid to the customer. It is typed only on an exchange
+	// that names no return.
 	DifferenceDue int64          `json:"difference_due"`
 	Note          string         `json:"note"`
 	Metadata      map[string]any `json:"metadata"`
@@ -356,6 +361,7 @@ func (h *Handler) adminCreateExchange(w http.ResponseWriter, r *http.Request) {
 
 	exchange, err := h.svc.CreateExchange(ctx, service.CreateExchangeInput{
 		OrderID:       orderID(r),
+		ReturnID:      body.ReturnID,
 		DifferenceDue: body.DifferenceDue,
 		Note:          body.Note,
 		Metadata:      body.Metadata,

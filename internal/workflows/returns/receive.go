@@ -13,11 +13,14 @@ import (
 // module (ADR 0006), so the two ends agree on a document instead of a type. The
 // producing side documents it on order/service.Service.ReturnDetailJSON.
 type returnDetail struct {
-	ReturnID           string       `json:"return_id"`
-	OrderID            string       `json:"order_id"`
-	Status             string       `json:"status"`
-	ReceivedLocationID string       `json:"received_location_id"`
-	Lines              []returnLine `json:"lines"`
+	ReturnID           string `json:"return_id"`
+	OrderID            string `json:"order_id"`
+	Status             string `json:"status"`
+	ReceivedLocationID string `json:"received_location_id"`
+	// SettledByExchange is the live exchange that takes the return's goods
+	// back; empty when none does (ADR 0432).
+	SettledByExchange string       `json:"settled_by_exchange,omitempty"`
+	Lines             []returnLine `json:"lines"`
 }
 
 // returnLine is one line coming back.

@@ -423,8 +423,8 @@ why a new one is named apart from the ones the shop has.
 <p>Invoice <strong>{{ .Number }}</strong> <span class="pill">{{ .Status }}</span> <span class="muted">{{ .ID }}</span>{{ with .Open }} <a href="{{ . }}">Open the invoice</a>{{ end }}</p>
 {{/*
 What moved on the order after its sale, as its journal books it, each
-documented on request by a document amending the invoice (ADR 0406); an
-exchange's money names neither goods nor tax and no document carries it.
+documented on request by a document amending the invoice (ADR 0406); no
+document carries an exchange's money (D247, ADR 0432).
 */}}
 {{ if .ActsUnread }}
 <p class="muted">What moved after the sale could not be read.</p>
@@ -656,8 +656,12 @@ the link opens on this order.
 </form>
 
 <form method="post" action="{{ .OrdersPath }}/{{ .Order.ID }}/after-sales/exchange">
-  <p>An exchange: the difference, negative when the customer is paid.</p>
-  <input name="amount" inputmode="decimal" placeholder="difference" aria-label="difference" required>
+  <p>An exchange: the return it takes back, whose goods and what it sends price its difference; or, with no return, the difference typed, negative when the customer is paid.</p>
+  {{ if .ExchangeReturns }}<select name="return_id" aria-label="takes back">
+    <option value="">no return: the difference is typed</option>
+    {{ range .ExchangeReturns }}<option value="{{ .Value }}">{{ .Label }}</option>{{ end }}
+  </select>{{ end }}
+  <input name="amount" inputmode="decimal" placeholder="difference (no return)" aria-label="difference">
   <input type="hidden" name="currency" value="{{ .Order.Currency }}">{{ if .Order.Minor }}<input type="hidden" name="minor" value="1">{{ end }}
   <input name="note" placeholder="note" aria-label="note">
   <button type="submit">Open an exchange</button>

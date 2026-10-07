@@ -2808,3 +2808,146 @@ func (f *fakeStore) ReopenExchange(ctx context.Context, id string) (models.Excha
 
 	return exchange, nil
 }
+
+// SetExchangeDifference writes a derived difference; like the statement, it
+// matches only a requested exchange that names its return (ADR 0432).
+func (f *fakeStore) SetExchangeDifference(ctx context.Context, id string, difference int64) (models.Exchange, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	exchange, ok := f.exchanges[id]
+	if !ok || exchange.Status != models.ExchangeRequested || exchange.ReturnID == "" {
+		return models.Exchange{}, errors.Conflict("order_state_changed",
+			"the exchange is not a requested exchange that names its return: %s", id)
+	}
+	exchange.DifferenceDue = difference
+	exchange.UpdatedAt = f.nextStamp()
+	f.recordUndo(ctx, undoEntry(f.exchanges, id))
+	f.exchanges[id] = exchange
+
+	return exchange, nil
+}
+
+// LiveExchangeOfReturn names the live exchange that takes a return back. The
+// fake holds no unique index: the service's own refusal is what a test sees.
+func (f *fakeStore) LiveExchangeOfReturn(ctx context.Context, returnID string) (string, error) {
+	snapshot := f.view(ctx)
+	for id := range snapshot.exchanges {
+		exchange := snapshot.exchanges[id]
+		if exchange.ReturnID == returnID && exchange.Status != models.ExchangeCanceled {
+			return exchange.ID, nil
+		}
+	}
+
+	return "", nil
+}
+
+// ExchangeSent sums what an exchange's live replacements send, priced, and
+// counts the items among them that carry no price.
+func (f *fakeStore) ExchangeSent(ctx context.Context, exchangeID string) (sent, unpriced int64, err error) {
+	snapshot := f.view(ctx)
+	for id := range snapshot.replItems {
+		item := snapshot.replItems[id]
+		replacement, ok := snapshot.replaces[item.ReplacementID]
+		if !ok || replacement.ExchangeID != exchangeID || replacement.Status == models.ReplacementCanceled {
+			continue
+		}
+		if item.Price == nil {
+			unpriced++
+			continue
+		}
+		sent += item.Price.Total
+	}
+
+	return sent, unpriced, nil
+}
+
+// ExchangeLineUnits sums the units of each line an exchange's live
+// replacements send.
+func (f *fakeStore) ExchangeLineUnits(ctx context.Context, exchangeID string) (map[string]int64, error) {
+	snapshot := f.view(ctx)
+	out := map[string]int64{}
+	for id := range snapshot.replItems {
+		item := snapshot.replItems[id]
+		replacement, ok := snapshot.replaces[item.ReplacementID]
+		if !ok || replacement.ExchangeID != exchangeID || replacement.Status == models.ReplacementCanceled ||
+			item.OrderLineItemID == "" {
+			continue
+		}
+		out[item.OrderLineItemID] += item.Quantity
+	}
+
+	return out, nil
+}
+
+// LiveExchangeLineItems returns the line items an exchange's live replacements
+// send, in the order they were written (their stamps increase).
+func (f *fakeStore) LiveExchangeLineItems(ctx context.Context, exchangeID string) ([]models.ReplacementItem, error) {
+	snapshot := f.view(ctx)
+	var out []models.ReplacementItem
+	for id := range snapshot.replItems {
+		item := snapshot.replItems[id]
+		replacement, ok := snapshot.replaces[item.ReplacementID]
+		if !ok || replacement.ExchangeID != exchangeID || replacement.Status == models.ReplacementCanceled ||
+			item.OrderLineItemID == "" || item.Price == nil || item.Price.PricedBy != models.PricedByLine {
+			continue
+		}
+		out = append(out, item)
+	}
+	slices.SortFunc(out, func(a, b models.ReplacementItem) int { return a.CreatedAt.Compare(b.CreatedAt) })
+
+	return out, nil
+}
+
+// RepriceReplacementItem writes a line item's figures again; the unit price
+// and the source stay.
+func (f *fakeStore) RepriceReplacementItem(ctx context.Context, itemID string, price models.ReplacementPrice) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	item, ok := f.replItems[itemID]
+	if !ok || item.Price == nil || item.Price.PricedBy != models.PricedByLine {
+		return errors.Conflict("order_state_changed", "replacement line %s is not priced by its line", itemID)
+	}
+	repriced := *item.Price
+	repriced.Total, repriced.TaxTotal = price.Total, price.TaxTotal
+	repriced.TaxComponents = slices.Clone(price.TaxComponents)
+	item.Price = &repriced
+	item.UpdatedAt = f.nextStamp()
+	f.recordUndo(ctx, undoEntry(f.replItems, itemID))
+	f.replItems[itemID] = item
+
+	return nil
+}
+
+// ExchangeOverlapUnits sums, per line, the fewer of what each live exchange
+// that names its return takes back through it and sends again through its
+// live replacements, as the query does.
+func (f *fakeStore) ExchangeOverlapUnits(ctx context.Context, lineItemIDs []string) (map[string]int64, error) {
+	snapshot := f.view(ctx)
+	out := map[string]int64{}
+	for id := range snapshot.exchanges {
+		exchange := snapshot.exchanges[id]
+		ret, named := snapshot.returns[exchange.ReturnID]
+		if exchange.ReturnID == "" || !named || exchange.Status == models.ExchangeCanceled ||
+			ret.Status == models.ReturnCanceled {
+			continue
+		}
+		sent := map[string]int64{}
+		for itemID := range snapshot.replItems {
+			item := snapshot.replItems[itemID]
+			replacement, ok := snapshot.replaces[item.ReplacementID]
+			if ok && replacement.ExchangeID == exchange.ID && replacement.Status != models.ReplacementCanceled {
+				sent[item.OrderLineItemID] += item.Quantity
+			}
+		}
+		for itemID := range snapshot.retItems {
+			item := snapshot.retItems[itemID]
+			if item.ReturnID == ret.ID && slices.Contains(lineItemIDs, item.OrderLineItemID) {
+				out[item.OrderLineItemID] += min(item.Quantity, sent[item.OrderLineItemID])
+			}
+		}
+	}
+
+	return out, nil
+}

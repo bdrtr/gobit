@@ -368,13 +368,15 @@ func (w *Workflows) readAct(ctx context.Context, orderID string, ref ActRef) (ac
 
 // documentOf is what documents an act: a paid dearer delivery raises a price on
 // a sale, a return's refund is a return, and a credit, a cheaper delivery and
-// a claim's refund lower a price. An exchange's funding and refund name
-// neither goods nor tax, so no document carries them.
+// a claim's refund lower a price. No document carries an exchange's funding
+// or refund: an exchange written without a return names neither goods nor
+// tax, and the documents of one that names its return are ADR 0432's second
+// commit.
 func documentOf(act actOfOrder) (kind, reason string, err error) {
 	switch {
 	case !act.Documentable || act.Kind == actExchangeFunded || act.Kind == actExchangeRefunded:
 		return "", "", errors.Conflict(CodeActNotDocumented,
-			"a %s act names neither goods nor tax, so no document carries it", act.Kind)
+			"no document carries a %s act: an exchange's money is on no document", act.Kind)
 	case act.Kind == actDeliveryUpgraded:
 		return kindSale, reasonPriceRaised, nil
 	case act.Kind == actReturnRefunded:

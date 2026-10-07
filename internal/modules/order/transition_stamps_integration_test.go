@@ -459,7 +459,7 @@ func TestAnExchangeCompletedAfterItsFundingReadsCompleted(t *testing.T) {
 		done <- err
 	}()
 	<-held.arrived
-	_, err = plain.FundExchange(ctx, exchange.ID, "paycol_stamps")
+	_, err = plain.FundExchange(ctx, exchange.ID, "paycol_stamps", exchange.DifferenceDue)
 	require.NoError(t, err)
 	close(held.release)
 	require.NoError(t, <-done, "the completion finds the exchange funded once the lock is free")

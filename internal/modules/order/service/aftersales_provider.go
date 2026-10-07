@@ -83,6 +83,10 @@ const (
 	// the collection opened for it, empty until one is named.
 	FieldExchangeDifferenceDue       = "difference_due"
 	FieldExchangePaymentCollectionID = "payment_collection_id"
+	// FieldExchangeReturnID is the return whose goods the exchange takes
+	// back, empty on one that names none; with it the difference is derived
+	// (ADR 0432).
+	FieldExchangeReturnID = "return_id"
 
 	// FieldReplacementClaimID and FieldReplacementExchangeID are the record
 	// the replacement settles; exactly one is set.
@@ -349,6 +353,7 @@ func NewExchangeQueryProvider(svc *Service) query.Provider {
 			FieldAfterSalesCreatedAt:         func(e models.Exchange) any { return e.CreatedAt },
 			FieldExchangeDifferenceDue:       func(e models.Exchange) any { return e.DifferenceDue },
 			FieldExchangePaymentCollectionID: func(e models.Exchange) any { return e.PaymentCollectionID },
+			FieldExchangeReturnID:            func(e models.Exchange) any { return e.ReturnID },
 		},
 		idOf: func(e models.Exchange) string { return e.ID },
 		page: func(ctx context.Context, filter models.ChildFilter) ([]models.Exchange, error) {

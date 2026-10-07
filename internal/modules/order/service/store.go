@@ -374,6 +374,30 @@ type Store interface {
 	// CompleteExchange records that the exchange was settled; the database
 	// refuses one that owes money it has not collected.
 	CompleteExchange(ctx context.Context, id string) (models.Exchange, error)
+	// SetExchangeDifference writes the difference a requested exchange that
+	// names its return derives (ADR 0432); any other exchange is a conflict.
+	SetExchangeDifference(ctx context.Context, id string, difference int64) (models.Exchange, error)
+	// LiveExchangeOfReturn names the live exchange that takes a return's goods
+	// back; "" when none does (ADR 0432).
+	LiveExchangeOfReturn(ctx context.Context, returnID string) (string, error)
+	// ExchangeOverlapUnits answers, per line, how many units the live
+	// exchanges that name their return both take back through it and send
+	// again through their live replacements, the fewer of the two for each
+	// (ADR 0432).
+	ExchangeOverlapUnits(ctx context.Context, lineItemIDs []string) (map[string]int64, error)
+	// ExchangeLineUnits answers how many units of each order line an
+	// exchange's live replacements already send (ADR 0432).
+	ExchangeLineUnits(ctx context.Context, exchangeID string) (map[string]int64, error)
+	// LiveExchangeLineItems returns the items naming an order line that an
+	// exchange's live replacements send, in write order, with their figures
+	// (ADR 0432).
+	LiveExchangeLineItems(ctx context.Context, exchangeID string) ([]models.ReplacementItem, error)
+	// RepriceReplacementItem writes a line item's total, tax and tax
+	// components again (ADR 0432).
+	RepriceReplacementItem(ctx context.Context, itemID string, price models.ReplacementPrice) error
+	// ExchangeSent sums the totals of an exchange's live replacements' items
+	// and counts the items among them that carry no price (ADR 0432).
+	ExchangeSent(ctx context.Context, exchangeID string) (sent, unpriced int64, err error)
 
 	// WriteOutboxEvent records an event INSIDE the current transaction.
 	//

@@ -426,7 +426,7 @@ func TestARecalledFundedExchangeKeepsItsCollection(t *testing.T) {
 		Lines: []service.ReplacementLineInput{{OrderLineItemID: detail.Items[0].ID, Quantity: 1}},
 	})
 	require.NoError(t, err)
-	_, err = svc.FundExchange(ctx, exchange.ID, "paycol_integration")
+	_, err = svc.FundExchange(ctx, exchange.ID, "paycol_integration", exchange.DifferenceDue)
 	require.NoError(t, err)
 	require.NoError(t, svc.RecordReplacementReservation(ctx, record.ID, record.Items[0].ID, "variant_A", "invres_exchange"))
 	_, err = svc.MarkReplacementDispatched(ctx, record.ID, "ful_recall_"+record.ID)

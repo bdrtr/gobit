@@ -13,7 +13,7 @@ const cancelOrderExchange = `-- name: CancelOrderExchange :one
 UPDATE order_exchanges
 SET status = 'canceled', canceled_at = clock_timestamp(), updated_at = clock_timestamp()
 WHERE id = $1
-RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at
+RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at, order_return_id
 `
 
 // CancelOrderExchange withdraws the exchange request.
@@ -37,6 +37,7 @@ func (q *Queries) CancelOrderExchange(ctx context.Context, id string) (OrderExch
 		&i.CompletedAt,
 		&i.PaymentCollectionID,
 		&i.FundedAt,
+		&i.OrderReturnID,
 	)
 	return i, err
 }
@@ -45,7 +46,7 @@ const completeOrderExchange = `-- name: CompleteOrderExchange :one
 UPDATE order_exchanges
 SET status = 'completed', completed_at = clock_timestamp(), updated_at = clock_timestamp()
 WHERE id = $1 AND status IN ('requested', 'funded')
-RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at
+RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at, order_return_id
 `
 
 // CompleteOrderExchange records that the exchange was settled.
@@ -75,6 +76,7 @@ func (q *Queries) CompleteOrderExchange(ctx context.Context, id string) (OrderEx
 		&i.CompletedAt,
 		&i.PaymentCollectionID,
 		&i.FundedAt,
+		&i.OrderReturnID,
 	)
 	return i, err
 }
@@ -94,9 +96,9 @@ func (q *Queries) CountOrderExchanges(ctx context.Context, orderID string) (int6
 const createOrderExchange = `-- name: CreateOrderExchange :one
 
 
-INSERT INTO order_exchanges (id, order_id, status, difference_due, note, metadata)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at
+INSERT INTO order_exchanges (id, order_id, status, difference_due, note, metadata, order_return_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at, order_return_id
 `
 
 type CreateOrderExchangeParams struct {
@@ -106,6 +108,7 @@ type CreateOrderExchangeParams struct {
 	DifferenceDue int64
 	Note          *string
 	Metadata      []byte
+	OrderReturnID *string
 }
 
 // order_exchanges queries (plan Section 6).
@@ -131,6 +134,7 @@ func (q *Queries) CreateOrderExchange(ctx context.Context, arg CreateOrderExchan
 		arg.DifferenceDue,
 		arg.Note,
 		arg.Metadata,
+		arg.OrderReturnID,
 	)
 	var i OrderExchange
 	err := row.Scan(
@@ -146,6 +150,7 @@ func (q *Queries) CreateOrderExchange(ctx context.Context, arg CreateOrderExchan
 		&i.CompletedAt,
 		&i.PaymentCollectionID,
 		&i.FundedAt,
+		&i.OrderReturnID,
 	)
 	return i, err
 }
@@ -185,7 +190,7 @@ SET status                = 'funded',
     funded_at             = clock_timestamp(),
     updated_at            = clock_timestamp()
 WHERE id = $1 AND status = 'requested'
-RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at
+RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at, order_return_id
 `
 
 type FundOrderExchangeParams struct {
@@ -220,12 +225,13 @@ func (q *Queries) FundOrderExchange(ctx context.Context, arg FundOrderExchangePa
 		&i.CompletedAt,
 		&i.PaymentCollectionID,
 		&i.FundedAt,
+		&i.OrderReturnID,
 	)
 	return i, err
 }
 
 const getOrderExchange = `-- name: GetOrderExchange :one
-SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at FROM order_exchanges
+SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at, order_return_id FROM order_exchanges
 WHERE id = $1
 `
 
@@ -245,12 +251,13 @@ func (q *Queries) GetOrderExchange(ctx context.Context, id string) (OrderExchang
 		&i.CompletedAt,
 		&i.PaymentCollectionID,
 		&i.FundedAt,
+		&i.OrderReturnID,
 	)
 	return i, err
 }
 
 const listOrderExchanges = `-- name: ListOrderExchanges :many
-SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at FROM order_exchanges
+SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at, order_return_id FROM order_exchanges
 WHERE order_id = $1
 ORDER BY created_at DESC, id DESC
 LIMIT $3::bigint OFFSET $2::bigint
@@ -284,6 +291,7 @@ func (q *Queries) ListOrderExchanges(ctx context.Context, arg ListOrderExchanges
 			&i.CompletedAt,
 			&i.PaymentCollectionID,
 			&i.FundedAt,
+			&i.OrderReturnID,
 		); err != nil {
 			return nil, err
 		}
@@ -296,7 +304,7 @@ func (q *Queries) ListOrderExchanges(ctx context.Context, arg ListOrderExchanges
 }
 
 const listOrderExchangesByIDs = `-- name: ListOrderExchangesByIDs :many
-SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at FROM order_exchanges
+SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at, order_return_id FROM order_exchanges
 WHERE id = ANY ($1::text[])
 ORDER BY created_at DESC, id DESC
 `
@@ -325,6 +333,7 @@ func (q *Queries) ListOrderExchangesByIDs(ctx context.Context, ids []string) ([]
 			&i.CompletedAt,
 			&i.PaymentCollectionID,
 			&i.FundedAt,
+			&i.OrderReturnID,
 		); err != nil {
 			return nil, err
 		}
@@ -336,8 +345,38 @@ func (q *Queries) ListOrderExchangesByIDs(ctx context.Context, ids []string) ([]
 	return items, nil
 }
 
+const liveExchangesOfReturn = `-- name: LiveExchangesOfReturn :many
+SELECT id FROM order_exchanges
+WHERE order_return_id = $1 AND status <> 'canceled'
+ORDER BY id
+`
+
+// LiveExchangesOfReturn names the live exchange that takes a return's goods
+// back, if any (ADR 0432): such a return refunds nothing of its own, is not
+// withdrawn, and no second exchange names it. The unique index
+// order_exchanges_return_uniq holds it to one.
+func (q *Queries) LiveExchangesOfReturn(ctx context.Context, orderReturnID *string) ([]string, error) {
+	rows, err := q.db.Query(ctx, liveExchangesOfReturn, orderReturnID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockOrderExchange = `-- name: LockOrderExchange :one
-SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at FROM order_exchanges
+SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at, order_return_id FROM order_exchanges
 WHERE id = $1
 FOR UPDATE
 `
@@ -364,6 +403,7 @@ func (q *Queries) LockOrderExchange(ctx context.Context, id string) (OrderExchan
 		&i.CompletedAt,
 		&i.PaymentCollectionID,
 		&i.FundedAt,
+		&i.OrderReturnID,
 	)
 	return i, err
 }
@@ -374,7 +414,7 @@ SET status = CASE WHEN funded_at IS NOT NULL THEN 'funded' ELSE 'requested' END,
     completed_at = NULL,
     updated_at = clock_timestamp()
 WHERE id = $1 AND status = 'completed'
-RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at
+RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at, order_return_id
 `
 
 // ReopenOrderExchange takes a completed exchange back to where it stood before
@@ -396,7 +436,158 @@ func (q *Queries) ReopenOrderExchange(ctx context.Context, id string) (OrderExch
 		&i.CompletedAt,
 		&i.PaymentCollectionID,
 		&i.FundedAt,
+		&i.OrderReturnID,
 	)
+	return i, err
+}
+
+const setOrderExchangeDifference = `-- name: SetOrderExchangeDifference :one
+UPDATE order_exchanges
+SET difference_due = $2, updated_at = clock_timestamp()
+WHERE id = $1 AND status = 'requested' AND order_return_id IS NOT NULL
+RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at, order_return_id
+`
+
+type SetOrderExchangeDifferenceParams struct {
+	ID            string
+	DifferenceDue int64
+}
+
+// SetOrderExchangeDifference writes the difference an exchange that names its
+// return derives from what it sends and what it takes back (ADR 0432).
+//
+// The narrowing is 'requested' and a named return: a funded exchange holds
+// money for the figure it had, and an exchange written without a return keeps
+// the figure the operator typed. The caller holds the row's lock, so a funding
+// cannot slip in between the read and this write.
+func (q *Queries) SetOrderExchangeDifference(ctx context.Context, arg SetOrderExchangeDifferenceParams) (OrderExchange, error) {
+	row := q.db.QueryRow(ctx, setOrderExchangeDifference, arg.ID, arg.DifferenceDue)
+	var i OrderExchange
+	err := row.Scan(
+		&i.ID,
+		&i.OrderID,
+		&i.Status,
+		&i.DifferenceDue,
+		&i.Note,
+		&i.Metadata,
+		&i.CanceledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+		&i.PaymentCollectionID,
+		&i.FundedAt,
+		&i.OrderReturnID,
+	)
+	return i, err
+}
+
+const sumExchangeOverlapUnits = `-- name: SumExchangeOverlapUnits :many
+SELECT ri.order_line_item_id,
+       SUM(LEAST(ri.quantity, COALESCE(sent.units, 0)))::bigint AS units
+FROM order_exchanges e
+JOIN order_returns ret ON ret.id = e.order_return_id AND ret.status <> 'canceled'
+JOIN order_return_items ri ON ri.order_return_id = ret.id
+LEFT JOIN LATERAL (
+    SELECT SUM(i.quantity) AS units
+    FROM order_replacement_items i
+    JOIN order_replacements r ON r.id = i.order_replacement_id
+    WHERE r.order_exchange_id = e.id AND r.status <> 'canceled'
+      AND i.order_line_item_id = ri.order_line_item_id
+) sent ON TRUE
+WHERE e.order_return_id IS NOT NULL AND e.status <> 'canceled'
+  AND ri.order_line_item_id = ANY ($1::text[])
+GROUP BY ri.order_line_item_id
+`
+
+type SumExchangeOverlapUnitsRow struct {
+	OrderLineItemID string
+	Units           int64
+}
+
+// SumExchangeOverlapUnits answers, per line, how many units the live exchanges
+// that name their return both take back through it and send again through
+// their live replacements: for each exchange, the fewer of the two. Those are
+// the same goods named twice, so what a line's returns and replacements speak
+// for counts them once (ADR 0432, amending ADR 0423's count).
+func (q *Queries) SumExchangeOverlapUnits(ctx context.Context, lineItemIds []string) ([]SumExchangeOverlapUnitsRow, error) {
+	rows, err := q.db.Query(ctx, sumExchangeOverlapUnits, lineItemIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SumExchangeOverlapUnitsRow{}
+	for rows.Next() {
+		var i SumExchangeOverlapUnitsRow
+		if err := rows.Scan(&i.OrderLineItemID, &i.Units); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const sumLiveExchangeLineUnits = `-- name: SumLiveExchangeLineUnits :many
+SELECT i.order_line_item_id, SUM(i.quantity)::bigint AS units
+FROM order_replacement_items i
+JOIN order_replacements r ON r.id = i.order_replacement_id
+WHERE r.order_exchange_id = $1 AND r.status <> 'canceled'
+  AND i.order_line_item_id IS NOT NULL
+GROUP BY i.order_line_item_id
+`
+
+type SumLiveExchangeLineUnitsRow struct {
+	OrderLineItemID *string
+	Units           int64
+}
+
+// SumLiveExchangeLineUnits is how many units of each order line an
+// exchange's live replacements already send (ADR 0432). A line item is priced
+// as the next units of its line: the share of the line's total for the units
+// sent so far with it, less the share for the units sent before it.
+func (q *Queries) SumLiveExchangeLineUnits(ctx context.Context, orderExchangeID *string) ([]SumLiveExchangeLineUnitsRow, error) {
+	rows, err := q.db.Query(ctx, sumLiveExchangeLineUnits, orderExchangeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SumLiveExchangeLineUnitsRow{}
+	for rows.Next() {
+		var i SumLiveExchangeLineUnitsRow
+		if err := rows.Scan(&i.OrderLineItemID, &i.Units); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const sumLiveExchangeReplacementTotals = `-- name: SumLiveExchangeReplacementTotals :one
+SELECT COALESCE(SUM(i.total), 0)::bigint AS sent,
+       COUNT(*) FILTER (WHERE i.total IS NULL)::bigint AS unpriced
+FROM order_replacement_items i
+JOIN order_replacements r ON r.id = i.order_replacement_id
+WHERE r.order_exchange_id = $1 AND r.status <> 'canceled'
+`
+
+type SumLiveExchangeReplacementTotalsRow struct {
+	Sent     int64
+	Unpriced int64
+}
+
+// SumLiveExchangeReplacementTotals is what an exchange sends, priced: the
+// totals of its live replacements' items, and how many of them carry no price
+// (ADR 0432). An exchange that names its return writes no unpriced item, so the
+// second figure is a guard rather than a branch.
+func (q *Queries) SumLiveExchangeReplacementTotals(ctx context.Context, orderExchangeID *string) (SumLiveExchangeReplacementTotalsRow, error) {
+	row := q.db.QueryRow(ctx, sumLiveExchangeReplacementTotals, orderExchangeID)
+	var i SumLiveExchangeReplacementTotalsRow
+	err := row.Scan(&i.Sent, &i.Unpriced)
 	return i, err
 }
 
@@ -406,7 +597,7 @@ SET status      = 'canceled',
     canceled_at = clock_timestamp(),
     updated_at  = clock_timestamp()
 WHERE id = $1 AND status = 'funded'
-RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at
+RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at, order_return_id
 `
 
 // WithdrawFundedOrderExchange takes back an exchange whose difference was
@@ -439,6 +630,7 @@ func (q *Queries) WithdrawFundedOrderExchange(ctx context.Context, id string) (O
 		&i.CompletedAt,
 		&i.PaymentCollectionID,
 		&i.FundedAt,
+		&i.OrderReturnID,
 	)
 	return i, err
 }

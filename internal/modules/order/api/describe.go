@@ -346,7 +346,7 @@ func describeInvoicing(d *openapi.Doc) {
 			"to the act's. An act is documented once: a second call answers 200 with " +
 			"\"already_issued\". Refusals: 409 invoicing_no_sale_document when the order has " +
 			"no invoice yet; 409 invoicing_act_not_documented for an exchange's funding or " +
-			"refund, whose figure names neither goods nor tax; 409 invoicing_act_does_not_fit " +
+			"refund, which no document carries; 409 invoicing_act_does_not_fit " +
 			"when the rows have less left than the act moved, or a named row less than is put " +
 			"on it; 409 invoicing_sale_document_differs when the invoice does not print the " +
 			"order as the flow printed it; 404 invoicing_act_unknown for an act the order " +
@@ -513,7 +513,9 @@ func describeReturns(d *openapi.Doc) {
 				"lines can be asked back again, which nothing else in this API can undo. " +
 				"It is refused with 409 on a RECEIVED return — the goods are physically in " +
 				"the warehouse and the record is the only thing that says where they came " +
-				"from, so withdrawing would not un-receive them. A second call on an " +
+				"from, so withdrawing would not un-receive them. A return a live exchange " +
+				"takes back answers 409 \"order_return_named_by_exchange\": withdraw the " +
+				"exchange first (ADR 0432). A second call on an " +
 				"already withdrawn record succeeds and keeps the first moment.",
 			Responses: map[string]any{
 				"200": openapi.Response("The withdrawn return record", d.Item(returnDTO{})),
@@ -537,7 +539,19 @@ func describeExchanges(d *openapi.Doc) {
 		// type; if it is not written down, a client may present a difference
 		// that is paid to the customer as if it were collected from them.
 		Description: amountNote + " When difference_due is positive the difference " +
-			"is collected from the customer, when it is negative it is paid to the customer.",
+			"is collected from the customer, when it is negative it is paid to the customer." +
+			"\n\n" +
+			"With \"return_id\" the exchange takes that return's goods back and DERIVES its " +
+			"difference (ADR 0432): every replacement written against it is priced, and " +
+			"difference_due is what its live replacements send less what the return's units " +
+			"were sold for, rewritten while the exchange is requested. It opens at minus the " +
+			"return's worth. difference_due is then left out (422 " +
+			"\"order_exchange_difference_derived\"). The return has to be the order's (422 " +
+			"\"order_exchange_return_other_order\"), still requested (409 " +
+			"\"order_exchange_return_not_open\"), name its lines (422 " +
+			"\"order_exchange_return_empty\") and be taken back by no other live exchange (409 " +
+			"\"order_exchange_return_named\"); it then refunds nothing of its own and is not " +
+			"withdrawn while the exchange stands.",
 		RequestBody: d.RequestBody(createExchangeRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response("The opened exchange record", d.Item(exchangeDTO{})),
@@ -603,7 +617,10 @@ func describeExchangeMoney(d *openapi.Doc) {
 				"would go stale in silence. A repeat naming the same collection " +
 				"succeeds; naming a different one is refused. Only a POSITIVE " +
 				"difference can be funded — money owed TO the customer leaves " +
-				"by a refund, which this framework does not do from here.",
+				"by a refund, which this framework does not do from here. An " +
+				"exchange that names its return derives its difference, and one " +
+				"that moved between the check and the record answers 409 " +
+				"\"order_exchange_difference_moved\" (ADR 0432).",
 			RequestBody: d.RequestBody(fundExchangeRequest{}),
 			Responses: map[string]any{
 				"200": openapi.Response("The funded exchange record", d.Item(exchangeDTO{})),
@@ -896,7 +913,23 @@ func describeCreditLines(d *openapi.Doc) {
 				"goods, and the money beside them -- its difference -- is what this framework " +
 				"cannot move against an existing order. \n\n" +
 				"The exchange has to be OPEN (409 otherwise), at least one line is required, " +
-				"and more of a line cannot be promised than was bought on it (409).",
+				"and more of a line cannot be promised than was bought on it (409). \n\n" +
+				"An exchange that names its return prices each item when it is written, and " +
+				"each item carries its \"price\" (ADR 0432): a line at what the order line " +
+				"charged for those units (\"priced_by\": \"line\"), a variant at what a cart " +
+				"of the order's customer in its region and sales channel would charge, with no " +
+				"promotion (\"quote\"), or at the \"unit_price\" the request names for it " +
+				"(\"operator\"), taxed as that cart line would be. Its difference then becomes " +
+				"what its live replacements send less what its return takes back. A " +
+				"\"unit_price\" on a line, or on a replacement of an exchange that names no " +
+				"return, answers 422 \"order_replacement_price_refused\"; a region whose " +
+				"currency or tax convention is no longer the order's answers 409 " +
+				"\"order_exchange_region_moved\". The request takes no idempotency key: a " +
+				"repeated one writes a second replacement and raises the difference by what " +
+				"it sends, and a funding checked against the earlier figure is refused (409 " +
+				"\"order_exchange_difference_moved\"). A piece of a line worth under one minor " +
+				"unit a unit whose share of the tax would come out above its share of the " +
+				"total answers 409 \"order_replacement_tax_above_total\".",
 			RequestBody: d.RequestBody(createReplacementRequest{}),
 			Responses: map[string]any{
 				"201": openapi.Response("The recorded replacement", d.Item(replacementDTO{})),
@@ -927,7 +960,14 @@ func describeCreditLines(d *openapi.Doc) {
 			Summary: "Withdraws a replacement that has not left, and gives back the units it held.",
 			Description: "The units a stopped dispatch set aside are released first, and units " +
 				"already taken out for a parcel refuse the withdrawal (409), as on the claim's " +
-				"path. A second call succeeds and keeps the first moment.",
+				"path. A second call succeeds and keeps the first moment. An exchange that " +
+				"names its return prices its line items again from each line's first unit and " +
+				"derives its difference again while it is requested. While it " +
+				"is funded its replacements are refused (409 \"order_exchange_difference_held\"), " +
+				"before any unit is released: the exchange's refund sends the money back and " +
+				"withdraws the exchange, and the replacement is withdrawn after it. A replacement " +
+				"of a withdrawn or settled exchange is withdrawn and the difference stays as it " +
+				"stood, so the buyer is owed its share and no route here pays it (ADR 0432).",
 			Responses: map[string]any{
 				"200": openapi.Response("The withdrawn replacement", d.Item(replacementDTO{})),
 			},
@@ -1139,7 +1179,11 @@ func describeAfterSales(d *openapi.Doc) {
 			"\"reason\" is free text kept on the refund record and is optional. " +
 			"\"summary_recorded\" says whether the return's own summary was updated; a " +
 			"false there with a non-zero \"refunded_amount\" means the money went back and " +
-			"the bookkeeping did not, which is exactly what the warnings are for.",
+			"the bookkeeping did not, which is exactly what the warnings are for. " +
+			"\n\n" +
+			"A return a live exchange takes back answers 409 " +
+			"\"returns_workflow_return_settled_by_exchange\": the exchange's difference " +
+			"already counts what its units are worth (ADR 0432).",
 		RequestBody: d.RequestBody(refundReturnRequest{}),
 		Responses: map[string]any{
 			"200": openapi.Response("How much went back, and what needs a human",

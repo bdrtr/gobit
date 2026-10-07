@@ -167,3 +167,18 @@ func TestAnUnrecordedRefundIsREPORTEDNotHidden(t *testing.T) {
 	assert.False(t, out.SummaryRecorded)
 	assert.NotEmpty(t, out.Warnings)
 }
+
+// TestAReturnAnExchangeTakesBackIsNotRefunded keeps the goods' value from
+// going back twice: the exchange's difference already counts it (ADR 0432).
+func TestAReturnAnExchangeTakesBackIsNotRefunded(t *testing.T) {
+	h := refundHarness(t)
+	h.orders.detail.SettledByExchange = "exch_1"
+
+	_, err := h.wf.RefundReturn(context.Background(), testReturnID, 1200, "damaged")
+
+	require.Error(t, err)
+	assert.True(t, coreerrors.IsConflict(err))
+	assert.Equal(t, CodeReturnSettledByExchange, coreerrors.CodeOf(err))
+	assert.Empty(t, h.payments.refundCalls, "no money moved")
+	assert.Zero(t, h.orders.summaryCalls)
+}

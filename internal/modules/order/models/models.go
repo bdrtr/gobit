@@ -768,7 +768,22 @@ type Exchange struct {
 	// is collected from the customer, when negative it is paid to the customer.
 	// The sign states the direction, not the scale; the value is still an
 	// INTEGER minor unit.
+	//
+	// On an exchange that names its return ([Exchange.ReturnID]) the figure is
+	// DERIVED, never typed: what its live replacements send, priced, less what
+	// the return takes back, rewritten under the exchange's lock while it is
+	// requested (ADR 0432). On any other exchange it is the operator's figure.
 	DifferenceDue int64
+	// ReturnID is the return whose goods the exchange takes back; empty on an
+	// exchange written without one (ADR 0432).
+	//
+	// It is named when the exchange is opened, and only while the return is
+	// still requested: a return can be refunded only once it is received, so a
+	// return named before then has refunded nothing, and the receipt waits on
+	// the same row lock the naming takes. One live exchange names a return at
+	// most (order_exchanges_return_uniq), and the database holds it to a return
+	// of the same order (order_exchanges_return_fk).
+	ReturnID string
 	// Note is a free-form note.
 	Note string
 	// Metadata is the caller's free-form extra data.
@@ -816,6 +831,11 @@ type Exchange struct {
 // replacement that sent them, and a difference in either direction is money this
 // framework cannot move against an existing order.
 func (e Exchange) OwesNothing() bool { return e.DifferenceDue == 0 }
+
+// Priced reports whether the exchange prices what it sends: it names the return
+// taking its goods back, so its difference is derived rather than typed
+// (ADR 0432).
+func (e Exchange) Priced() bool { return e.ReturnID != "" }
 
 // Settleable reports whether the exchange may be completed at all.
 //

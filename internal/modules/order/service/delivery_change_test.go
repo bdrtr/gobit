@@ -363,11 +363,11 @@ func TestACollectionPaysForOneThing(t *testing.T) {
 
 	exchange, err := e.svc.CreateExchange(ctx, service.CreateExchangeInput{OrderID: order.ID, DifferenceDue: 1500})
 	require.NoError(t, err)
-	_, err = e.svc.FundExchange(ctx, exchange.ID, "pay_col_1")
+	_, err = e.svc.FundExchange(ctx, exchange.ID, "pay_col_1", exchange.DifferenceDue)
 	require.Error(t, err)
 	assert.Equal(t, service.CodeCollectionTaken, errors.CodeOf(err), "an exchange refuses a change's collection")
 
-	_, err = e.svc.FundExchange(ctx, exchange.ID, "pay_col_2")
+	_, err = e.svc.FundExchange(ctx, exchange.ID, "pay_col_2", exchange.DifferenceDue)
 	require.NoError(t, err)
 	_, err = e.svc.ChangeDelivery(ctx, other.ID, paidQuote(otherMethod, "so_same_day", 4000, "pay_col_2", 1500))
 	require.Error(t, err)

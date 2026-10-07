@@ -122,9 +122,20 @@ func (s *Service) reopenSource(ctx context.Context, recalled models.Replacement)
 		if err != nil {
 			return err
 		}
-		if exchange.Status == models.ExchangeCompleted {
-			_, err = s.store.ReopenExchange(ctx, recalled.ExchangeID)
+		if exchange.Status != models.ExchangeCompleted {
+			return nil
 		}
+		reopened, err := s.store.ReopenExchange(ctx, recalled.ExchangeID)
+		if err != nil || !reopened.Priced() || reopened.Status != models.ExchangeRequested {
+			return err
+		}
+		// Requested again, an exchange that names its return derives its figure
+		// again: a replacement withdrawn while it was settled left it as it
+		// stood (ADR 0432).
+		if err := s.repriceExchangeLines(ctx, reopened); err != nil {
+			return err
+		}
+		_, err = s.deriveExchangeDifference(ctx, reopened)
 
 		return err
 	}

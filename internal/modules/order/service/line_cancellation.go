@@ -404,6 +404,13 @@ func (s *Service) CanceledUnits(ctx context.Context, lineItemIDs []string) (map[
 // withdrawn return or replacement speaks for nothing, and a replacement item
 // naming a variant rather than a line is no line's (ADR 0423).
 //
+// An exchange that names its return takes a line's units back through that
+// return and sends the line's units again through its replacements: the same
+// goods named twice. It speaks for each of the line's units once, the more of
+// the two, so the fewer is taken off the sum (ADR 0432). A return no exchange
+// names, and a claim's or an exchange's replacement beside a return it does
+// not name, count as they are.
+//
 // It is not [Service.CanceledUnits]'s partner in a bound: a dispatch is held to
 // what was sold less what was written off. It is what a parcel that came back
 // undelivered holds its units to, read with the ceiling. A claim settled with
@@ -421,6 +428,10 @@ func (s *Service) SpokenForUnits(ctx context.Context, lineItemIDs []string) (map
 	if err != nil {
 		return nil, err
 	}
+	twice, err := s.store.ExchangeOverlapUnits(ctx, lineItemIDs)
+	if err != nil {
+		return nil, err
+	}
 
 	out := make(map[string]int64, len(returned)+len(replaced))
 	for line, units := range returned {
@@ -428,6 +439,9 @@ func (s *Service) SpokenForUnits(ctx context.Context, lineItemIDs []string) (map
 	}
 	for line, units := range replaced {
 		out[line] += units
+	}
+	for line, units := range twice {
+		out[line] -= units
 	}
 
 	return out, nil

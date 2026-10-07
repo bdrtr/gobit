@@ -5,7 +5,7 @@ collection it was collected into, and the row keeps that identifier and the
 moment rather than the amount. It costs a fourth status and buys the completion
 migration 000008 took away.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0432](0432-an-exchange-names-its-return-and-prices-what-it-sends.md), whose exchange that names its return derives its difference
 - **Date:** 2026-09-10
 
 ## Context

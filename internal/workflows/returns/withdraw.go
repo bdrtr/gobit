@@ -34,6 +34,15 @@ type WithdrawResult struct {
 // never promised while they are in a box. It is refused, and the answer is to
 // run the dispatch again, which finishes it. Nothing has been withdrawn then.
 //
+// # A refusal the order module can name comes first
+//
+// The record says, on the read above, whether the order module would take it
+// back; a replacement a funded exchange holds money for is refused there,
+// before any release (ADR 0432). An exchange funded between that read and the
+// withdrawal is still refused by the order module after the release: the
+// answer is the same 409, the units are back on the shelf, and the line keeps
+// naming their released promise until the replacement is withdrawn.
+//
 // Every step repeats safely: a release of a released promise does nothing, and
 // withdrawing a withdrawn record answers it as it stands. So a withdrawal that
 // released the units and then failed to write the record is finished by asking
@@ -47,6 +56,22 @@ func (w *Workflows) WithdrawReplacement(ctx context.Context, replacementID strin
 		return WithdrawResult{}, errors.Conflict(CodeReplacementNotOpen,
 			"replacement %s left in parcel %s; goods that have gone out are taken back by a return",
 			replacementID, detail.FulfillmentID)
+	}
+	// The order module's own refusal is asked before any unit goes back: a
+	// release followed by a refused record would leave the line naming a
+	// promise that no longer holds, and the next dispatch would open a parcel
+	// it cannot fill (ADR 0432).
+	if detail.Withdrawable == nil {
+		return WithdrawResult{}, errors.Internal(CodeReplacementUnreadable,
+			"the order surface did not say whether replacement %s can be withdrawn; nothing was released",
+			replacementID)
+	}
+	if !*detail.Withdrawable {
+		return WithdrawResult{}, errors.Conflict(codeExchangeDifferenceHeld,
+			"replacement %s answers %s %s, which is %s and holds the buyer's money for it; refund "+
+				"the exchange's difference, which withdraws the exchange, and then withdraw the "+
+				"replacement; nothing was released",
+			replacementID, detail.SourceKind, detail.SourceID, detail.SourceStatus)
 	}
 
 	out := WithdrawResult{ReplacementID: replacementID}

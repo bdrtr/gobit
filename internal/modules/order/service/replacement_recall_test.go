@@ -153,7 +153,7 @@ func TestAnExchangeGoesBackToWhereItStood(t *testing.T) {
 			record, err := e.svc.CreateReplacement(ctx, in)
 			require.NoError(t, err)
 			if tc.due > 0 {
-				_, err = e.svc.FundExchange(ctx, exchange.ID, "paycol_1")
+				_, err = e.svc.FundExchange(ctx, exchange.ID, "paycol_1", exchange.DifferenceDue)
 				require.NoError(t, err)
 			}
 			send(t, e, record, in)

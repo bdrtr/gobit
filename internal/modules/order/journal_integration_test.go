@@ -79,7 +79,7 @@ func TestAnExchangesDifferenceIsOnTheRealBooks(t *testing.T) {
 	require.NoError(t, err)
 	exchange, err := svc.CreateExchange(ctx, service.CreateExchangeInput{OrderID: placed.ID, DifferenceDue: 700})
 	require.NoError(t, err)
-	_, err = svc.FundExchange(ctx, exchange.ID, "pay_col_books_"+exchange.ID)
+	_, err = svc.FundExchange(ctx, exchange.ID, "pay_col_books_"+exchange.ID, exchange.DifferenceDue)
 	require.NoError(t, err)
 
 	journal, err := svc.Journal(ctx, service.JournalQuery{

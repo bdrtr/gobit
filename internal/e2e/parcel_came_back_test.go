@@ -178,6 +178,47 @@ func TestAParcelThatCameBackIsSentAgainOrPutBack(t *testing.T) {
 		assert.Contains(t, body, "fulfillment_line_not_dispatchable")
 	})
 
+	t.Run("an exchange of one unit leaves the other two owed", func(t *testing.T) {
+		orderID, lineID, _, optionID := shippedThenCameBack(t, "E2E Came Back Exchanged")
+
+		// The exchange takes one unit back through the return it names and
+		// sends one of the same line again through its replacement: the same
+		// goods, so it speaks for one unit and the order owes the other two
+		// (ADR 0432, amending ADR 0423's count).
+		returned, err := adminRequestWithBody(http.MethodPost, "/admin/v1/orders/"+orderID+"/returns",
+			map[string]any{"reason": "a size up", "lines": []map[string]any{{
+				"order_line_item_id": lineID, "quantity": 1,
+			}}})
+		require.NoError(t, err)
+		require.Equal(t, http.StatusCreated, returned.Code, returned.Body.String())
+		var ret afterSalesRecordResponse
+		require.NoError(t, json.Unmarshal(returned.Body.Bytes(), &ret))
+		opened, err := adminRequestWithBody(http.MethodPost, "/admin/v1/orders/"+orderID+"/exchanges",
+			map[string]any{"return_id": ret.Data.ID})
+		require.NoError(t, err)
+		require.Equal(t, http.StatusCreated, opened.Code, opened.Body.String())
+		var exchange afterSalesRecordResponse
+		require.NoError(t, json.Unmarshal(opened.Body.Bytes(), &exchange))
+		sent, err := adminRequestWithBody(http.MethodPost,
+			"/admin/v1/orders/"+orderID+"/exchanges/"+exchange.Data.ID+"/replacements", map[string]any{
+				"shipping_option_id": optionID, "location_id": stockLocationID,
+				"lines": []map[string]any{{"order_line_item_id": lineID, "quantity": 1}},
+			})
+		require.NoError(t, err)
+		require.Equal(t, http.StatusCreated, sent.Code, sent.Body.String())
+
+		code, parcelID, body := openOrderParcel(t, orderID, map[string]any{
+			"shipping_option_id": optionID,
+			"idempotency_key":    "e2e-came-back-exchanged-" + orderID,
+			"items":              []map[string]any{{"line_item_id": lineID, "quantity": cancelQuantity - 1}},
+		})
+		require.Equal(t, http.StatusCreated, code,
+			"one unit is the exchange's, taken back and sent again, so the order owes the other two: %s", body)
+		held, err := shippingSvc.QuantitiesOfFulfillment(t.Context(), parcelID)
+		require.NoError(t, err)
+		assert.Equal(t, map[string]int64{lineID: cancelQuantity - 1}, held)
+	})
+
 	t.Run("a write-off puts back no unit the parcel sent again holds", func(t *testing.T) {
 		orderID, lineID, itemID, optionID := shippedThenCameBack(t, "E2E Came Back Sent Again")
 

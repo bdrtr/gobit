@@ -37,7 +37,8 @@ import (
 //   - MONEY, QUANTITY AND TAX (every amount, total, quantity, rate, compound,
 //     is_giftcard, prices_include_tax, difference_due). They describe the sale.
 //   - STATE AND STAMPS (status, claim_type, address_type, price_list_type,
-//     recalls and every *_at). What the record is and when it moved.
+//     priced_by, recalls and every *_at). What the record is, where its
+//     price came from and when it moved.
 //   - WHAT WAS SOLD AND HOW IT WAS SENT (order_line_items.title,
 //     product_title and components, the name of a shipping method or a
 //     delivery change). A catalog copy and a shipping option's name, the same
@@ -72,7 +73,7 @@ var notPersonalColumns = map[string][]string{
 	},
 	"order_exchanges": {
 		"id", "order_id", "status", "difference_due", "canceled_at", "created_at",
-		"updated_at", "completed_at", "payment_collection_id", "funded_at",
+		"updated_at", "completed_at", "payment_collection_id", "funded_at", "order_return_id",
 	},
 	"order_claims": {
 		"id", "order_id", "claim_type", "status", "refund_amount", "completed_at",
@@ -85,6 +86,7 @@ var notPersonalColumns = map[string][]string{
 	"order_replacement_items": {
 		"id", "order_replacement_id", "order_line_item_id", "quantity", "created_at",
 		"updated_at", "reservation_id", "variant_id", "seq",
+		"unit_price", "total", "tax_total", "tax_rate_bps", "tax_components", "priced_by",
 	},
 	"order_replacement_item_parts": {
 		"order_replacement_item_id", "variant_id", "quantity", "rank", "reservation_id",

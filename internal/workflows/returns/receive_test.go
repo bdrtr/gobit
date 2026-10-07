@@ -52,6 +52,9 @@ type stubOrders struct {
 	fundCalls        int
 	fundedExchange   string
 	fundedCollection string
+	// fundedOwed is the difference the flow said it checked the collection
+	// against (ADR 0432).
+	fundedOwed int64
 
 	withdrawErr       error
 	withdrawCalls     int
@@ -226,9 +229,9 @@ func (s *stubOrders) ExchangeFundingJSON(_ context.Context, id string) (json.Raw
 }
 
 // FundExchange records which collection answers the difference.
-func (s *stubOrders) FundExchange(_ context.Context, exchangeID, collectionID string) error {
+func (s *stubOrders) FundExchange(_ context.Context, exchangeID, collectionID string, owed int64) error {
 	s.fundCalls++
-	s.fundedExchange, s.fundedCollection = exchangeID, collectionID
+	s.fundedExchange, s.fundedCollection, s.fundedOwed = exchangeID, collectionID, owed
 
 	return s.fundErr
 }

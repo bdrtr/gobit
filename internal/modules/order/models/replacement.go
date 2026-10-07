@@ -134,9 +134,11 @@ func (r Replacement) SourceID() string {
 
 // ReplacementItem is one line of a replacement: which line, and how many.
 //
-// It carries no amount, for the reason its counterpart on [ReturnItem] gives: a
-// replacement is settled with goods rather than money. An item naming a line
-// carries no variant either, since the line holds it and is immutable.
+// A claim's item carries no amount: a claim settles a fault with goods and
+// sells nothing. An item of an exchange that names its return carries the
+// price it is sold at ([ReplacementItem.Price], ADR 0432), because what it
+// sends less what the return takes back is the exchange's difference. An item
+// naming a line carries no variant, since the line holds it and is immutable.
 type ReplacementItem struct {
 	// ID is the identifier with the "oreplitem_" prefix.
 	ID string
@@ -172,9 +174,73 @@ type ReplacementItem struct {
 	// nil for any other item. The goods that leave are these parts, as the sale
 	// took them, whatever the bundle is made of by then.
 	Parts []ReplacementItemPart
+	// Price is what the item's units are sold at, written once with the item
+	// and never re-read from a price list or a tax table (ADR 0432); nil on an
+	// item of a claim and of an exchange written without a return.
+	Price *ReplacementPrice
 	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// ReplacementPricedBy says where a replacement item's price came from.
+type ReplacementPricedBy string
+
+// The sources of a replacement item's price (ADR 0432).
+const (
+	// PricedByLine is the order line's own sold figures, for an item naming a
+	// line: the units it sends are the units the line sold, at what the line
+	// charged for them, so an even swap moves nothing.
+	PricedByLine ReplacementPricedBy = "line"
+	// PricedByQuote is a quote in the order's region, sales channel and
+	// customer, taxed as a cart's line is, for an item naming a variant.
+	PricedByQuote ReplacementPricedBy = "quote"
+	// PricedByOperator is a unit price the operator named for an item naming a
+	// variant; its tax is still the quote's computation at that price.
+	PricedByOperator ReplacementPricedBy = "operator"
+)
+
+// Valid reports whether the source is one this module writes.
+func (p ReplacementPricedBy) Valid() bool {
+	switch p {
+	case PricedByLine, PricedByQuote, PricedByOperator:
+		return true
+	default:
+		return false
+	}
+}
+
+// ReplacementPrice is what a replacement item's units are sold at.
+//
+// The figures are for the item's whole quantity, as an order line's are, and
+// Total is what the buyer pays for them with the tax in it: Total less TaxTotal
+// is their net value, whichever convention the order's prices follow.
+type ReplacementPrice struct {
+	// UnitPrice is the unit price the item was priced at, in the order's
+	// convention: tax included when the order's prices include it (ADR 0246).
+	UnitPrice int64
+	// Total is what the buyer pays for the item's units, tax included.
+	Total int64
+	// TaxTotal is the tax in Total, at TaxRateBps.
+	TaxTotal int64
+	// TaxRateBps is the rate the tax was computed at, in basis points; the
+	// stack's base when TaxComponents is filled, as on an order line.
+	TaxRateBps int32
+	// TaxComponents is the per-rate breakdown when a stack taxed the item;
+	// empty when one rate says it all. Σ TaxAmount equals TaxTotal.
+	TaxComponents []ReplacementItemTax
+	// PricedBy says where the price came from.
+	PricedBy ReplacementPricedBy
+}
+
+// ReplacementItemTax is one rate applied inside a replacement item's tax
+// stack; the shape is an order line's component's ([OrderLineTax]).
+type ReplacementItemTax struct {
+	RateID        string
+	RateBps       int32
+	Compound      bool
+	TaxableAmount int64
+	TaxAmount     int64
 }
 
 // ReplacementItemPart is one variant a unit of a replacement item holds, how

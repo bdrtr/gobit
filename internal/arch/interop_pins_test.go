@@ -109,6 +109,9 @@ var (
 
 	_ fulfillsvc.DispatchBound = (*fulfillingwf.Interop)(nil)
 
+	// An exchange that names its return has its variants quoted (ADR 0432).
+	_ ordersvc.ExchangeQuote = (*cartwf.Interop)(nil)
+
 	_ customerapi.SegmentPreview = (*segmentwf.Interop)(nil)
 )
 

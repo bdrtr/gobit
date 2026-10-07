@@ -46,9 +46,26 @@ func (s *Service) ReceiveReturn(
 // that carries weight: the goods are physically in the warehouse, the record is
 // the only thing that says where they came from, and canceling it would not
 // un-receive them.
+//
+// A return a live exchange takes back is not withdrawn either (ADR 0432): the
+// exchange's difference counts its units as coming back, and the return is
+// what brings them. The exchange is withdrawn first, which lets the return go.
+// The check holds the return's lock, which naming it takes as well.
 func (s *Service) CancelReturn(ctx context.Context, returnID string) (models.Return, error) {
 	return s.transitionReturn(ctx, returnID, "canceling",
-		models.ReturnStatus.CancelAction, s.store.CancelReturn)
+		models.ReturnStatus.CancelAction, func(ctx context.Context, id string) (models.Return, error) {
+			named, err := s.store.LiveExchangeOfReturn(ctx, id)
+			if err != nil {
+				return models.Return{}, err
+			}
+			if named != "" {
+				return models.Return{}, errors.Conflict(CodeReturnNamedByExchange,
+					"exchange %s takes back return %s; withdraw the exchange before the return, or its "+
+						"difference counts goods that never come back", named, id)
+			}
+
+			return s.store.CancelReturn(ctx, id)
+		})
 }
 
 // WHERE the goods arrived is required, and it is required HERE rather than
@@ -214,8 +231,17 @@ func (s *Service) WithdrawFundedExchange(ctx context.Context, exchangeID string)
 // A collection that paid for a delivery change is refused (ADR 0200), and the
 // order is locked before the exchange so a delivery change naming the same
 // collection runs before or after this one and not beside it.
+//
+// # The figure the caller checked is the figure the row owes
+//
+// owed is the difference the caller checked the collection against, and a row
+// that owes another figure under its lock is refused (ADR 0432). An exchange
+// that names its return derives its difference while it is requested, so a
+// replacement written or withdrawn between the caller's read and this write
+// moves it; without the comparison the row would be funded by a collection
+// opened for a figure it no longer owes.
 func (s *Service) FundExchange(
-	ctx context.Context, exchangeID, collectionID string,
+	ctx context.Context, exchangeID, collectionID string, owed int64,
 ) (models.Exchange, error) {
 	if err := requireID("exchange_id", exchangeID); err != nil {
 		return models.Exchange{}, err
@@ -260,6 +286,12 @@ func (s *Service) FundExchange(
 				"exchange %s owes nothing to collect (difference %d); money owed TO the "+
 					"customer leaves by a refund, which is a different act",
 				exchangeID, current.DifferenceDue)
+		}
+		if current.DifferenceDue != owed {
+			return errors.Conflict(CodeExchangeDifferenceMoved,
+				"exchange %s owes %d and the collection was checked against %d; what it sends "+
+					"changed in between, so check the collection against what it owes now",
+				exchangeID, current.DifferenceDue, owed)
 		}
 
 		taken, err := s.store.CollectionTakenBy(ctx, collectionID)

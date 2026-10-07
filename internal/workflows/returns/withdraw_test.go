@@ -87,3 +87,41 @@ func TestAWithdrawalIsFinishedByAskingAgain(t *testing.T) {
 	assert.Equal(t, []string{"invres_held"}, h.inventory.released)
 	assert.Equal(t, []string{testReplacementID}, h.orders.canceled)
 }
+
+// TestAReplacementItsExchangeHoldsMoneyForIsRefusedBeforeAnyRelease asks the
+// order module's answer first: a refusal that came after the release would
+// leave the line naming a promise that no longer holds, and the next dispatch
+// would open a parcel it cannot fill (ADR 0432).
+func TestAReplacementItsExchangeHoldsMoneyForIsRefusedBeforeAnyRelease(t *testing.T) {
+	h := heldHarness(t)
+	h.orders.replacement.SourceKind, h.orders.replacement.SourceID = "exchange", "exch_funded"
+	h.orders.replacement.SourceStatus = "funded"
+	h.orders.replacement.Withdrawable = ptr(false)
+
+	_, err := h.wf.WithdrawReplacement(context.Background(), testReplacementID)
+
+	require.Error(t, err)
+	assert.True(t, coreerrors.IsConflict(err))
+	assert.Equal(t, codeExchangeDifferenceHeld, coreerrors.CodeOf(err))
+	assert.Empty(t, h.inventory.released, "no unit goes back for a record that stays")
+	assert.Empty(t, h.orders.canceled)
+}
+
+// TestAnUnansweredWithdrawableReleasesNothing refuses a withdrawal the order
+// surface did not say it would take: neither answer is read into silence, and
+// no money is claimed held.
+func TestAnUnansweredWithdrawableReleasesNothing(t *testing.T) {
+	h := heldHarness(t)
+	h.orders.replacement.Withdrawable = nil
+
+	_, err := h.wf.WithdrawReplacement(context.Background(), testReplacementID)
+
+	require.Error(t, err)
+	assert.Equal(t, CodeReplacementUnreadable, coreerrors.CodeOf(err))
+	assert.NotContains(t, err.Error(), "money")
+	assert.Empty(t, h.inventory.released)
+	assert.Empty(t, h.orders.canceled)
+}
+
+// ptr is a pointer to a value, for a field whose absence means something.
+func ptr[T any](v T) *T { return &v }

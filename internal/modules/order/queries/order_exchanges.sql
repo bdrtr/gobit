@@ -16,9 +16,76 @@
 -- before it.
 
 -- name: CreateOrderExchange :one
-INSERT INTO order_exchanges (id, order_id, status, difference_due, note, metadata)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO order_exchanges (id, order_id, status, difference_due, note, metadata, order_return_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING *;
+
+-- SetOrderExchangeDifference writes the difference an exchange that names its
+-- return derives from what it sends and what it takes back (ADR 0432).
+--
+-- The narrowing is 'requested' and a named return: a funded exchange holds
+-- money for the figure it had, and an exchange written without a return keeps
+-- the figure the operator typed. The caller holds the row's lock, so a funding
+-- cannot slip in between the read and this write.
+-- name: SetOrderExchangeDifference :one
+UPDATE order_exchanges
+SET difference_due = $2, updated_at = clock_timestamp()
+WHERE id = $1 AND status = 'requested' AND order_return_id IS NOT NULL
+RETURNING *;
+
+-- LiveExchangesOfReturn names the live exchange that takes a return's goods
+-- back, if any (ADR 0432): such a return refunds nothing of its own, is not
+-- withdrawn, and no second exchange names it. The unique index
+-- order_exchanges_return_uniq holds it to one.
+-- name: LiveExchangesOfReturn :many
+SELECT id FROM order_exchanges
+WHERE order_return_id = $1 AND status <> 'canceled'
+ORDER BY id;
+
+-- SumLiveExchangeReplacementTotals is what an exchange sends, priced: the
+-- totals of its live replacements' items, and how many of them carry no price
+-- (ADR 0432). An exchange that names its return writes no unpriced item, so the
+-- second figure is a guard rather than a branch.
+-- name: SumLiveExchangeReplacementTotals :one
+SELECT COALESCE(SUM(i.total), 0)::bigint AS sent,
+       COUNT(*) FILTER (WHERE i.total IS NULL)::bigint AS unpriced
+FROM order_replacement_items i
+JOIN order_replacements r ON r.id = i.order_replacement_id
+WHERE r.order_exchange_id = $1 AND r.status <> 'canceled';
+
+-- SumLiveExchangeLineUnits is how many units of each order line an
+-- exchange's live replacements already send (ADR 0432). A line item is priced
+-- as the next units of its line: the share of the line's total for the units
+-- sent so far with it, less the share for the units sent before it.
+-- name: SumLiveExchangeLineUnits :many
+SELECT i.order_line_item_id, SUM(i.quantity)::bigint AS units
+FROM order_replacement_items i
+JOIN order_replacements r ON r.id = i.order_replacement_id
+WHERE r.order_exchange_id = $1 AND r.status <> 'canceled'
+  AND i.order_line_item_id IS NOT NULL
+GROUP BY i.order_line_item_id;
+
+-- SumExchangeOverlapUnits answers, per line, how many units the live exchanges
+-- that name their return both take back through it and send again through
+-- their live replacements: for each exchange, the fewer of the two. Those are
+-- the same goods named twice, so what a line's returns and replacements speak
+-- for counts them once (ADR 0432, amending ADR 0423's count).
+-- name: SumExchangeOverlapUnits :many
+SELECT ri.order_line_item_id,
+       SUM(LEAST(ri.quantity, COALESCE(sent.units, 0)))::bigint AS units
+FROM order_exchanges e
+JOIN order_returns ret ON ret.id = e.order_return_id AND ret.status <> 'canceled'
+JOIN order_return_items ri ON ri.order_return_id = ret.id
+LEFT JOIN LATERAL (
+    SELECT SUM(i.quantity) AS units
+    FROM order_replacement_items i
+    JOIN order_replacements r ON r.id = i.order_replacement_id
+    WHERE r.order_exchange_id = e.id AND r.status <> 'canceled'
+      AND i.order_line_item_id = ri.order_line_item_id
+) sent ON TRUE
+WHERE e.order_return_id IS NOT NULL AND e.status <> 'canceled'
+  AND ri.order_line_item_id = ANY (sqlc.arg('line_item_ids')::text[])
+GROUP BY ri.order_line_item_id;
 
 -- name: GetOrderExchange :one
 SELECT * FROM order_exchanges

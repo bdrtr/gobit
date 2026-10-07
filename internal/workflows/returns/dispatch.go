@@ -39,8 +39,13 @@ type replacementDetail struct {
 	FulfillmentID    string `json:"fulfillment_id"`
 	// Recalls counts the parcels canceled under the replacement (ADR 0239); the
 	// next parcel's key names it.
-	Recalls int               `json:"recalls"`
-	Lines   []replacementLine `json:"lines"`
+	Recalls int `json:"recalls"`
+	// Withdrawable is the order module's answer to "would the record be taken
+	// back": the withdrawal reads it before it gives back any units (ADR 0432).
+	// nil is an answer the order surface did not give, which the withdrawal
+	// refuses rather than reading as either.
+	Withdrawable *bool             `json:"withdrawable"`
+	Lines        []replacementLine `json:"lines"`
 }
 
 // replacementLine is one line being sent.

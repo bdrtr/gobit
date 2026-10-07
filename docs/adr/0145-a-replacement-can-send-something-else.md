@@ -5,7 +5,7 @@ line, so an exchange can send a different size or colour. It costs a nullable
 column and a rule that the bought-ceiling no longer covers every item, and it
 gives the money half of an exchange something to answer.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0432](0432-an-exchange-names-its-return-and-prices-what-it-sends.md), whose exchange that names its return prices the variant it sends
 - **Date:** 2026-09-12
 
 ## Context

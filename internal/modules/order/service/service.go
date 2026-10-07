@@ -175,6 +175,49 @@ const (
 	// one snapshot, so it is an internal fault; placing the row nowhere would
 	// leave it out of the dossier with nothing saying so.
 	CodeDisclosureRowUnplaced = "order_disclosure_row_unplaced"
+
+	// CodeExchangeDifferenceDerived reports a difference typed beside a named
+	// return: the exchange derives it from what it sends and what it takes
+	// back (ADR 0432).
+	CodeExchangeDifferenceDerived = "order_exchange_difference_derived"
+	// CodeExchangeReturnNotOpen reports a return named by an exchange after
+	// it was received or withdrawn (ADR 0432).
+	CodeExchangeReturnNotOpen = "order_exchange_return_not_open"
+	// CodeExchangeReturnNamed reports a return a live exchange already takes
+	// back (ADR 0432).
+	CodeExchangeReturnNamed = "order_exchange_return_named"
+	// CodeExchangeReturnOtherOrder reports a return of another order named by
+	// an exchange (ADR 0432).
+	CodeExchangeReturnOtherOrder = "order_exchange_return_other_order"
+	// CodeExchangeReturnEmpty reports a return named by an exchange that says
+	// no line it takes back, so nothing can be valued (ADR 0432).
+	CodeExchangeReturnEmpty = "order_exchange_return_empty"
+	// CodeReturnNamedByExchange reports a withdrawal of a return a live
+	// exchange takes back (ADR 0432).
+	CodeReturnNamedByExchange = "order_return_named_by_exchange"
+	// CodeExchangeDifferenceHeld reports a withdrawal of a replacement whose
+	// exchange names its return and is funded: the collection it names holds
+	// the buyer's money for what it sends (ADR 0432).
+	CodeExchangeDifferenceHeld = "order_exchange_difference_held"
+	// CodeExchangeDifferenceMoved reports a funding checked against a
+	// difference the exchange no longer owes (ADR 0432).
+	CodeExchangeDifferenceMoved = "order_exchange_difference_moved"
+	// CodeReplacementPriceRefused reports a unit price named where none is
+	// taken: on an item naming an order line, or on a replacement of a claim
+	// or of an exchange that names no return (ADR 0432).
+	CodeReplacementPriceRefused = "order_replacement_price_refused"
+	// CodeExchangeQuoteUnavailable reports that no quote is bound, so a
+	// variant an exchange sends cannot be priced (ADR 0432).
+	CodeExchangeQuoteUnavailable = "order_exchange_quote_unavailable"
+	// CodeExchangeQuoteInvalid reports a quote outside its contract.
+	CodeExchangeQuoteInvalid = "order_exchange_quote_invalid"
+	// CodeReplacementTaxAboveTotal reports units of a line worth under one
+	// minor unit each whose share of the line's tax comes out above their
+	// share of its total, which no row may carry (ADR 0432).
+	CodeReplacementTaxAboveTotal = "order_replacement_tax_above_total"
+	// CodeExchangeRegionMoved reports a quote in a currency or a tax
+	// convention the order was not sold in (ADR 0432).
+	CodeExchangeRegionMoved = "order_exchange_region_moved"
 )
 
 // Pagination limits (plan Section 8: limit/offset).
@@ -214,6 +257,7 @@ type Service struct {
 	refunds  CausedRefunds
 	docs     DocumentedTax
 	catalog  Catalog
+	quotes   ExchangeQuote
 	log      *slog.Logger
 	now      func() time.Time
 }
@@ -255,6 +299,10 @@ type Options struct {
 	// order was never paid" and "nobody could ask" must not look the same.
 	// Every other path of the module works without it.
 	Catalog Catalog
+	// Quotes is the cart flow's quote of the variants an exchange that names
+	// its return sends; it is OPTIONAL (ADR 0432). When nil such an exchange
+	// sends no variant, and every other path works without it.
+	Quotes ExchangeQuote
 	// Logger discards the logs when it is given as nil.
 	Logger *slog.Logger
 	// Now is the clock a reading at a moment is refused a future moment by
@@ -299,6 +347,7 @@ func New(opts Options) (*Service, error) {
 		refunds:  opts.Refunds,
 		docs:     opts.Documents,
 		catalog:  opts.Catalog,
+		quotes:   opts.Quotes,
 		log:      log,
 		now:      now,
 	}, nil

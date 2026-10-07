@@ -55,6 +55,12 @@ const (
 	// codeReasonRequired reports a record written without the reason its table
 	// requires.
 	codeReasonRequired = "order_reason_required"
+	// codeExchangeReturnNamed reports a return a live exchange already names
+	// (ADR 0432); the service refuses it first, under the return's lock.
+	codeExchangeReturnNamed = "order_exchange_return_named"
+	// codeExchangeReturnOtherOrder reports a return of another order named by
+	// an exchange (ADR 0432); the service refuses it first.
+	codeExchangeReturnOtherOrder = "order_exchange_return_other_order"
 )
 
 // Constraint names; used to convert a driver error into a meaningful typed
@@ -65,6 +71,8 @@ const (
 	constraintIdempotencyUniq     = "orders_idempotency_key_uniq"
 	constraintSummaryOrderUniq    = "order_summaries_order_id_key"
 	constraintEvidenceUploadUniq  = "order_claim_evidence_upload_uniq"
+	constraintExchangeReturnUniq  = "order_exchanges_return_uniq"
+	constraintExchangeReturnFK    = "order_exchanges_return_fk"
 	constraintEvidencePresent     = "order_claim_evidence_upload_present"
 	constraintOrderTotals         = "orders_totals_consistent"
 	constraintOrderDiscount       = "orders_discount_within_subtotal"
@@ -124,6 +132,11 @@ func classify(err error, code, format string, a ...any) error {
 	case sqlStateUniqueViolation:
 		return classifyUnique(err, pgErr.ConstraintName, code, format, a...)
 	case sqlStateForeignKeyViolation:
+		// An exchange names a return of its own order (ADR 0432).
+		if pgErr.ConstraintName == constraintExchangeReturnFK {
+			return errors.Wrap(err, errors.KindInvalid, codeExchangeReturnOtherOrder,
+				"the return is not one of the exchange's order")
+		}
 		// A line, a summary or a return record cannot be linked to an order that
 		// DOES NOT EXIST.
 		if strings.HasSuffix(pgErr.ConstraintName, constraintClaimFKSuffix) {
@@ -169,6 +182,9 @@ func classifyUnique(err error, constraint, code, format string, a ...any) error 
 	case constraintEvidenceUploadUniq:
 		return errors.Wrap(err, errors.KindConflict, codeEvidenceAttached,
 			"this file is already evidence of the claim")
+	case constraintExchangeReturnUniq:
+		return errors.Wrap(err, errors.KindConflict, codeExchangeReturnNamed,
+			"a live exchange already takes this return's goods back")
 	}
 	return errors.Wrap(err, errors.KindInternal, code, format, a...)
 }
@@ -584,6 +600,7 @@ func toExchange(row orderdb.OrderExchange) (models.Exchange, error) {
 		DifferenceDue:       row.DifferenceDue,
 		Note:                stringValue(row.Note),
 		Metadata:            meta,
+		ReturnID:            stringValue(row.OrderReturnID),
 		PaymentCollectionID: stringValue(row.PaymentCollectionID),
 		FundedAt:            toTimePtr(row.FundedAt),
 		CanceledAt:          toTimePtr(row.CanceledAt),

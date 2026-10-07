@@ -188,9 +188,18 @@ func (s *Service) ListReturns(ctx context.Context, orderID string, page Page) ([
 type CreateExchangeInput struct {
 	// OrderID is the order the exchange belongs to; it is REQUIRED.
 	OrderID string
+	// ReturnID is the return whose goods the exchange takes back; it is
+	// optional (ADR 0432).
+	//
+	// With it the exchange prices what it sends and DERIVES its difference, so
+	// DifferenceDue has to be zero. The return has to be the order's, still
+	// requested, say which lines come back, and be named by no other live
+	// exchange.
+	ReturnID string
 	// DifferenceDue is the difference of the exchange (minor unit) and IT MAY BE
 	// NEGATIVE: when positive the difference is collected from the customer,
-	// when negative it is paid to the customer.
+	// when negative it is paid to the customer. It is typed only on an exchange
+	// that names no return.
 	DifferenceDue int64
 	// Note is free text; it is optional.
 	Note string
@@ -199,6 +208,20 @@ type CreateExchangeInput struct {
 }
 
 // CreateExchange opens an exchange record on the order.
+//
+// # An exchange that names its return
+//
+// It takes back the return's units and owes their worth until it sends
+// something: its difference is born as minus what the return takes back,
+// valued at what the lines charged for those units, and every replacement
+// written against it adds what it sends (ADR 0432).
+//
+// The return is named only while it is requested. A return is refunded only
+// once it is received, so a requested one has refunded nothing; and the
+// receipt and this naming both lock the return's row, so the refund that
+// would give the same goods' value back a second time can never begin on a
+// return an exchange already names, nor an exchange name one whose refund
+// has begun.
 func (s *Service) CreateExchange(ctx context.Context, in CreateExchangeInput) (models.Exchange, error) {
 	if err := requireID("order_id", in.OrderID); err != nil {
 		return models.Exchange{}, err
@@ -209,18 +232,38 @@ func (s *Service) CreateExchange(ctx context.Context, in CreateExchangeInput) (m
 	if err := checkTextLen("note", in.Note); err != nil {
 		return models.Exchange{}, err
 	}
+	if in.ReturnID != "" {
+		if err := requireID("return_id", in.ReturnID); err != nil {
+			return models.Exchange{}, err
+		}
+		if in.DifferenceDue != 0 {
+			return models.Exchange{}, errors.Invalid(CodeExchangeDifferenceDerived,
+				"an exchange that names return %s derives its difference from what it sends and what "+
+					"the return takes back; difference_due has to be left out, %d was given",
+				in.ReturnID, in.DifferenceDue)
+		}
+	}
 
 	var created models.Exchange
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {
 		if _, err := s.requireLiveOrder(ctx, in.OrderID, "an exchange record"); err != nil {
 			return err
 		}
+		difference := in.DifferenceDue
+		if in.ReturnID != "" {
+			back, err := s.returnAnExchangeTakes(ctx, in.OrderID, in.ReturnID)
+			if err != nil {
+				return err
+			}
+			difference = -back
+		}
 		var err error
 		created, err = s.store.CreateExchange(ctx, models.Exchange{
 			ID:            models.NewExchangeID(),
 			OrderID:       in.OrderID,
 			Status:        models.ExchangeRequested,
-			DifferenceDue: in.DifferenceDue,
+			DifferenceDue: difference,
+			ReturnID:      in.ReturnID,
 			Note:          in.Note,
 			Metadata:      in.Metadata,
 		})
@@ -230,6 +273,49 @@ func (s *Service) CreateExchange(ctx context.Context, in CreateExchangeInput) (m
 		return models.Exchange{}, err
 	}
 	return created, nil
+}
+
+// returnAnExchangeTakes locks the return an exchange is to name, refuses one
+// it may not name, and answers what its units are worth. The caller holds the
+// order's lock; the return's is taken after it, as everywhere.
+func (s *Service) returnAnExchangeTakes(ctx context.Context, orderID, returnID string) (int64, error) {
+	ret, err := s.store.LockReturn(ctx, returnID)
+	if err != nil {
+		return 0, err
+	}
+	if ret.OrderID != orderID {
+		return 0, errors.Invalid(CodeExchangeReturnOtherOrder,
+			"return %s belongs to order %s, not to %s", returnID, ret.OrderID, orderID)
+	}
+	if ret.Status != models.ReturnRequested {
+		return 0, errors.Conflict(CodeExchangeReturnNotOpen,
+			"return %s is %s; an exchange names a return while it is requested, before a receipt "+
+				"lets it be refunded", returnID, ret.Status)
+	}
+	named, err := s.store.LiveExchangeOfReturn(ctx, returnID)
+	if err != nil {
+		return 0, err
+	}
+	if named != "" {
+		return 0, errors.Conflict(CodeExchangeReturnNamed,
+			"exchange %s already takes back return %s; withdraw it before another names the return",
+			named, returnID)
+	}
+	items, err := s.store.ListReturnItems(ctx, returnID)
+	if err != nil {
+		return 0, err
+	}
+	if len(items) == 0 {
+		return 0, errors.Invalid(CodeExchangeReturnEmpty,
+			"return %s says no line it takes back, so what the exchange owes for it cannot be "+
+				"valued; open a return that names its lines", returnID)
+	}
+	lines, err := s.store.ListLineItems(ctx, orderID)
+	if err != nil {
+		return 0, err
+	}
+
+	return returnedWorth(lines, items), nil
 }
 
 // GetExchange returns the exchange record by its identifier.

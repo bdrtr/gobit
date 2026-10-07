@@ -131,7 +131,10 @@ func (w *Workflows) FundExchangeDifference(ctx context.Context, exchangeID, coll
 			collectionID, held, detail.DifferenceDue, exchangeID, captured, refunded)
 	}
 
-	if err := w.orders.FundExchange(ctx, exchangeID, collectionID); err != nil {
+	// The figure checked travels with the collection: an exchange that names
+	// its return derives its difference while it is requested, and the order
+	// module refuses the funding if it moved since it was read (ADR 0432).
+	if err := w.orders.FundExchange(ctx, exchangeID, collectionID, detail.DifferenceDue); err != nil {
 		return err
 	}
 

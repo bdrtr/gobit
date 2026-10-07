@@ -27,6 +27,12 @@ type replacementLineRequest struct {
 	VariantID string `json:"variant_id,omitempty"`
 	// Quantity is how many units of it are being sent.
 	Quantity int64 `json:"quantity"`
+	// UnitPrice is the operator's unit price for a variant an exchange that
+	// names its return sends, in the order's convention; left out, the
+	// variant is priced as a cart of the order's customer would be. Its tax is
+	// computed either way, and it is refused on a line and on a replacement
+	// that prices nothing (ADR 0432).
+	UnitPrice *int64 `json:"unit_price,omitempty"`
 }
 
 // createReplacementRequest is the body that says what a claim will send.
@@ -55,8 +61,37 @@ type replacementItemDTO struct {
 	ReservationID string `json:"reservation_id,omitempty"`
 	// Parts are what one unit holds when the item replaces a line that sold a
 	// bundle (ADR 0238), each held under its own promise; absent otherwise.
-	Parts     []replacementPartDTO `json:"parts,omitempty"`
+	Parts []replacementPartDTO `json:"parts,omitempty"`
+	// Price is what the item's units are sold at, written with the item; it
+	// is absent on a claim's item and on an item of an exchange that names no
+	// return (ADR 0432).
+	Price     *replacementPriceDTO `json:"price,omitempty"`
 	CreatedAt time.Time            `json:"created_at"`
+}
+
+// replacementPriceDTO is what a replacement item's units are sold at.
+type replacementPriceDTO struct {
+	// UnitPrice is the unit price, in the order's convention.
+	UnitPrice int64 `json:"unit_price"`
+	// Total is what the buyer pays for the item's units, tax included, and
+	// TaxTotal the tax in it, at TaxRateBps.
+	Total      int64 `json:"total"`
+	TaxTotal   int64 `json:"tax_total"`
+	TaxRateBps int32 `json:"tax_rate_bps"`
+	// TaxComponents is the per-rate breakdown when a stack taxed the item.
+	TaxComponents []replacementTaxDTO `json:"tax_components,omitempty"`
+	// PricedBy is "line" (the order line's own sold figures), "quote" or
+	// "operator".
+	PricedBy string `json:"priced_by"`
+}
+
+// replacementTaxDTO is one rate of a replacement item's stack.
+type replacementTaxDTO struct {
+	RateID        string `json:"rate_id,omitempty"`
+	RateBps       int32  `json:"rate_bps"`
+	Compound      bool   `json:"compound"`
+	TaxableAmount int64  `json:"taxable_amount"`
+	TaxAmount     int64  `json:"tax_amount"`
 }
 
 // replacementPartDTO is one part of a replacement item in a response.
@@ -116,6 +151,7 @@ func (h *Handler) adminCreateReplacement(w http.ResponseWriter, r *http.Request)
 			OrderLineItemID: body.Lines[i].OrderLineItemID,
 			VariantID:       body.Lines[i].VariantID,
 			Quantity:        body.Lines[i].Quantity,
+			UnitPrice:       body.Lines[i].UnitPrice,
 		})
 	}
 
@@ -255,8 +291,25 @@ func toReplacementDTO(record service.ReplacementRecord) replacementDTO {
 			Quantity:        record.Items[i].Quantity,
 			ReservationID:   record.Items[i].ReservationID,
 			Parts:           toReplacementPartDTOs(record.Items[i].Parts),
+			Price:           toReplacementPriceDTO(record.Items[i].Price),
 			CreatedAt:       record.Items[i].CreatedAt,
 		})
+	}
+
+	return out
+}
+
+// toReplacementPriceDTO converts an item's price; an unpriced item has none.
+func toReplacementPriceDTO(price *models.ReplacementPrice) *replacementPriceDTO {
+	if price == nil {
+		return nil
+	}
+	out := &replacementPriceDTO{
+		UnitPrice: price.UnitPrice, Total: price.Total, TaxTotal: price.TaxTotal,
+		TaxRateBps: price.TaxRateBps, PricedBy: string(price.PricedBy),
+	}
+	for _, c := range price.TaxComponents {
+		out.TaxComponents = append(out.TaxComponents, replacementTaxDTO(c))
 	}
 
 	return out

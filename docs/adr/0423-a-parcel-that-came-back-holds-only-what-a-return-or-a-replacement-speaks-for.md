@@ -3,7 +3,7 @@
 **Summary:** A parcel that came back undelivered holds its units only as far as a live return or replacement speaks for them, the order owes the rest again, and marking it come back is announced so a write-off made before or after restocks them.
 It costs a refund claim, which names no line, whose goods are offered again, and buys a re-ship and a write-off that work.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0432](0432-an-exchange-names-its-return-and-prices-what-it-sends.md), whose exchange that names its return speaks for a line's units once, the more of what it takes back and what it sends
 - **Date:** 2026-10-07
 - **Amends:** [0409](0409-an-orders-parcel-holds-the-units-it-ships.md) and [0420](0420-every-parcel-waits-for-its-orders-lock.md), whose counts read a parcel that came back as holding its units
 

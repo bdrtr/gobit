@@ -78,7 +78,7 @@ const (
 	// CodeActUnknown reports an act the order does not have.
 	CodeActUnknown = "invoicing_act_unknown"
 	// CodeActNotDocumented reports an act no document carries: an exchange's
-	// funding or refund, whose figure names neither goods nor tax.
+	// funding or refund (D247, ADR 0432).
 	CodeActNotDocumented = "invoicing_act_not_documented"
 	// CodeActDoesNotFit reports an act's amount more than the sale's rows have
 	// left to carry it.

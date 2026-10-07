@@ -2102,3 +2102,60 @@ func TestTheOperatorReadsWhoPlacedTheOrder(t *testing.T) {
 	require.True(t, ok)
 	assert.NotContains(t, data, "placed_by", "a shopper's order names no operator")
 }
+
+// TestAnExchangeNamesItsReturnOnTheWire carries return_id into the service and
+// back on the record (ADR 0432).
+func TestAnExchangeNamesItsReturnOnTheWire(t *testing.T) {
+	svc := &fakeOrders{exchange: models.Exchange{
+		ID: "exch_1", OrderID: "order_1", Status: models.ExchangeRequested, DifferenceDue: -1120, ReturnID: "ret_7",
+	}}
+	r := newRouter(svc)
+
+	rec := doRequest(t, r, http.MethodPost, "/admin/v1/orders/order_1/exchanges",
+		`{"return_id":"ret_7","note":"a size up"}`)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	assert.Equal(t, "ret_7", svc.exchangeInput.ReturnID)
+	assert.Zero(t, svc.exchangeInput.DifferenceDue)
+	data, ok := decodeResponse(t, rec)["data"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "ret_7", data["return_id"])
+	assert.Equal(t, float64(-1120), data["difference_due"])
+}
+
+// TestAReplacementItemCarriesItsPriceOnTheWire carries an operator's unit price
+// in and an item's price out (ADR 0432).
+func TestAReplacementItemCarriesItsPriceOnTheWire(t *testing.T) {
+	record := sampleReplacement()
+	record.ExchangeID, record.ClaimID = "exch_1", ""
+	record.Items[0].VariantID, record.Items[0].OrderLineItemID = "variant_JACKET", ""
+	record.Items[0].Price = &models.ReplacementPrice{
+		UnitPrice: 850, Total: 1717, TaxTotal: 17, TaxRateBps: 100, PricedBy: models.PricedByOperator,
+		TaxComponents: []models.ReplacementItemTax{{RateID: "txr_1", RateBps: 100, TaxableAmount: 1700, TaxAmount: 17}},
+	}
+	svc := &fakeOrders{replacement: record}
+	r := newRouter(svc)
+
+	rec := doRequest(t, r, http.MethodPost, "/admin/v1/orders/order_1/exchanges/exch_1/replacements",
+		`{"shipping_option_id":"so_1","location_id":"sloc_1",`+
+			`"lines":[{"variant_id":"variant_JACKET","quantity":2,"unit_price":850}]}`)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.Len(t, svc.replacementInput.Lines, 1)
+	require.NotNil(t, svc.replacementInput.Lines[0].UnitPrice)
+	assert.Equal(t, int64(850), *svc.replacementInput.Lines[0].UnitPrice)
+	data, ok := decodeResponse(t, rec)["data"].(map[string]any)
+	require.True(t, ok)
+	items, ok := data["items"].([]any)
+	require.True(t, ok)
+	item, ok := items[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, map[string]any{
+		"unit_price": float64(850), "total": float64(1717), "tax_total": float64(17),
+		"tax_rate_bps": float64(100), "priced_by": "operator",
+		"tax_components": []any{map[string]any{
+			"rate_id": "txr_1", "rate_bps": float64(100), "compound": false,
+			"taxable_amount": float64(1700), "tax_amount": float64(17),
+		}},
+	}, item["price"])
+}

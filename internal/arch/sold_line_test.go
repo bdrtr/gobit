@@ -51,6 +51,13 @@ var (
 	// differenceAssigned is an assignment to an exchange's difference.
 	differenceAssigned = regexp.MustCompile(`(?:^|[ ,])difference_due ?=`)
 	differenceName     = regexp.MustCompile(`\bdifference_due\b`)
+	// differenceDerived is the whole tail of the one statement that may set
+	// it: a requested exchange that names its return, whose difference is
+	// derived from goods priced when they were written (ADR 0432). It is
+	// anchored at the statement's end, so a clause appended to the narrowing
+	// (an OR, a second condition) does not read as the narrowing.
+	differenceDerived = regexp.MustCompile(
+		`\bwhere id = \$1 and status = 'requested' and order_return_id is not null returning \*$`)
 	// rowAssigned is the column list of SET (a, b) = (...), which assigns
 	// every column it names.
 	rowAssigned = regexp.MustCompile(`\bset ?\(([^)]*)\) ?=`)
@@ -114,10 +121,13 @@ func orderStatements(t *testing.T) []string {
 
 // TestASoldLineIsNotRewrittenInSQL holds ADR 0394 in the order module's
 // queries: no statement rewrites a sold line, its taxes, its shipping method,
-// an order's amounts or an exchange's difference, and none removes an order.
-// It speaks for the queries alone; an exchange that sends the line's own
-// variant at a difference raises a sold line with none of these, and nothing
-// refuses it (ADR 0394).
+// an order's amounts or an exchange's typed difference, and none removes an
+// order. The one statement that sets a difference narrows to a requested
+// exchange that names its return, whose difference is derived from goods
+// priced when they were written, a line's at what the line charged
+// (ADR 0432). It speaks for the queries alone; an exchange written without a
+// return that sends the line's own variant at a typed difference raises a
+// sold line with none of these, and nothing refuses it (ADR 0394).
 //
 // It reads the query files as TEXT, as the stock ledger's gate does: the only
 // way to reach these tables from Go is a named query in that directory. Every
@@ -137,7 +147,7 @@ func TestASoldLineIsNotRewrittenInSQL(t *testing.T) {
 				"The queries moved or the table was renamed; the audit has to follow it.", floor)
 	}
 
-	var orderUpdates, exchangeUpdates int
+	var orderUpdates, exchangeUpdates, derivedUpdates int
 	for _, statement := range statements {
 		// Booleans rather than assert.NotRegexp, so a failure prints the
 		// statement and not the module's whole query directory.
@@ -164,10 +174,16 @@ func TestASoldLineIsNotRewrittenInSQL(t *testing.T) {
 		}
 		if updatesExchanges.MatchString(statement) {
 			exchangeUpdates++
-			assert.False(t, assigns(statement, differenceAssigned, differenceName),
-				"an UPDATE of order_exchanges sets difference_due: %q.\n"+
-					"The difference is fixed when the exchange is opened; rewritten afterwards "+
-					"it would charge for goods nobody named (ADR 0394).", statement)
+			if assigns(statement, differenceAssigned, differenceName) {
+				derivedUpdates++
+				assert.True(t, differenceDerived.MatchString(statement),
+					"an UPDATE of order_exchanges sets difference_due beyond a requested exchange "+
+						"that names its return: %q.\n"+
+						"A typed difference is fixed when the exchange is opened; rewritten "+
+						"afterwards it would charge for goods nobody named (ADR 0394). Only a "+
+						"difference derived from priced goods moves, and only while nothing "+
+						"was paid against it (ADR 0432).", statement)
+			}
 		}
 	}
 
@@ -176,4 +192,6 @@ func TestASoldLineIsNotRewrittenInSQL(t *testing.T) {
 	require.Positive(t, orderUpdates, "no statement read as an UPDATE of orders; the audit is BLIND to them")
 	require.Positive(t, exchangeUpdates,
 		"no statement read as an UPDATE of order_exchanges; the audit is BLIND to them")
+	require.Equal(t, 1, derivedUpdates,
+		"one statement writes a derived difference (ADR 0432); the audit read %d", derivedUpdates)
 }

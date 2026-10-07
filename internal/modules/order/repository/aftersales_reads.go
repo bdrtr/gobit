@@ -103,7 +103,10 @@ func (r *Repository) ReplacementItemsOf(
 
 	out := make(map[string][]models.ReplacementItem, len(replacementIDs))
 	for i := range rows {
-		item := toReplacementItem(rows[i])
+		item, err := toReplacementItem(rows[i])
+		if err != nil {
+			return nil, err
+		}
 		out[item.ReplacementID] = append(out[item.ReplacementID], item)
 	}
 

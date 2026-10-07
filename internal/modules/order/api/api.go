@@ -659,6 +659,11 @@ type exchangeDTO struct {
 	DifferenceDue int64          `json:"difference_due"`
 	Note          string         `json:"note,omitempty"`
 	Metadata      map[string]any `json:"metadata,omitempty"`
+	// ReturnID is the return whose goods the exchange takes back; absent on an
+	// exchange that names none. With it difference_due is derived: what the
+	// exchange's live replacements send, priced, less what the return takes
+	// back (ADR 0432).
+	ReturnID string `json:"return_id,omitempty"`
 	// PaymentCollectionID is the collection that answers the difference, and
 	// FundedAt is when it was named. Both are empty until the difference is
 	// funded, and the database holds them to each other in both directions.
@@ -936,6 +941,7 @@ func toExchangeDTO(exchange models.Exchange) exchangeDTO {
 		DifferenceDue:       exchange.DifferenceDue,
 		Note:                exchange.Note,
 		Metadata:            exchange.Metadata,
+		ReturnID:            exchange.ReturnID,
 		PaymentCollectionID: exchange.PaymentCollectionID,
 		FundedAt:            exchange.FundedAt,
 		CompletedAt:         exchange.CompletedAt,

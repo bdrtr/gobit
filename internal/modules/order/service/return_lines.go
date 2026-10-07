@@ -39,6 +39,11 @@ type ReturnDetail struct {
 	AwaitsGoods bool
 	// ReceivedLocationID is where the goods arrived; empty until they do.
 	ReceivedLocationID string
+	// SettledByExchange is the live exchange that takes the return's goods
+	// back, empty when none does (ADR 0432). Such a return refunds nothing of
+	// its own: the exchange's difference already counts what its units are
+	// worth, and a refund beside it would give that value back twice.
+	SettledByExchange string
 	// Lines are the lines coming back, with their variants.
 	Lines []ReturnLine
 }
@@ -77,6 +82,11 @@ func (s *Service) ReturnDetailJSON(ctx context.Context, returnID string) (json.R
 		return nil, err
 	}
 
+	exchangeID, err := s.store.LiveExchangeOfReturn(ctx, returnID)
+	if err != nil {
+		return nil, err
+	}
+
 	variantOf := make(map[string]string, len(lines))
 	componentsOf := make(map[string][]interopLineComponent, len(lines))
 	for i := range lines {
@@ -90,6 +100,7 @@ func (s *Service) ReturnDetailJSON(ctx context.Context, returnID string) (json.R
 		Status:             ret.Status.String(),
 		AwaitsGoods:        ret.Status.ReceiveAction() == models.AfterSalesProceed,
 		ReceivedLocationID: ret.ReceivedLocationID,
+		SettledByExchange:  exchangeID,
 		Lines:              make([]returnLineJSON, 0, len(items)),
 	}
 	for i := range items {
@@ -121,6 +132,7 @@ type returnDetailJSON struct {
 	Status             string           `json:"status"`
 	AwaitsGoods        bool             `json:"awaits_goods"`
 	ReceivedLocationID string           `json:"received_location_id"`
+	SettledByExchange  string           `json:"settled_by_exchange,omitempty"`
 	Lines              []returnLineJSON `json:"lines"`
 }
 

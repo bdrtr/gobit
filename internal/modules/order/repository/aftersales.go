@@ -84,11 +84,98 @@ func (r *Repository) CreateExchange(ctx context.Context, exchange models.Exchang
 		DifferenceDue: exchange.DifferenceDue,
 		Note:          nullString(exchange.Note),
 		Metadata:      meta,
+		OrderReturnID: nullString(exchange.ReturnID),
 	})
 	if err != nil {
 		return models.Exchange{}, classify(err, codeQueryFailed, "could not create the exchange record")
 	}
 	return toExchange(row)
+}
+
+// SetExchangeDifference writes the difference an exchange that names its
+// return derives (ADR 0432). It matches only a requested exchange that names a
+// return; any other is a conflict rather than a silent no-op, because the
+// caller read the row under its lock and expected to write it.
+func (r *Repository) SetExchangeDifference(
+	ctx context.Context, id string, difference int64,
+) (models.Exchange, error) {
+	row, err := r.queries(ctx).SetOrderExchangeDifference(ctx, orderdb.SetOrderExchangeDifferenceParams{
+		ID: id, DifferenceDue: difference,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.Exchange{}, coreerrors.Conflict(codeStateChanged,
+				"exchange %s is not a requested exchange that names its return", id)
+		}
+
+		return models.Exchange{}, classify(err, codeQueryFailed,
+			"could not write the difference of exchange %s", id)
+	}
+
+	return toExchange(row)
+}
+
+// LiveExchangeOfReturn names the live exchange that takes a return's goods
+// back; "" when none does (ADR 0432).
+func (r *Repository) LiveExchangeOfReturn(ctx context.Context, returnID string) (string, error) {
+	ids, err := r.queries(ctx).LiveExchangesOfReturn(ctx, &returnID)
+	if err != nil {
+		return "", classify(err, codeQueryFailed,
+			"could not read the exchange that names return %s", returnID)
+	}
+	if len(ids) == 0 {
+		return "", nil
+	}
+
+	return ids[0], nil
+}
+
+// ExchangeLineUnits answers how many units of each order line an exchange's
+// live replacements already send (ADR 0432); a line none of them names is
+// absent.
+func (r *Repository) ExchangeLineUnits(ctx context.Context, exchangeID string) (map[string]int64, error) {
+	rows, err := r.queries(ctx).SumLiveExchangeLineUnits(ctx, &exchangeID)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed,
+			"could not sum the line units exchange %s sends", exchangeID)
+	}
+	out := make(map[string]int64, len(rows))
+	for i := range rows {
+		out[stringValue(rows[i].OrderLineItemID)] = rows[i].Units
+	}
+
+	return out, nil
+}
+
+// ExchangeOverlapUnits answers, per line, how many units the live exchanges
+// that name their return both take back and send again (ADR 0432); a line no
+// such exchange names twice is absent.
+func (r *Repository) ExchangeOverlapUnits(ctx context.Context, lineItemIDs []string) (map[string]int64, error) {
+	out := make(map[string]int64, len(lineItemIDs))
+	if len(lineItemIDs) == 0 {
+		return out, nil
+	}
+	rows, err := r.queries(ctx).SumExchangeOverlapUnits(ctx, lineItemIDs)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "could not sum the units exchanges take back and send again")
+	}
+	for i := range rows {
+		out[rows[i].OrderLineItemID] = rows[i].Units
+	}
+
+	return out, nil
+}
+
+// ExchangeSent sums what an exchange's live replacements send, priced, and
+// counts their items that carry no price (ADR 0432).
+func (r *Repository) ExchangeSent(ctx context.Context, exchangeID string) (sent, unpriced int64, err error) {
+	row, err := r.queries(ctx).SumLiveExchangeReplacementTotals(ctx, &exchangeID)
+	if err != nil {
+		return 0, 0, classify(err, codeQueryFailed,
+			"could not sum what exchange %s sends", exchangeID)
+	}
+
+	return row.Sent, row.Unpriced, nil
 }
 
 // GetExchange returns the exchange record by its identifier; NotFound if there

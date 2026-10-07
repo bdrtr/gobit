@@ -27,6 +27,7 @@ const (
 	fieldCompletedAt         = "completed_at"
 	fieldDifferenceDue       = "difference_due"
 	fieldPaymentCollectionID = "payment_collection_id"
+	fieldReturnID            = "return_id"
 	fieldClaimID             = "claim_id"
 	fieldExchangeID          = "exchange_id"
 	fieldLocationID          = "location_id"
@@ -78,6 +79,9 @@ type orderAfterSale struct {
 	ReturnParcel  *returnParcelForm
 	// units are the order lines a return names and how many of each.
 	units []saleUnit
+	// takesBack is the return an exchange takes back; empty on any other
+	// record (ADR 0432).
+	takesBack string
 }
 
 // saleUnit is one line of a return: the order line and its units.
@@ -117,6 +121,28 @@ func replacementSources(sales []orderAfterSale) []afterSaleSource {
 		case sale.Kind == kindClaim && sale.Status == recordRequested && sale.ClaimType == "replace",
 			sale.Kind == kindExchange && (sale.Status == recordRequested || sale.Status == "funded"):
 			out = append(out, afterSaleSource{Value: sale.Kind + ":" + sale.ID, Label: sale.Kind + " " + sale.ID})
+		}
+	}
+
+	return out
+}
+
+// exchangeReturns are the returns an exchange can be opened to take back: a
+// requested return that names its lines and that no live exchange takes back
+// (ADR 0432). The module decides; this keeps the page from offering the
+// others.
+func exchangeReturns(sales []orderAfterSale) []afterSaleSource {
+	taken := map[string]bool{}
+	for i := range sales {
+		if sales[i].Kind == kindExchange && sales[i].Status != "canceled" && sales[i].takesBack != "" {
+			taken[sales[i].takesBack] = true
+		}
+	}
+	var out []afterSaleSource
+	for i := range sales {
+		sale := sales[i]
+		if sale.Kind == kindReturn && sale.Status == recordRequested && len(sale.units) > 0 && !taken[sale.ID] {
+			out = append(out, afterSaleSource{Value: sale.ID, Label: "return " + sale.ID})
 		}
 	}
 
@@ -184,13 +210,13 @@ func (u *UI) afterSalesOf(
 			entity: EntityOrderExchange,
 			fields: []string{
 				fieldID, fieldStatus, fieldCreatedAt, fieldCanceledAt,
-				fieldDifferenceDue, fieldPaymentCollectionID,
+				fieldDifferenceDue, fieldPaymentCollectionID, fieldReturnID,
 			},
 			view: func(rec query.Record) orderAfterSale {
 				sale := afterSaleOf(kindExchange, rec)
-				if collection := recordString(rec, fieldPaymentCollectionID); collection != "" {
-					sale.Detail = []string{"paid through " + collection}
-				}
+				sale.takesBack = recordString(rec, fieldReturnID)
+				sale.Detail = nonEmpty(prefixed("takes back return ", sale.takesBack),
+					prefixed("paid through ", recordString(rec, fieldPaymentCollectionID)))
 				sale.Money = differenceOf(rec, currency, scales)
 				sale.Since = moments(momentAt("canceled", recordAt(rec, fieldCanceledAt), ""))
 

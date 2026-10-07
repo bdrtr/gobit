@@ -179,6 +179,11 @@ const (
 	invoicingFlowName = "workflows.invoicing.interop"
 	// fulfillingFlowName is the fulfilling flow's name in the container.
 	fulfillingFlowName = "workflows.fulfilling.interop"
+	// cartFlowsName is the cart flows' name in the container, where an
+	// exchange that names its return has the variants it sends quoted
+	// (ADR 0432). It is internal/workflows/cart's InteropName, repeated for
+	// the same reason.
+	cartFlowsName = "workflows.cart.interop"
 )
 
 // SpendingPolicyName is the container name of the service that publishes the
@@ -318,6 +323,9 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		// The invoice module is another module too, resolved on first use for
 		// the same reason (ADR 0419).
 		Documents: &documentedTax{c: c, log: log},
+		// The cart flows are built after every module has registered, so the
+		// quote is resolved on first use, as the return flow is (ADR 0432).
+		Quotes: &exchangeQuote{c: c, log: log},
 		// The Query layer is a CORE service, so it can be resolved right here:
 		// the deferral the spending rule needs is about another MODULE not
 		// being registered yet, and that does not apply to core.
@@ -832,6 +840,43 @@ func (p *documentedTax) DocumentedTaxJSON(
 		return json.RawMessage(`[]`), nil
 	}
 	return p.svc.DocumentedTaxJSON(ctx, from, to, currencyCode)
+}
+
+// exchangeQuote is the wrapper that resolves the cart flows' quote ON FIRST
+// USE (ADR 0432).
+//
+// It fails CLOSED: without the flows an exchange that names its return sends
+// no variant, because a variant sent unpriced would leave its difference to a
+// human again.
+type exchangeQuote struct {
+	c    *container.Container
+	log  *slog.Logger
+	once sync.Once
+	svc  service.ExchangeQuote
+	err  error
+}
+
+var _ service.ExchangeQuote = (*exchangeQuote)(nil)
+
+// QuoteExchangeLinesJSON prices and taxes the variants an exchange sends.
+func (p *exchangeQuote) QuoteExchangeLinesJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error) {
+	p.once.Do(func() {
+		svc, err := container.Resolve[service.ExchangeQuote](p.c, cartFlowsName)
+		if err != nil {
+			p.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,
+				"the %s module could not resolve the exchange quote (%q); a variant an exchange "+
+					"sends cannot be priced", ModuleName, cartFlowsName)
+
+			return
+		}
+		p.svc = svc
+		p.log.InfoContext(ctx, "exchange quote bound", "flow", cartFlowsName)
+	})
+	if p.err != nil {
+		return nil, p.err
+	}
+
+	return p.svc.QuoteExchangeLinesJSON(ctx, request)
 }
 
 // invoicingFlow is the wrapper that resolves the invoicing flow ON FIRST USE.

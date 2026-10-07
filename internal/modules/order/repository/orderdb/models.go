@@ -119,6 +119,7 @@ type OrderExchange struct {
 	CompletedAt         pgtype.Timestamptz
 	PaymentCollectionID *string
 	FundedAt            pgtype.Timestamptz
+	OrderReturnID       *string
 }
 
 type OrderLineCancellation struct {
@@ -198,6 +199,12 @@ type OrderReplacementItem struct {
 	ReservationID      *string
 	VariantID          *string
 	Seq                *int64
+	UnitPrice          *int64
+	Total              *int64
+	TaxTotal           *int64
+	TaxRateBps         *int32
+	TaxComponents      []byte
+	PricedBy           *string
 }
 
 type OrderReplacementItemPart struct {

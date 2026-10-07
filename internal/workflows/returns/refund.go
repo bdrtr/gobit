@@ -69,6 +69,16 @@ func (w *Workflows) RefundReturn(
 			"return %s has not been received; money is not sent back for goods nobody has seen",
 			returnID)
 	}
+	// A return an exchange takes back is settled by the exchange: its
+	// difference counts what these units are worth, and a refund beside it
+	// would give that value back a second time (ADR 0432). The exchange is
+	// named only while the return is requested, before the receipt checked
+	// above, so a return received without one is never named afterwards.
+	if detail.SettledByExchange != "" {
+		return RefundResult{}, errors.Conflict(CodeReturnSettledByExchange,
+			"return %s is taken back by exchange %s, whose difference settles it; withdraw the "+
+				"exchange to refund the return", returnID, detail.SettledByExchange)
+	}
 
 	collectionID, err := w.collectionOf(ctx, detail.OrderID)
 	if err != nil {

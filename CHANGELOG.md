@@ -11,6 +11,71 @@ design. It is fixed with `1.0.0`.
 
 ### Breaking changes
 
+- **An exchange names its return and prices what it sends** (ADR 0432, D247).
+  **For API consumers:** `POST /admin/v1/orders/{id}/exchanges` takes
+  `return_id`, the return whose goods the exchange takes back, and the record
+  publishes it. With it, `difference_due` is derived and a typed one other
+  than zero answers 422 `order_exchange_difference_derived`: the exchange
+  opens at minus what the return's units were sold for, and each replacement
+  written or withdrawn while it is requested moves the figure by what it
+  sends. The return has to be the order's (422
+  `order_exchange_return_other_order`), still requested (409
+  `order_exchange_return_not_open`), name its lines (422
+  `order_exchange_return_empty`) and be taken back by no other live exchange
+  (409 `order_exchange_return_named`). Each item of such an exchange's
+  replacement carries `price` (`unit_price`, `total`, `tax_total`,
+  `tax_rate_bps`, `tax_components`, `priced_by`): a line at what the order
+  line charged for those units (`line`), a variant at what a cart of the
+  order's customer in its region and sales channel would charge with no
+  promotion (`quote`), or at the line's `unit_price` taxed the same way
+  (`operator`); a line's units are priced as the next units of it the
+  exchange sends, and while the exchange is requested a withdrawal, or its
+  reopening when a parcel is canceled, prices its line items again from each
+  line's first unit, so an even swap nets to nothing after any writes and
+  withdrawals. Once it is settled or withdrawn its figures stay as they
+  stood: a replacement withdrawn then leaves the buyer owed its share. A
+  piece of a line worth under one minor unit a unit whose tax would come out
+  above its total answers 409 `order_replacement_tax_above_total`. A `unit_price` on a line, or on a replacement of a claim or of an
+  exchange that names no return, answers 422
+  `order_replacement_price_refused`; a region whose currency or tax
+  convention is no longer the order's answers 409
+  `order_exchange_region_moved`, an installation without the cart flows 500
+  `order_exchange_quote_unavailable`, and a quote outside its contract 500
+  `order_exchange_quote_invalid`. A replacement of such an exchange while it
+  is funded answers 409 `order_exchange_difference_held` to a withdrawal,
+  before any unit is released: the exchange's refund sends the money back and
+  withdraws it, and the replacement is withdrawn after; one of a withdrawn or
+  settled exchange is withdrawn and leaves the difference as it stood. A
+  funding checked against a figure the exchange no longer owes answers 409
+  `order_exchange_difference_moved`, a refund of the return it takes back 409
+  `returns_workflow_return_settled_by_exchange`, and a withdrawal of that
+  return 409 `order_return_named_by_exchange`. A replacement written against
+  an exchange funded after it was read answers 409 `order_not_pending`. A
+  repeated replacement request writes a second replacement and raises the
+  difference by it. What a line's returns and replacements speak for, which
+  a parcel that came back holds its units to (ADR 0423), counts an exchange
+  that names its return once per line, the more of what it takes back and
+  what it sends. An exchange that names no return is unchanged. **For operators:** the order
+  page's exchange form offers the order's requested returns no live exchange
+  takes back, and its difference is typed only without one; an exchange names
+  the return it takes back. Rolling the order schema back past migration
+  000043 is refused while a live exchange names a return. **For plugin
+  authors:** `order.interop`'s `FundExchange` takes the difference the
+  collection was checked against, `(ctx, exchangeID, collectionID, owed)`, and
+  the return flow's `Orders` requires it; the return detail carries
+  `settled_by_exchange`, and the replacement detail MUST carry
+  `withdrawable`: the return flow refuses a withdrawal whose detail leaves it
+  out (500 `returns_workflow_replacement_unreadable`), before any unit goes
+  back.
+  `workflows.cart.interop` gains
+  `QuoteExchangeLinesJSON`, which the order module resolves on first use: an
+  installation registering its own cart flows without it refuses a variant
+  sent by an exchange that names its return. The order service's `Store`
+  gains `SetExchangeDifference`, `LiveExchangeOfReturn`, `ExchangeLineUnits`,
+  `LiveExchangeLineItems`, `RepriceReplacementItem` and `ExchangeSent`,
+  its `Options` gain `Quotes`, and the panel's after-sales surface's
+  `OpenExchange` takes the return.
+
 - **A parcel that came back holds only what a return or a replacement speaks
   for** (ADR 0423, D268). **For operators:** a parcel marked come back
   undelivered no longer keeps its units: unless the order's live returns ask

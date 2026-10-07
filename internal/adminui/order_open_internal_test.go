@@ -49,6 +49,13 @@ func TestEachOpeningReachesItsOwnMethod(t *testing.T) {
 			done: "The exchange exch_new was opened.",
 		},
 		{
+			// An exchange that takes a return back types no difference: it is
+			// derived from what it sends (ADR 0432).
+			kind: "exchange", form: url.Values{"return_id": {" ret_4 "}, "amount": {""}, "currency": {"TRY"}, "note": {"a size up"}},
+			acted: "open-exchange", id: "order_1", text: "ret_4", reason: "a size up",
+			done: "The exchange exch_new was opened.",
+		},
+		{
 			kind: "replacement", form: merged(lines, url.Values{
 				"source": {"exchange:exch_2"}, "shipping_option_id": {" so_std "}, "location_id": {"sloc_main"},
 			}),
@@ -229,4 +236,42 @@ func TestTheOrderPageOffersTheOpenings(t *testing.T) {
 	reader := getOrderPageAs(with, OrdersPath+"/order_1",
 		corehttp.Principal{ID: "user_1", Kind: "user", Scopes: []string{"order:read"}})
 	assert.NotContains(t, reader.Body.String(), "Open a record")
+}
+
+// TestTheExchangeFormOffersTheReturnsItCanTakeBack offers a requested return
+// that names its lines and that no live exchange takes back, and none other
+// (ADR 0432).
+func TestTheExchangeFormOffersTheReturnsItCanTakeBack(t *testing.T) {
+	t.Parallel()
+
+	operator := corehttp.Principal{ID: "user_1", Kind: "user", Scopes: []string{"order:read", "order:write"}}
+	lines := []map[string]any{{"line_item_id": "oli_ring", "quantity": int64(1), "refund_amount": int64(0)}}
+	panel := newCatalogPanel(t, afterSalesCatalog(map[string][]query.Record{
+		EntityOrderReturn: {
+			{"id": "ret_open", "status": "requested", "created_at": at(1), "items": lines},
+			{"id": "ret_taken", "status": "requested", "created_at": at(2), "items": lines},
+			{"id": "ret_freed", "status": "requested", "created_at": at(3), "items": lines},
+			{"id": "ret_here", "status": "received", "created_at": at(4), "items": lines},
+			{"id": "ret_blank", "status": "requested", "created_at": at(5)},
+		},
+		EntityOrderExchange: {
+			{"id": "exch_live", "status": "requested", "created_at": at(6), "return_id": "ret_taken"},
+			{"id": "exch_gone", "status": "canceled", "created_at": at(7), "return_id": "ret_freed"},
+		},
+	}))
+	panel.afterSales = &fakeAfterSales{}
+	body := getOrderPageAs(panel, OrdersPath+"/order_1", operator).Body.String()
+
+	assert.Contains(t, body, `<select name="return_id"`)
+	assert.Contains(t, body, `<option value="ret_open">`)
+	assert.Contains(t, body, `<option value="ret_freed">`, "a withdrawn exchange lets its return go")
+	assert.NotContains(t, body, `<option value="ret_taken">`, "a live exchange takes it back")
+	assert.NotContains(t, body, `<option value="ret_here">`, "a received return may have been refunded")
+	assert.NotContains(t, body, `<option value="ret_blank">`, "a return that names no line cannot be valued")
+	assert.Contains(t, body, "takes back return ret_taken", "the exchange says which return it takes back")
+
+	without := newCatalogPanel(t, afterSalesCatalog(nil))
+	without.afterSales = &fakeAfterSales{}
+	assert.NotContains(t, getOrderPageAs(without, OrdersPath+"/order_1", operator).Body.String(),
+		`name="return_id"`, "no return to offer, no choice to make")
 }

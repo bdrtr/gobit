@@ -30,9 +30,10 @@ type AfterSaleAct struct {
 	OccurredAt time.Time
 	// Amount is what the act moved, positive.
 	Amount int64
-	// Documentable is false for an exchange's funding and refund: the figure
-	// is typed by the operator and names neither goods nor tax, so no document
-	// can carry it.
+	// Documentable is false for an exchange's funding and refund, which no
+	// document carries: an exchange written without a return carries a figure
+	// the operator typed that names neither goods nor tax, and the documents
+	// of one that names its return are ADR 0432's second commit.
 	Documentable bool
 	// Returned are the units a return's refund paid for, by order line; empty
 	// for every other kind.

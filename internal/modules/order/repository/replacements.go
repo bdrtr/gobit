@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"github.com/jackc/pgx/v5"
@@ -188,20 +189,26 @@ func (r *Repository) ClearReplacementReservations(ctx context.Context, replaceme
 func (r *Repository) CreateReplacementItem(
 	ctx context.Context, in models.ReplacementItem,
 ) (models.ReplacementItem, error) {
-	row, err := r.queries(ctx).CreateOrderReplacementItem(ctx,
-		orderdb.CreateOrderReplacementItemParams{
-			ID:                 in.ID,
-			OrderReplacementID: in.ReplacementID,
-			OrderLineItemID:    nullString(in.OrderLineItemID),
-			VariantID:          nullString(in.VariantID),
-			Quantity:           in.Quantity,
-		})
+	params := orderdb.CreateOrderReplacementItemParams{
+		ID:                 in.ID,
+		OrderReplacementID: in.ReplacementID,
+		OrderLineItemID:    nullString(in.OrderLineItemID),
+		VariantID:          nullString(in.VariantID),
+		Quantity:           in.Quantity,
+	}
+	if err := setReplacementPrice(&params, in.Price); err != nil {
+		return models.ReplacementItem{}, err
+	}
+	row, err := r.queries(ctx).CreateOrderReplacementItem(ctx, params)
 	if err != nil {
 		return models.ReplacementItem{}, classify(err, codeQueryFailed,
 			"could not write the replacement line %s", in.Names())
 	}
 
-	out := toReplacementItem(row)
+	out, err := toReplacementItem(row)
+	if err != nil {
+		return models.ReplacementItem{}, err
+	}
 	if len(in.Parts) == 0 {
 		return out, nil
 	}
@@ -241,7 +248,7 @@ func (r *Repository) SetReplacementItemReservation(
 			"the reservation of replacement line %s could not be written", itemID)
 	}
 
-	return toReplacementItem(row), nil
+	return toReplacementItem(row)
 }
 
 // SetReplacementItemPartReservation writes the promise one part's units are
@@ -292,7 +299,10 @@ func (r *Repository) ListReplacementItems(
 
 	out := make([]models.ReplacementItem, 0, len(rows))
 	for i := range rows {
-		item := toReplacementItem(rows[i])
+		item, err := toReplacementItem(rows[i])
+		if err != nil {
+			return nil, err
+		}
 		item.Parts = parts[item.ID]
 		out = append(out, item)
 	}
@@ -360,7 +370,12 @@ func toReplacements(rows []orderdb.OrderReplacement) []models.Replacement {
 }
 
 // toReplacementItem converts a row into the domain model.
-func toReplacementItem(row orderdb.OrderReplacementItem) models.ReplacementItem {
+func toReplacementItem(row orderdb.OrderReplacementItem) (models.ReplacementItem, error) {
+	price, err := toReplacementPrice(row)
+	if err != nil {
+		return models.ReplacementItem{}, err
+	}
+
 	return models.ReplacementItem{
 		ID:              row.ID,
 		ReplacementID:   row.OrderReplacementID,
@@ -368,7 +383,147 @@ func toReplacementItem(row orderdb.OrderReplacementItem) models.ReplacementItem 
 		VariantID:       stringValue(row.VariantID),
 		Quantity:        row.Quantity,
 		ReservationID:   stringValue(row.ReservationID),
+		Price:           price,
 		CreatedAt:       toTime(row.CreatedAt),
 		UpdatedAt:       toTime(row.UpdatedAt),
+	}, nil
+}
+
+// replacementTaxJSON is one tax component of a replacement item as the
+// tax_components column stores it (ADR 0432).
+type replacementTaxJSON struct {
+	RateID        string `json:"rate_id,omitempty"`
+	RateBps       int32  `json:"rate_bps"`
+	Compound      bool   `json:"compound"`
+	TaxableAmount int64  `json:"taxable_amount"`
+	TaxAmount     int64  `json:"tax_amount"`
+}
+
+// setReplacementPrice fills the six price columns from a price, or leaves them
+// NULL together for an item that carries none.
+func setReplacementPrice(params *orderdb.CreateOrderReplacementItemParams, price *models.ReplacementPrice) error {
+	if price == nil {
+		return nil
 	}
+	pricedBy := string(price.PricedBy)
+	params.UnitPrice = &price.UnitPrice
+	params.Total = &price.Total
+	params.TaxTotal = &price.TaxTotal
+	params.TaxRateBps = &price.TaxRateBps
+	params.PricedBy = &pricedBy
+	encoded, err := encodeReplacementTaxes(price.TaxComponents)
+	if err != nil {
+		return err
+	}
+	params.TaxComponents = encoded
+
+	return nil
+}
+
+// encodeReplacementTaxes is the tax_components column of a price; nil, the
+// column's NULL, when one rate says it all.
+func encodeReplacementTaxes(taxes []models.ReplacementItemTax) ([]byte, error) {
+	if len(taxes) == 0 {
+		return nil, nil
+	}
+	components := make([]replacementTaxJSON, 0, len(taxes))
+	for _, c := range taxes {
+		components = append(components, replacementTaxJSON(c))
+	}
+	encoded, err := json.Marshal(components)
+	if err != nil {
+		return nil, coreerrors.Wrap(err, coreerrors.KindInternal, codeMetadataInvalid,
+			"the tax components of a replacement line could not be encoded")
+	}
+
+	return encoded, nil
+}
+
+// LiveExchangeLineItems returns the items naming an order line that an
+// exchange's live replacements send, in the order they were written, with
+// their figures (ADR 0432).
+func (r *Repository) LiveExchangeLineItems(ctx context.Context, exchangeID string) ([]models.ReplacementItem, error) {
+	rows, err := r.queries(ctx).ListLiveExchangeLineItems(ctx, &exchangeID)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed,
+			"could not list the line items exchange %s sends", exchangeID)
+	}
+	out := make([]models.ReplacementItem, 0, len(rows))
+	for i := range rows {
+		taxes, err := decodeReplacementTaxes(rows[i].TaxComponents, rows[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		price := &models.ReplacementPrice{TaxComponents: taxes, PricedBy: models.PricedByLine}
+		if rows[i].Total != nil && rows[i].TaxTotal != nil {
+			price.Total, price.TaxTotal = *rows[i].Total, *rows[i].TaxTotal
+		}
+		out = append(out, models.ReplacementItem{
+			ID: rows[i].ID, OrderLineItemID: stringValue(rows[i].OrderLineItemID), Quantity: rows[i].Quantity,
+			Price: price,
+		})
+	}
+
+	return out, nil
+}
+
+// RepriceReplacementItem writes a line item's total, tax and tax components
+// again (ADR 0432); an item no line priced is a conflict.
+func (r *Repository) RepriceReplacementItem(ctx context.Context, itemID string, price models.ReplacementPrice) error {
+	encoded, err := encodeReplacementTaxes(price.TaxComponents)
+	if err != nil {
+		return err
+	}
+	n, err := r.queries(ctx).RepriceOrderReplacementItem(ctx, orderdb.RepriceOrderReplacementItemParams{
+		ID: itemID, Total: price.Total, TaxTotal: price.TaxTotal, TaxComponents: encoded,
+	})
+	if err != nil {
+		return classify(err, codeQueryFailed, "could not price replacement line %s again", itemID)
+	}
+	if n == 0 {
+		return coreerrors.Conflict(codeStateChanged, "replacement line %s is not priced by its line", itemID)
+	}
+
+	return nil
+}
+
+// toReplacementPrice reads the six price columns; nil when the item carries no
+// price, which the CHECK order_replacement_items_priced_together makes all six
+// or none.
+func toReplacementPrice(row orderdb.OrderReplacementItem) (*models.ReplacementPrice, error) {
+	if row.UnitPrice == nil || row.Total == nil || row.TaxTotal == nil || row.TaxRateBps == nil || row.PricedBy == nil {
+		return nil, nil
+	}
+	price := &models.ReplacementPrice{
+		UnitPrice:  *row.UnitPrice,
+		Total:      *row.Total,
+		TaxTotal:   *row.TaxTotal,
+		TaxRateBps: *row.TaxRateBps,
+		PricedBy:   models.ReplacementPricedBy(*row.PricedBy),
+	}
+	taxes, err := decodeReplacementTaxes(row.TaxComponents, row.ID)
+	if err != nil {
+		return nil, err
+	}
+	price.TaxComponents = taxes
+
+	return price, nil
+}
+
+// decodeReplacementTaxes reads the tax_components column; nil for a NULL one.
+func decodeReplacementTaxes(raw []byte, itemID string) ([]models.ReplacementItemTax, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var components []replacementTaxJSON
+	if err := json.Unmarshal(raw, &components); err != nil {
+		return nil, coreerrors.Wrap(err, coreerrors.KindInternal, codeMetadataInvalid,
+			"the tax components of replacement line %s could not be read", itemID)
+	}
+	var out []models.ReplacementItemTax
+	for _, c := range components {
+		out = append(out, models.ReplacementItemTax(c))
+	}
+
+	return out, nil
 }

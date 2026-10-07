@@ -26,9 +26,10 @@ func (q *Queries) ClearOrderReplacementItemReservations(ctx context.Context, ord
 const createOrderReplacementItem = `-- name: CreateOrderReplacementItem :one
 
 INSERT INTO order_replacement_items
-    (id, order_replacement_id, order_line_item_id, variant_id, quantity)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at, reservation_id, variant_id, seq
+    (id, order_replacement_id, order_line_item_id, variant_id, quantity,
+     unit_price, total, tax_total, tax_rate_bps, tax_components, priced_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+RETURNING id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at, reservation_id, variant_id, seq, unit_price, total, tax_total, tax_rate_bps, tax_components, priced_by
 `
 
 type CreateOrderReplacementItemParams struct {
@@ -37,11 +38,19 @@ type CreateOrderReplacementItemParams struct {
 	OrderLineItemID    *string
 	VariantID          *string
 	Quantity           int64
+	UnitPrice          *int64
+	Total              *int64
+	TaxTotal           *int64
+	TaxRateBps         *int32
+	TaxComponents      []byte
+	PricedBy           *string
 }
 
 // order_replacement_items queries: which lines are being replaced.
 // Exactly ONE of order_line_item_id and variant_id is set; the CHECK in
 // migration 000019 holds it, and the service decides which shape a request has.
+// An item of an exchange that names its return carries its price (ADR 0432);
+// every other item leaves the six price columns NULL together.
 func (q *Queries) CreateOrderReplacementItem(ctx context.Context, arg CreateOrderReplacementItemParams) (OrderReplacementItem, error) {
 	row := q.db.QueryRow(ctx, createOrderReplacementItem,
 		arg.ID,
@@ -49,6 +58,12 @@ func (q *Queries) CreateOrderReplacementItem(ctx context.Context, arg CreateOrde
 		arg.OrderLineItemID,
 		arg.VariantID,
 		arg.Quantity,
+		arg.UnitPrice,
+		arg.Total,
+		arg.TaxTotal,
+		arg.TaxRateBps,
+		arg.TaxComponents,
+		arg.PricedBy,
 	)
 	var i OrderReplacementItem
 	err := row.Scan(
@@ -61,12 +76,69 @@ func (q *Queries) CreateOrderReplacementItem(ctx context.Context, arg CreateOrde
 		&i.ReservationID,
 		&i.VariantID,
 		&i.Seq,
+		&i.UnitPrice,
+		&i.Total,
+		&i.TaxTotal,
+		&i.TaxRateBps,
+		&i.TaxComponents,
+		&i.PricedBy,
 	)
 	return i, err
 }
 
+const listLiveExchangeLineItems = `-- name: ListLiveExchangeLineItems :many
+SELECT i.id, i.order_line_item_id, i.quantity, i.total, i.tax_total, i.tax_components
+FROM order_replacement_items i
+JOIN order_replacements r ON r.id = i.order_replacement_id
+WHERE r.order_exchange_id = $1 AND r.status <> 'canceled'
+  AND i.order_line_item_id IS NOT NULL AND i.priced_by = 'line'
+ORDER BY i.seq
+`
+
+type ListLiveExchangeLineItemsRow struct {
+	ID              string
+	OrderLineItemID *string
+	Quantity        int64
+	Total           *int64
+	TaxTotal        *int64
+	TaxComponents   []byte
+}
+
+// ListLiveExchangeLineItems returns the items naming an order line that an
+// exchange's live replacements send, in the order they were written: each
+// item of a line is priced as the units after the ones before it (ADR 0432),
+// and a withdrawal prices the rest again from the first unit. The caller holds
+// the exchange's lock, which every writer of its replacements takes, so seq is
+// the order of the writes.
+func (q *Queries) ListLiveExchangeLineItems(ctx context.Context, orderExchangeID *string) ([]ListLiveExchangeLineItemsRow, error) {
+	rows, err := q.db.Query(ctx, listLiveExchangeLineItems, orderExchangeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListLiveExchangeLineItemsRow{}
+	for rows.Next() {
+		var i ListLiveExchangeLineItemsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrderLineItemID,
+			&i.Quantity,
+			&i.Total,
+			&i.TaxTotal,
+			&i.TaxComponents,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOrderReplacementItems = `-- name: ListOrderReplacementItems :many
-SELECT id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at, reservation_id, variant_id, seq FROM order_replacement_items
+SELECT id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at, reservation_id, variant_id, seq, unit_price, total, tax_total, tax_rate_bps, tax_components, priced_by FROM order_replacement_items
 WHERE order_replacement_id = $1
 ORDER BY created_at, seq
 `
@@ -93,6 +165,12 @@ func (q *Queries) ListOrderReplacementItems(ctx context.Context, orderReplacemen
 			&i.ReservationID,
 			&i.VariantID,
 			&i.Seq,
+			&i.UnitPrice,
+			&i.Total,
+			&i.TaxTotal,
+			&i.TaxRateBps,
+			&i.TaxComponents,
+			&i.PricedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -105,7 +183,7 @@ func (q *Queries) ListOrderReplacementItems(ctx context.Context, orderReplacemen
 }
 
 const listOrderReplacementItemsOfReplacements = `-- name: ListOrderReplacementItemsOfReplacements :many
-SELECT id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at, reservation_id, variant_id, seq FROM order_replacement_items
+SELECT id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at, reservation_id, variant_id, seq, unit_price, total, tax_total, tax_rate_bps, tax_components, priced_by FROM order_replacement_items
 WHERE order_replacement_id = ANY ($1::text[])
 ORDER BY order_replacement_id, created_at, seq
 `
@@ -132,6 +210,12 @@ func (q *Queries) ListOrderReplacementItemsOfReplacements(ctx context.Context, r
 			&i.ReservationID,
 			&i.VariantID,
 			&i.Seq,
+			&i.UnitPrice,
+			&i.Total,
+			&i.TaxTotal,
+			&i.TaxRateBps,
+			&i.TaxComponents,
+			&i.PricedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -143,12 +227,44 @@ func (q *Queries) ListOrderReplacementItemsOfReplacements(ctx context.Context, r
 	return items, nil
 }
 
+const repriceOrderReplacementItem = `-- name: RepriceOrderReplacementItem :execrows
+UPDATE order_replacement_items
+SET total = $1::bigint,
+    tax_total = $2::bigint,
+    tax_components = $3::jsonb,
+    updated_at = now()
+WHERE id = $4::text AND priced_by = 'line'
+`
+
+type RepriceOrderReplacementItemParams struct {
+	Total         int64
+	TaxTotal      int64
+	TaxComponents []byte
+	ID            string
+}
+
+// RepriceOrderReplacementItem writes a line item's figures again when a
+// withdrawal before it moved the units it sends (ADR 0432); only an item a
+// line priced is written, and its unit price and source stay.
+func (q *Queries) RepriceOrderReplacementItem(ctx context.Context, arg RepriceOrderReplacementItemParams) (int64, error) {
+	result, err := q.db.Exec(ctx, repriceOrderReplacementItem,
+		arg.Total,
+		arg.TaxTotal,
+		arg.TaxComponents,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setOrderReplacementItemReservation = `-- name: SetOrderReplacementItemReservation :one
 UPDATE order_replacement_items
 SET reservation_id = $1::text,
     updated_at = now()
 WHERE id = $2::text
-RETURNING id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at, reservation_id, variant_id, seq
+RETURNING id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at, reservation_id, variant_id, seq, unit_price, total, tax_total, tax_rate_bps, tax_components, priced_by
 `
 
 type SetOrderReplacementItemReservationParams struct {
@@ -174,6 +290,12 @@ func (q *Queries) SetOrderReplacementItemReservation(ctx context.Context, arg Se
 		&i.ReservationID,
 		&i.VariantID,
 		&i.Seq,
+		&i.UnitPrice,
+		&i.Total,
+		&i.TaxTotal,
+		&i.TaxRateBps,
+		&i.TaxComponents,
+		&i.PricedBy,
 	)
 	return i, err
 }
@@ -215,8 +337,9 @@ type SumReplacedQuantitiesRow struct {
 // than a filter: counting such a row would attribute it to a line chosen by
 // nothing.
 //
-// What bounds a variant-shaped row instead is written where the decision is: the
-// exchange's money guard, which refuses a dispatch until the difference is funded.
+// What stands in for a ceiling on a variant-shaped row is the exchange's
+// difference, and it bounds less than this sum does: a dispatch is refused only
+// when a collection the exchange was funded with no longer holds it (ADR 0124).
 func (q *Queries) SumReplacedQuantities(ctx context.Context, lineItemIds []string) ([]SumReplacedQuantitiesRow, error) {
 	rows, err := q.db.Query(ctx, sumReplacedQuantities, lineItemIds)
 	if err != nil {

@@ -66,8 +66,9 @@ type AfterSalesAdmin interface {
 	// OpenClaim opens a claim settled by "refund" or "replace".
 	OpenClaim(ctx context.Context, orderID, claimType string, refundAmount int64, reason string) (string, error)
 	// OpenExchange opens an exchange; a negative difference is paid to the
-	// customer.
-	OpenExchange(ctx context.Context, orderID string, differenceDue int64, note string) (string, error)
+	// customer. With a return it takes that return's goods back and derives
+	// its difference, which is then left zero (ADR 0432).
+	OpenExchange(ctx context.Context, orderID, returnID string, differenceDue int64, note string) (string, error)
 	// OpenReplacement records what a claim or an exchange will send: more of
 	// the order's lines, a quantity for each, and variants the order never
 	// sold, a quantity for each (ADR 0145, ADR 0279).
@@ -371,7 +372,8 @@ var afterSaleOpeners = map[string]afterSaleOpener{
 		if err != nil {
 			return "", err
 		}
-		return u.afterSales.OpenExchange(ctx, orderID, amount, strings.TrimSpace(r.PostFormValue("note")))
+		return u.afterSales.OpenExchange(ctx, orderID, strings.TrimSpace(r.PostFormValue("return_id")),
+			amount, strings.TrimSpace(r.PostFormValue("note")))
 	},
 	kindReplacement: func(ctx context.Context, u *UI, r *http.Request, _ string) (string, error) {
 		lineIDs, quantities, _, err := formOrderLines(r)
