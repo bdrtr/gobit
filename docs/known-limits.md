@@ -1069,7 +1069,11 @@ past and is not corrected retroactively.
   was written off before it waits for the order's lock, and a write-off
   committing during that wait, which can last another open's carrier call, is
   seen by neither: the units can end on the shelf and in the box, or the box
-  can ship units that were written off ([gaps D265](gaps.md)). A parcel that
+  can ship units that were written off. A return received or canceled between
+  a return parcel's read of whether it awaits goods and its write can still
+  get a parcel. Both windows are kept
+  ([ADR 0430](adr/0430-a-write-off-that-races-an-open-is-the-operators-to-see.md),
+  [gaps D265](gaps.md)), and canceling the parcel is the correction. A parcel that
   came back undelivered holds its units only as far as a return or a
   replacement speaks for them
   ([ADR 0423](adr/0423-a-parcel-that-came-back-holds-only-what-a-return-or-a-replacement-speaks-for.md)):

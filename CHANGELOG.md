@@ -1801,6 +1801,15 @@ design. It is fixed with `1.0.0`.
 
 ### Decisions
 
+- **A write-off that races an open is the operator's to see** (ADR 0430,
+  D265). **For operators:** an open still reads what was written off before it
+  waits for its order's lock, and a return parcel still reads its return's
+  state before its write; a write-off or a return's receipt landing in between
+  can leave a unit both on the shelf and in the box, a written-off unit in it,
+  or a parcel for goods already back. Canceling the parcel is the correction.
+  It reopens when a cross-module read under a held lock has a measured bound
+  on the pool, or an incident shows the windows met.
+
 - **The panel is rendered by the server** (ADR 0431, D34). **For operators
   and contributors:** the panel's screens are rendered by the server and
   write through each module's admin surface, and a new screen is built that

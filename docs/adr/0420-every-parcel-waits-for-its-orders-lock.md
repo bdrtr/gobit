@@ -3,7 +3,7 @@
 **Summary:** A parcel bringing a return back takes its order's dispatch lock and is held to what its return names less what its live parcels hold, counted under it.
 The cancellation flows count an order's outgoing parcels by reference under the same lock, without waiting for it; it costs the bus consumer a bounded wait.
 
-- **Status:** Accepted; amended by [0423](0423-a-parcel-that-came-back-holds-only-what-a-return-or-a-replacement-speaks-for.md), whose count holds a parcel that came back only as far as a return or a replacement speaks for it and whose cancellation flow recounts a parcel that comes back
+- **Status:** Accepted; amended by [0423](0423-a-parcel-that-came-back-holds-only-what-a-return-or-a-replacement-speaks-for.md), whose count holds a parcel that came back only as far as a return or a replacement speaks for it and whose cancellation flow recounts a parcel that comes back, and [0430](0430-a-write-off-that-races-an-open-is-the-operators-to-see.md), which keeps the two windows it left open
 - **Date:** 2026-10-06
 - **Amends:** [0409](0409-an-orders-parcel-holds-the-units-it-ships.md), whose lock only outgoing parcels took, [0384](0384-a-return-parcel-brings-back-the-return-it-names.md), whose return's parcels were counted before the transaction, and [0240](0240-a-failing-handler-is-called-again.md) and [0273](0273-the-bus-keeps-the-message-it-gives-up-on.md), whose Redis bus counted a handler failing during its shutdown as processed
 
