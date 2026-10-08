@@ -244,6 +244,7 @@ func (r *Repository) CreateFulfillmentItem(
 		FulfillmentID: item.FulfillmentID,
 		LineItemID:    item.LineItemID,
 		Quantity:      item.Quantity,
+		Reference:     item.Reference,
 	})
 	if err != nil {
 		return models.FulfillmentItem{}, classify(err, codeQueryFailed, "could not add fulfillment item")

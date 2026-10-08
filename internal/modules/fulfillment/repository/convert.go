@@ -83,6 +83,7 @@ var checkConstraintMessages = map[string]string{
 	"fulfillments_provider_check":                  "the provider of a fulfillment cannot be empty",
 	"fulfillments_key_check":                       "the idempotency key cannot be empty",
 	"fulfillment_items_line_check":                 "the order line of a fulfillment item cannot be empty",
+	"fulfillment_items_reference_check":            "the order a fulfillment item belongs to cannot be empty",
 	"fulfillment_manual_shipments_key_check":       "the idempotency key cannot be empty",
 	"fulfillment_manual_shipments_reference_check": "the reference of a shipment cannot be empty",
 }
@@ -471,6 +472,7 @@ func toItem(row fulfillmentdb.FulfillmentItem) models.FulfillmentItem {
 		FulfillmentID: row.FulfillmentID,
 		LineItemID:    row.LineItemID,
 		Quantity:      row.Quantity,
+		Reference:     row.Reference,
 		CreatedAt:     toTime(row.CreatedAt),
 		UpdatedAt:     toTime(row.UpdatedAt),
 	}

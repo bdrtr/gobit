@@ -5,7 +5,7 @@ goes to the same address or records none, and the parcel is then bound to both
 orders. It costs the link's one-order-per-parcel index and one-way release
 compatibility, and an addition no longer needs a parcel and a label of its own.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0428](0428-an-additions-units-travel-as-its-parcels-items.md), whose addition puts the units it owes into the parcel as items it owns
 - **Date:** 2026-09-26
 
 Measurement: [measurements/0197](../measurements/0197-one-box-two-orders.md)

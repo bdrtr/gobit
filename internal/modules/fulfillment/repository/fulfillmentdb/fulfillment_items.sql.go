@@ -62,9 +62,9 @@ func (q *Queries) CommittedQuantitiesForFulfillments(ctx context.Context, fulfil
 
 const createFulfillmentItem = `-- name: CreateFulfillmentItem :one
 
-INSERT INTO fulfillment_items (id, fulfillment_id, line_item_id, quantity)
-VALUES ($1, $2, $3, $4)
-RETURNING id, fulfillment_id, line_item_id, quantity, created_at, updated_at, seq
+INSERT INTO fulfillment_items (id, fulfillment_id, line_item_id, quantity, reference)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, fulfillment_id, line_item_id, quantity, created_at, updated_at, seq, reference
 `
 
 type CreateFulfillmentItemParams struct {
@@ -72,18 +72,22 @@ type CreateFulfillmentItemParams struct {
 	FulfillmentID string
 	LineItemID    string
 	Quantity      int64
+	Reference     string
 }
 
 // fulfillment_items queries.
 //
-// An item carries the id of an order line item; that id belongs to ANOTHER
-// module and is not validated here (Principle 2.2).
+// An item carries the id of an order line item and the order it belongs to;
+// both belong to ANOTHER module and are not validated here (Principle 2.2).
+// CreateFulfillmentItem writes an item with the order its units belong to: the
+// parcel's own reference on an open, an addition's on a join (ADR 0428).
 func (q *Queries) CreateFulfillmentItem(ctx context.Context, arg CreateFulfillmentItemParams) (FulfillmentItem, error) {
 	row := q.db.QueryRow(ctx, createFulfillmentItem,
 		arg.ID,
 		arg.FulfillmentID,
 		arg.LineItemID,
 		arg.Quantity,
+		arg.Reference,
 	)
 	var i FulfillmentItem
 	err := row.Scan(
@@ -94,6 +98,7 @@ func (q *Queries) CreateFulfillmentItem(ctx context.Context, arg CreateFulfillme
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Seq,
+		&i.Reference,
 	)
 	return i, err
 }
@@ -105,7 +110,7 @@ SELECT i.line_item_id,
        COALESCE(SUM(i.quantity) FILTER (WHERE f.status = 'returned' AND NOT f.held_whole), 0)::bigint AS back
 FROM fulfillment_items i
 JOIN fulfillments f ON f.id = i.fulfillment_id
-WHERE f.reference = $1
+WHERE i.reference = $1
   AND f.status IN ('pending', 'shipped', 'delivered', 'returned')
   AND f.return_id IS NULL
 GROUP BY i.line_item_id
@@ -118,9 +123,11 @@ type HeldQuantitiesForReferenceRow struct {
 	Back       int64
 }
 
-// HeldQuantitiesForReference sums, per order line, the units of the outgoing
-// parcels opened for one reference, by the reference this module stores rather
-// than by the order's link (ADR 0409, gap D265), in two figures (ADR 0423):
+// HeldQuantitiesForReference sums, per order line, the units the outgoing
+// parcels hold for one reference, by the reference this module stores on each
+// item rather than by the order's link (ADR 0409, gap D265): an order's own
+// parcels' items and those an addition put into its parent's parcel when it
+// joined it (ADR 0428), in two figures (ADR 0423):
 //
 //   - live: the pending, shipped and delivered parcels', which hold their units,
 //     and those of a parcel that came back before ADR 0423 (held_whole,
@@ -153,7 +160,7 @@ func (q *Queries) HeldQuantitiesForReference(ctx context.Context, reference stri
 }
 
 const listFulfillmentItems = `-- name: ListFulfillmentItems :many
-SELECT id, fulfillment_id, line_item_id, quantity, created_at, updated_at, seq FROM fulfillment_items
+SELECT id, fulfillment_id, line_item_id, quantity, created_at, updated_at, seq, reference FROM fulfillment_items
 WHERE fulfillment_id = $1
 ORDER BY created_at, seq
 `
@@ -178,6 +185,7 @@ func (q *Queries) ListFulfillmentItems(ctx context.Context, fulfillmentID string
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Seq,
+			&i.Reference,
 		); err != nil {
 			return nil, err
 		}
@@ -190,7 +198,7 @@ func (q *Queries) ListFulfillmentItems(ctx context.Context, fulfillmentID string
 }
 
 const listFulfillmentItemsByFulfillments = `-- name: ListFulfillmentItemsByFulfillments :many
-SELECT id, fulfillment_id, line_item_id, quantity, created_at, updated_at, seq FROM fulfillment_items
+SELECT id, fulfillment_id, line_item_id, quantity, created_at, updated_at, seq, reference FROM fulfillment_items
 WHERE fulfillment_id = ANY ($1::text[])
 ORDER BY fulfillment_id, created_at, seq
 `
@@ -216,6 +224,7 @@ func (q *Queries) ListFulfillmentItemsByFulfillments(ctx context.Context, fulfil
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Seq,
+			&i.Reference,
 		); err != nil {
 			return nil, err
 		}

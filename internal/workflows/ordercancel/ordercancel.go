@@ -139,8 +139,9 @@ type Inventory interface {
 // Fulfillment is the slice of the fulfillment module this flow calls.
 type Fulfillment interface {
 	// HeldForReferenceLocked sums, per order line, the units the order's
-	// outgoing parcels hold, counted by the reference the module stores and
-	// under the order's dispatch lock (ADR 0420). spoken is, per line, how many
+	// outgoing parcels hold, counted by the reference the module stores on
+	// each item, an addition's units in its parent's parcel among them (ADR
+	// 0428), and under the order's dispatch lock (ADR 0420). spoken is, per line, how many
 	// units a return or a replacement speaks for, which a parcel that came back
 	// undelivered holds its units to (ADR 0423).
 	HeldForReferenceLocked(ctx context.Context, reference string, spoken map[string]int64) (map[string]int64, error)
@@ -470,9 +471,10 @@ func targetOnShelf(bought, canceledTotal, committed int64) int64 {
 
 // committedQuantity answers how many units of the line a live parcel holds.
 //
-// The fulfillment module counts them by the reference it stores, under the
-// order's dispatch lock (ADR 0420): the population it holds a new parcel to
-// (ADR 0409), so a parcel whose link to the order was not written counts, and a
+// The fulfillment module counts them by the reference each item stores, under
+// the order's dispatch lock (ADR 0420): the population it holds a new parcel
+// to (ADR 0409), so a parcel whose link to the order was not written counts, so
+// do the units an addition put into its parent's parcel (ADR 0428), and a
 // parcel being opened while the units are written off is counted once it
 // commits rather than missed and its units put back on the shelf.
 //

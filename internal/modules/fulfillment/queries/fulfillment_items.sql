@@ -1,11 +1,13 @@
 -- fulfillment_items queries.
 --
--- An item carries the id of an order line item; that id belongs to ANOTHER
--- module and is not validated here (Principle 2.2).
+-- An item carries the id of an order line item and the order it belongs to;
+-- both belong to ANOTHER module and are not validated here (Principle 2.2).
 
+-- CreateFulfillmentItem writes an item with the order its units belong to: the
+-- parcel's own reference on an open, an addition's on a join (ADR 0428).
 -- name: CreateFulfillmentItem :one
-INSERT INTO fulfillment_items (id, fulfillment_id, line_item_id, quantity)
-VALUES ($1, $2, $3, $4)
+INSERT INTO fulfillment_items (id, fulfillment_id, line_item_id, quantity, reference)
+VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- ListFulfillmentItems returns a parcel's items in the order they were written:
@@ -50,9 +52,11 @@ WHERE i.fulfillment_id = ANY (sqlc.arg('fulfillment_ids')::text[])
 GROUP BY i.line_item_id
 ORDER BY i.line_item_id;
 
--- HeldQuantitiesForReference sums, per order line, the units of the outgoing
--- parcels opened for one reference, by the reference this module stores rather
--- than by the order's link (ADR 0409, gap D265), in two figures (ADR 0423):
+-- HeldQuantitiesForReference sums, per order line, the units the outgoing
+-- parcels hold for one reference, by the reference this module stores on each
+-- item rather than by the order's link (ADR 0409, gap D265): an order's own
+-- parcels' items and those an addition put into its parent's parcel when it
+-- joined it (ADR 0428), in two figures (ADR 0423):
 --
 --   - live: the pending, shipped and delivered parcels', which hold their units,
 --     and those of a parcel that came back before ADR 0423 (held_whole,
@@ -71,7 +75,7 @@ SELECT i.line_item_id,
        COALESCE(SUM(i.quantity) FILTER (WHERE f.status = 'returned' AND NOT f.held_whole), 0)::bigint AS back
 FROM fulfillment_items i
 JOIN fulfillments f ON f.id = i.fulfillment_id
-WHERE f.reference = sqlc.arg('reference')
+WHERE i.reference = sqlc.arg('reference')
   AND f.status IN ('pending', 'shipped', 'delivered', 'returned')
   AND f.return_id IS NULL
 GROUP BY i.line_item_id

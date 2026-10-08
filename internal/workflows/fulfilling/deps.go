@@ -161,9 +161,23 @@ type Fulfillments interface {
 	) (string, error)
 	// FulfillmentStatus returns the shipment's status.
 	FulfillmentStatus(ctx context.Context, fulfillmentID string) (string, error)
+	// JoinParcel puts units order additionReference still owes into pending
+	// parcel fulfillmentID of order parentReference, as items the addition
+	// owns, under the addition's dispatch lock (ADR 0428). items is
+	// [{"line_item_id","quantity"}], each held to what its line still owes;
+	// nil asks for every unit owed, which itemsOwed allows and the module
+	// refuses with fulfillment_items_required otherwise. A parcel already
+	// holding the addition's items is answered as joined in any state, and
+	// nothing is written.
+	JoinParcel(
+		ctx context.Context, fulfillmentID, parentReference, additionReference string,
+		items json.RawMessage, itemsOwed bool,
+	) error
 	// CommittedQuantitiesForReference sums, per order line, the units the
-	// outgoing parcels opened for the order hold, counted by the reference the
-	// module stores: the count it holds a new parcel to (ADR 0409). spoken is,
+	// outgoing parcels hold for the order, counted by the reference the module
+	// stores on each item, so an addition's units in its parent's parcel count
+	// for the addition: the count it holds a new parcel to (ADR 0409, ADR
+	// 0428). spoken is,
 	// per line, how many units a return or a replacement speaks for, which a
 	// parcel that came back undelivered holds its units to (ADR 0423).
 	CommittedQuantitiesForReference(

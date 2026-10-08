@@ -38,6 +38,7 @@ type FulfillmentItem struct {
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
 	Seq           *int64
+	Reference     string
 }
 
 type FulfillmentManualShipment struct {

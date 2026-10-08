@@ -444,9 +444,18 @@ func describeFulfilling(d *openapi.Doc) {
 			"has to be one of that order's and still pending. The addition joins it beside " +
 			"the order it was opened for: nothing is sent to the carrier, because the " +
 			"parcel's destination is the parent's address and the addition's has to be " +
-			"the same, or absent. The parcel's items stay the parent's lines. The call " +
-			"takes no body and can be repeated, and the answer is the order's shipments " +
-			"(ADR 0197).",
+			"the same, or absent. The parcel takes the addition's \"items\" named, each " +
+			"within what its line still owes, as items the addition owns, or, when none are " +
+			"named on an addition sold exactly one delivery, every unit it still owes; an " +
+			"addition sold none or several has to name them, as an open does, and a unit " +
+			"not named stays owed (ADR 0428). The order's open and its write-offs count " +
+			"those units as in the box. The body may be left out. The call can be " +
+			"repeated: once the addition's items are in the parcel a repeat naming no items, " +
+			"or exactly those, adds no unit and binds the addition again whatever the " +
+			"parcel's state, so a binding that failed is written by asking again while both " +
+			"orders are pending; a joined parcel takes no more units, and a repeat naming " +
+			"others is refused. The answer is the order's shipments (ADR 0197).",
+		RequestBody: optionalRequestBody(d, joinParcelRequest{}),
 		Responses: map[string]any{
 			"200": openapi.Response("The order's shipments, the parcel among them",
 				d.Item(orderShipmentDTO{})),
@@ -456,10 +465,30 @@ func describeFulfilling(d *openapi.Doc) {
 					"\"order_not_pending\" or \"order_addition_parent_not_pending\" when either " +
 					"order is no longer pending, \"order_ships_elsewhere\" for an addition " +
 					"going to another address, \"fulfilling_parcel_not_parents\" for a parcel " +
-					"that is not the parent's, and \"fulfilling_parcel_not_waiting\" for one " +
-					"that is no longer pending."),
+					"that is not the parent's, \"fulfilling_parcel_not_waiting\" for one " +
+					"that is no longer pending, or \"fulfillment_invalid_transition\" when it " +
+					"left pending while the addition joined, " +
+					"\"fulfillment_line_not_dispatchable\" for a line named past what it still " +
+					"owes, \"fulfillment_join_items_differ\" for a repeat naming other units than " +
+					"the parcel holds for the addition (cancel the parcel to change what it " +
+					"carries), and \"fulfillment_nothing_owed\" when the addition names nothing and " +
+					"every unit it sold is written off, in a parcel, or came back undelivered " +
+					"and is spoken for by a return or a replacement."),
+			"422": openapi.ErrorResponse("The request is invalid, and an addition not sold " +
+				"exactly one delivery names its items (fulfilling_items_required, ADR 0428)."),
 		},
 	})
+}
+
+// optionalRequestBody is a request definition whose body is NOT REQUIRED:
+// [openapi.Doc.RequestBody] marks every body required, and a join may be
+// sent without one, so a client generated from the document has to be able
+// to leave it out.
+func optionalRequestBody(d *openapi.Doc, v any) map[string]any {
+	body := d.RequestBody(v)
+	body["required"] = false
+
+	return body
 }
 
 // orderShipmentDTO is one shipment as the order's endpoint reports it.

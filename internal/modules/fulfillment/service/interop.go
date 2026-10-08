@@ -79,6 +79,9 @@ import (
 // CodeInteropRequestInvalid reports that an undecodable request body arrived.
 const CodeInteropRequestInvalid = "fulfillment_interop_request_invalid"
 
+// jsonNull is the JSON body that carries no value, read as an empty one.
+const jsonNull = "null"
+
 // interopListRequest is the JSON schema of the [Interop.ListOptionsJSON]
 // request.
 //
@@ -396,7 +399,7 @@ func (i *Interop) CreateFulfillmentHolding(
 	}
 
 	var listed []interopItem
-	if len(items) > 0 && string(items) != "null" {
+	if len(items) > 0 && string(items) != jsonNull {
 		if err := json.Unmarshal(items, &listed); err != nil {
 			return "", errors.Invalid(CodeInvalidInput, "the parcel's items could not be read: %v", err)
 		}
@@ -447,7 +450,7 @@ type interopDestination struct {
 // it, and nobody would see that happen.
 func decodeDestination(raw json.RawMessage) (*coreprovider.Address, error) {
 	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte(jsonNull)) {
 		return nil, nil
 	}
 
@@ -518,7 +521,7 @@ func (i *Interop) FulfillmentStatus(ctx context.Context, fulfillmentID string) (
 // EXPLICIT error. A decoding that goes through float64 would silently truncate
 // the same body, and the subtotal is a MONEY value (plan Section 8).
 func decodeListRequest(raw json.RawMessage) (interopListRequest, error) {
-	if len(raw) == 0 || string(raw) == "null" {
+	if len(raw) == 0 || string(raw) == jsonNull {
 		return interopListRequest{}, errors.Invalid(CodeInteropRequestInvalid,
 			"the shipping option request cannot be empty")
 	}
@@ -552,7 +555,8 @@ func interopInt(value json.Number, field string) (int64, error) {
 }
 
 // CommittedQuantitiesForReference sums, per order line, the units the outgoing
-// parcels opened for the reference hold, as the module counts them when it
+// parcels hold for the reference, an addition's in its parent's parcel among
+// them (ADR 0428), as the module counts them when it
 // holds a new parcel to its order (ADR 0409). The fulfilling flow answers what
 // an order still owes a parcel from it, so the panel's form offers what this
 // module will take.
@@ -567,13 +571,14 @@ func (i *Interop) CommittedQuantitiesForReference(
 }
 
 // HeldForReferenceLocked sums, per order line, the units the outgoing parcels
-// opened for the reference hold, read under the order's dispatch lock
-// (ADR 0420). A cancellation asks it before putting stock back. It does not
-// wait for the lock: while a parcel of the order is being opened it answers
-// [errors.KindUnavailable] with [CodeDispatchBusy], and asked again after the
-// open commits it counts that parcel. It counts a parcel whose link to the
-// order was not written. spoken is read as [Interop.CommittedQuantitiesForReference]
-// reads it (ADR 0423).
+// hold for the reference, an addition's in its parent's parcel among them (ADR
+// 0428), read under the order's dispatch lock (ADR 0420). A cancellation asks
+// it before putting stock back. It does not wait for the lock: while a parcel
+// of the order is being opened or joined it answers [errors.KindUnavailable]
+// with [CodeDispatchBusy], and asked again after the open commits it counts
+// that parcel. It counts a parcel whose link to the order was not written.
+// spoken is read as [Interop.CommittedQuantitiesForReference] reads it (ADR
+// 0423).
 //
 // The counterpart on the consumer side:
 //
@@ -584,6 +589,51 @@ func (i *Interop) HeldForReferenceLocked(
 	ctx context.Context, reference string, spoken map[string]int64,
 ) (map[string]int64, error) {
 	return i.svc.HeldForReferenceLocked(ctx, reference, spoken)
+}
+
+// JoinParcel puts units order additionReference still owes into pending
+// parcel fulfillmentID of order parentReference, as items the addition owns
+// (ADR 0428). The rules are [Service.JoinParcel]'s.
+//
+// items is [Interop.CreateFulfillmentHolding]'s list, each unit held to what
+// its line still owes; empty or "null" asks for every unit the addition still
+// owes, which itemsOwed allows only for an addition sold exactly one delivery
+// on a shipping option, and is refused with [CodeItemsRequired] otherwise. A
+// parcel already holding the addition's items is answered as joined, in any
+// state and whatever items names. The caller binds the addition to the parcel
+// through the "order_fulfillment" link once it returns, as the fulfilling
+// flow does (ADR 0197).
+//
+// The counterpart on the consumer side:
+//
+//	type ParcelJoiner interface {
+//	    JoinParcel(ctx context.Context, fulfillmentID, parentReference, additionReference string,
+//	        items json.RawMessage, itemsOwed bool) error
+//	}
+func (i *Interop) JoinParcel(
+	ctx context.Context,
+	fulfillmentID, parentReference, additionReference string,
+	items json.RawMessage, itemsOwed bool,
+) error {
+	in := JoinParcelInput{
+		FulfillmentID:     fulfillmentID,
+		ParentReference:   parentReference,
+		AdditionReference: additionReference,
+		ItemsOwed:         itemsOwed,
+	}
+	if len(items) > 0 && string(items) != jsonNull {
+		var listed []interopItem
+		if err := json.Unmarshal(items, &listed); err != nil {
+			return errors.Invalid(CodeInvalidInput, "the items joining the parcel could not be read: %v", err)
+		}
+		for _, item := range listed {
+			in.Items = append(in.Items, FulfillmentItemInput(item))
+		}
+	}
+
+	_, err := i.svc.JoinParcel(ctx, in)
+
+	return err
 }
 
 // CommittedQuantities sums, per order line, the units a live outgoing parcel

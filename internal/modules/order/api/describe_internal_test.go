@@ -461,8 +461,12 @@ func describedEndpoints() []endpointExpectation {
 			response: orderShipmentDTO{FulfillmentID: "ful_1", Status: "pending"},
 		},
 		{
+			// The body may be left out; when it is sent it names the units the
+			// parcel takes, in the open's shape (ADR 0428).
 			method: http.MethodPut, path: "/admin/v1/orders/{id}/fulfillments/{fulfillmentId}",
-			status: "200", response: orderShipmentDTO{FulfillmentID: "ful_1", Status: "pending"},
+			status:   "200",
+			request:  joinParcelRequest{Items: []openShipmentItem{{LineItemID: "oli_1", Quantity: 1}}},
+			response: orderShipmentDTO{FulfillmentID: "ful_1", Status: "pending"},
 		},
 		{
 			// The timeline is an unpaged list: the handler writes the plain

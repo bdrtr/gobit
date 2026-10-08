@@ -21,14 +21,15 @@ const dispatchTryLockSQL = `SELECT pg_try_advisory_xact_lock($1)`
 // key; internal/arch holds every class in the tree apart.
 const dispatchLockClass int64 = 8
 
-// LockReferenceDispatch serializes the outgoing parcels opened for one reference
-// until the transaction ends (ADR 0409, gap D265).
+// LockReferenceDispatch serializes what writes the units one reference's
+// outgoing parcels hold until the transaction ends: its opens (ADR 0409, gap
+// D265) and its joins of another order's parcel (ADR 0428).
 //
-// What is protected is a total, the units the reference's live parcels hold, and
-// the parcel that would break it is a row not written yet, so no row lock covers
-// it. Two opens under different keys each read what the order owed before
-// either wrote; under this lock the second one reads the first one's units
-// before it writes its own.
+// What is protected is a total, the units the items the reference owns hold,
+// and the row that would break it is one not written yet, so no row lock covers
+// it. Two opens under different keys, or an open and a join, each read what the
+// order owed before either wrote; under this lock the second one reads the
+// first one's units before it writes its own.
 //
 // Two references falling on the same digest only wait for each other. It must be
 // called inside [Repository.WithTx]: outside a transaction the lock is released
@@ -76,10 +77,10 @@ func dispatchLockKey(reference string) int64 {
 	return dispatchLockClass<<32 | int64(h.Sum32())
 }
 
-// HeldQuantitiesForReference sums, per order line, the units of the outgoing
-// parcels opened for the reference, found by the reference this module stores
-// (ADR 0409): those of its live parcels and those of its parcels that came back
-// undelivered, apart (ADR 0423).
+// HeldQuantitiesForReference sums, per order line, the units the outgoing
+// parcels hold for the reference, found by the reference this module stores on
+// each item (ADR 0409, ADR 0428): those of its live parcels and those of its
+// parcels that came back undelivered, apart (ADR 0423).
 func (r *Repository) HeldQuantitiesForReference(
 	ctx context.Context, reference string,
 ) (map[string]models.HeldUnits, error) {

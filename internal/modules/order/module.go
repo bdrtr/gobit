@@ -1033,14 +1033,16 @@ func (p *fulfillingFlow) CorrectShippingAddress(
 }
 
 // ShipInParcel lets the order travel in its parent's parcel.
-func (p *fulfillingFlow) ShipInParcel(ctx context.Context, orderID, fulfillmentID string) error {
+func (p *fulfillingFlow) ShipInParcel(
+	ctx context.Context, orderID, fulfillmentID string, request json.RawMessage,
+) error {
 	p.once.Do(func() { p.resolve(ctx) })
 
 	if p.err != nil {
 		return p.err
 	}
 
-	return p.svc.ShipInParcel(ctx, orderID, fulfillmentID)
+	return p.svc.ShipInParcel(ctx, orderID, fulfillmentID, request)
 }
 
 // ChangeDelivery puts one of the order's deliveries on another option.

@@ -4,6 +4,7 @@ package fulfillment_test
 
 import (
 	"context"
+	"io/fs"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -56,7 +57,7 @@ func TestAParcelThatCameBackBeforeTheUpgradeIsHeldWhole(t *testing.T) {
 
 	before := cameBack("-before", 2)
 
-	require.NoError(t, db.MigrateDown(ctx, dsn, src, fulfillment.ModuleName, 1))
+	require.NoError(t, db.MigrateDown(ctx, dsn, src, fulfillment.ModuleName, stepsBelow(t, src, 8)))
 	_, err = heldWhole(before.ID)
 	require.Error(t, err, "the down migration drops the mark")
 	assert.Contains(t, err.Error(), "held_whole")
@@ -78,4 +79,16 @@ func TestAParcelThatCameBackBeforeTheUpgradeIsHeldWhole(t *testing.T) {
 	stored, err := svc.GetFulfillment(ctx, before.ID)
 	require.NoError(t, err)
 	assert.True(t, stored.HeldWhole, "the model carries the mark")
+}
+
+// stepsBelow is how many migrations to roll back for the set to stand just
+// below version: the number is read from the set rather than written out, so a
+// later migration does not turn the rollback of an earlier one into its own.
+func stepsBelow(t *testing.T, src fs.FS, version uint) int {
+	t.Helper()
+
+	highest := highestMigrationVersion(t, src)
+	require.GreaterOrEqual(t, highest, version, "the set does not reach migration %d", version)
+
+	return int(highest - version + 1)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -287,6 +288,24 @@ type fakeFulfillments struct {
 	holding    bool
 	items      json.RawMessage
 	holdingErr error
+
+	// joins records each join the flow asked for, as parcel, parent and
+	// addition, with the items it named and whether it allowed what is owed,
+	// and boundBeforeJoin whether the addition was already bound to the
+	// parcel each time; joinErr is the module's refusal (ADR 0428).
+	joins           []fakeJoin
+	boundBeforeJoin []bool
+	joinErr         error
+	// joined holds, per addition, the items it put in the parcel, as the
+	// module answers a repeat from them in any state.
+	joined map[string]json.RawMessage
+}
+
+// fakeJoin is one join the flow asked the module for.
+type fakeJoin struct {
+	parcel, parent, addition string
+	items                    json.RawMessage
+	itemsOwed                bool
 }
 
 // ListOptionsJSON records the request and answers the scripted options.
@@ -346,6 +365,42 @@ func (f *fakeFulfillments) CreateFulfillmentHolding(
 	}
 
 	return f.CreateFulfillment(ctx, reference, optionID, key, destination)
+}
+
+// JoinParcel records the join and whether the addition was bound to the
+// parcel before it was asked, and answers as the module does: a repeat in any
+// state, then a parcel no longer pending, then no items where what is owed was
+// not allowed. joinErr, when set, is the module's refusal of a first join.
+func (f *fakeFulfillments) JoinParcel(
+	_ context.Context, fulfillmentID, parentReference, additionReference string,
+	items json.RawMessage, itemsOwed bool,
+) error {
+	f.joins = append(f.joins, fakeJoin{fulfillmentID, parentReference, additionReference, items, itemsOwed})
+	bound := false
+	if f.links != nil {
+		bound = slices.Contains(f.links.bound[additionReference], fulfillmentID)
+	}
+	f.boundBeforeJoin = append(f.boundBeforeJoin, bound)
+
+	saved, repeat := f.joined[additionReference]
+	switch {
+	case repeat && len(items) > 0 && string(items) != string(saved):
+		return coreerrors.Conflict("fulfillment_join_items_differ", "the parcel holds %s", saved)
+	case repeat:
+		return nil
+	case f.status != "" && f.status != "pending":
+		return coreerrors.Conflict("fulfillment_invalid_transition", "the parcel is %s", f.status)
+	case len(items) == 0 && !itemsOwed:
+		return coreerrors.Invalid("fulfillment_items_required", "name the items")
+	case f.joinErr != nil:
+		return f.joinErr
+	}
+	if f.joined == nil {
+		f.joined = map[string]json.RawMessage{}
+	}
+	f.joined[additionReference] = items
+
+	return nil
 }
 
 // FulfillmentStatus answers with a fixed status or the injected fault.

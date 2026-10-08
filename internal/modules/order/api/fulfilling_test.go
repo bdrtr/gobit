@@ -107,10 +107,11 @@ func (f *fakeFulfilling) CorrectShippingAddress(
 }
 
 // ShipInParcel records the call.
-func (f *fakeFulfilling) ShipInParcel(_ context.Context, orderID, fulfillmentID string) error {
+func (f *fakeFulfilling) ShipInParcel(_ context.Context, orderID, fulfillmentID string, request json.RawMessage) error {
 	f.joinCalls++
 	f.gotOrderID = orderID
 	f.gotParcelID = fulfillmentID
+	f.gotBody = request
 
 	return f.err
 }
@@ -429,6 +430,27 @@ func TestTheJoinEndpointNamesBothRecordsInThePath(t *testing.T) {
 	flow.err = errors.Conflict("fulfilling_parcel_not_waiting", "shipped")
 	rec = doRequest(t, r, http.MethodPut, "/admin/v1/orders/order_1/fulfillments/ful_parent", "")
 	assert.Equal(t, http.StatusConflict, rec.Code)
+}
+
+// TestTheJoinEndpointHandsTheFlowTheUnitsNamed passes the body's items to the
+// flow in the open's shape, an empty body as none, and refuses a field it does
+// not know before the flow is asked (ADR 0428).
+func TestTheJoinEndpointHandsTheFlowTheUnitsNamed(t *testing.T) {
+	flow := &fakeFulfilling{shipments: json.RawMessage(`[]`)}
+	r := newRouterWithFulfilling(&fakeOrders{detail: sampleDetail()}, flow)
+	const path = "/admin/v1/orders/order_1/fulfillments/ful_parent"
+
+	rec := doRequest(t, r, http.MethodPut, path, `{"items":[{"line_item_id":"oli_1","quantity":2}]}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.JSONEq(t, `{"items":[{"line_item_id":"oli_1","quantity":2}]}`, string(flow.gotBody))
+
+	rec = doRequest(t, r, http.MethodPut, path, "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.JSONEq(t, `{}`, string(flow.gotBody), "no body names no unit")
+
+	rec = doRequest(t, r, http.MethodPut, path, `{"item":[]}`)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.Equal(t, 2, flow.joinCalls, "a body the route cannot read never reaches the flow")
 }
 
 // TestTheDeliveryChangeEndpointNamesTheMethodInThePath hands the flow the

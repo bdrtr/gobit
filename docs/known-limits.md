@@ -1085,9 +1085,22 @@ past and is not corrected retroactively.
   ([ADR 0332](adr/0332-the-panel-opens-a-parcel-on-the-delivery-chosen.md)).
   A parcel opened before
   [ADR 0409](adr/0409-an-orders-parcel-holds-the-units-it-ships.md) holds
-  nothing the dispatch bound counts, and an addition riding in its parent's
+  nothing the dispatch bound counts, and an addition that joined its parent's
   parcel ([ADR 0197](adr/0197-an-addition-travels-in-its-parents-parcel.md))
-  commits none of its units. The bus consumer that restocks a write-off waits
+  before [ADR 0428](adr/0428-an-additions-units-travel-as-its-parcels-items.md)
+  commits none of its units until the join is asked again while the parcel is
+  pending. A join whose link could not be written holds the addition's units
+  and answers `fulfilling_link_failed`; asking again while both orders are
+  pending binds it whatever the parcel's state, but a cancel or a come-back of
+  the parcel recounted before then is not recounted, and the addition's
+  written-off units it missed stay off the shelf until the line's next act. A
+  second join cannot add units to a parcel that already carries the
+  addition's: one naming other units answers 409
+  `fulfillment_join_items_differ`; cancel the parcel to change what it holds. Fulfillment migration 000009 rolled back and applied again
+  gives a joined addition's items the parent's reference, and a later join of
+  the pair then fails on `fulfillment_items_line_uniq`; during the upgrade an
+  instance on the old code fails an open, joins without items and misses a
+  join's items in a write-off restock. The bus consumer that restocks a write-off waits
   for a parcel of the order being opened, about 45 seconds a delivery at most,
   and then counts it
   ([ADR 0420](adr/0420-every-parcel-waits-for-its-orders-lock.md)); on Redis

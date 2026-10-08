@@ -32,8 +32,9 @@ import "github.com/bdrtr/gobit/core/link"
 // allows (ADR 0116), and what the unique index on the parcel side used to hold
 // is held by the one flow that writes a second binding: it binds only an
 // addition of the parcel's own order, going to the same address. The parcel's
-// ITEMS are still the lines of the order it was opened for, the one its
-// reference names.
+// ITEMS are the lines of the order it was opened for, the one its reference
+// names, and the units each addition still owed when it joined, each item
+// naming the order it belongs to (ADR 0428).
 const LinkOrderFulfillment = "order_fulfillment"
 
 // FulfillmentEntity is the name of the shipment record on the link's far side.

@@ -54,8 +54,10 @@ type Fulfilling interface {
 	) (json.RawMessage, error)
 
 	// ShipInParcel lets the order's goods travel in a parcel of the order it
-	// adds to (ADR 0197).
-	ShipInParcel(ctx context.Context, orderID, fulfillmentID string) error
+	// adds to (ADR 0197). request is {"items":[...]}, the units it puts in,
+	// or empty for every unit it owes on an addition sold one delivery
+	// (ADR 0428).
+	ShipInParcel(ctx context.Context, orderID, fulfillmentID string, request json.RawMessage) error
 
 	// ChangeDelivery puts one of the order's deliveries on another shipping
 	// option at the price the fulfillment module quotes for the order
@@ -215,13 +217,36 @@ func (h *Handler) adminCorrectShippingAddress(w http.ResponseWriter, r *http.Req
 	h.writeCurrentOrder(w, r)
 }
 
+// joinParcelRequest is the body of a join: the units the addition puts into
+// the parcel, in the open's shape (ADR 0428).
+type joinParcelRequest struct {
+	// Items are the units the parcel takes. Left out on an addition sold one
+	// delivery, it takes every unit still owed to a parcel.
+	Items []openShipmentItem `json:"items,omitempty"`
+}
+
 // adminShipInParcel PUT /admin/v1/orders/{id}/fulfillments/{fulfillmentId}
 //
 // It binds the order, an addition, to a pending parcel of the order it adds to,
-// and answers with the order's shipments — the parcel among them. It takes no
-// body: the path names both records, and the call can be repeated (ADR 0197).
+// and answers with the order's shipments — the parcel among them. The path
+// names both records and the body, which may be left out, names the units the
+// parcel takes (ADR 0428); the call can be repeated (ADR 0197).
 func (h *Handler) adminShipInParcel(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
+	var body joinParcelRequest
+	if err := decodeOptionalBody(w, r, &body); err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+	request, err := json.Marshal(body)
+	if err != nil {
+		corehttp.WriteError(ctx, w, coreerrors.Internal(codeInvalidRequest,
+			"the join request could not be encoded"))
+
+		return
+	}
 
 	flow, err := h.fulfillingFlow()
 	if err != nil {
@@ -230,7 +255,7 @@ func (h *Handler) adminShipInParcel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := flow.ShipInParcel(ctx, orderID(r), chi.URLParam(r, paramFulfillmentID)); err != nil {
+	if err := flow.ShipInParcel(ctx, orderID(r), chi.URLParam(r, paramFulfillmentID), request); err != nil {
 		corehttp.WriteError(ctx, w, err)
 
 		return

@@ -830,8 +830,9 @@ func (u *UI) paymentOf(r *http.Request, orderID string, scales map[string]int) (
 // oldest first; the second value reports a read that failed.
 //
 // A parcel's items name order lines, and the lines already read give their
-// titles. A line the page did not read — a parent's line in a parcel an
-// addition joined, or one past the page's hundred — is named by its id.
+// titles. A line the page did not read — the other order's line in a parcel
+// an addition joined (ADR 0428), or one past the page's hundred — is named by
+// its id.
 func (u *UI) parcelsOf(r *http.Request, orderID string, lines []orderLine) ([]orderParcel, bool) {
 	linked, err := u.linkedTo(r, orderID, query.Expansion{Link: linkOrderFulfillment, Fields: parcelFields})
 	if err != nil {

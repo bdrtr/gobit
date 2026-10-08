@@ -112,7 +112,7 @@ func (s *Service) refuseOverDispatch(
 	ceilings, spoken, err = s.bound.DispatchCeilings(ctx, reference, lineIDs)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, errors.KindOf(err), CodeDispatchBoundUnknown,
-			"what order %s may ship could not be read, so nothing was opened", reference)
+			"what order %s may ship could not be read, so no parcel took any of it", reference)
 	}
 
 	for _, item := range items {
@@ -136,13 +136,16 @@ func (s *Service) refuseOverDispatch(
 	return ceilings, spoken, nil
 }
 
-// holdToCeiling holds an outgoing parcel to what its order may still ship, and
-// fills the list of one asked to hold what is owed (ADR 0409, gaps D264, D265).
+// holdToCeiling holds an outgoing parcel, or the units an addition puts into
+// its parent's parcel ([Service.JoinParcel]), to what its order may still
+// ship, and fills the list of one asked to hold what is owed (ADR 0409, ADR
+// 0428, gaps D264, D265).
 //
 // It runs inside the transaction, after the order's dispatch lock: the units
-// the order's outgoing parcels hold are read there, by the reference this
-// module stores, so a parcel committed by the lock's last holder is counted
-// whether or not its link to the order is written yet. A line may still take
+// the order's outgoing parcels hold are read there, by the reference each item
+// stores, so a parcel committed by the lock's last holder is counted whether
+// or not its link to the order is written yet, and so are the units the order
+// put into another order's parcel when it joined it. A line may still take
 // its ceiling less what they hold; a parcel asking for more is refused, and a
 // parcel asked to hold what is owed takes exactly that on every line where it
 // is above zero, or is refused when it is zero everywhere. The ceiling is read
@@ -175,7 +178,7 @@ func (s *Service) holdToCeiling(
 			return nil, errors.Conflict(CodeNothingOwed,
 				"order %s owes no unit to a parcel: what it sold is written off, in a live "+
 					"parcel, or came back undelivered and is spoken for by a return or a "+
-					"replacement, so nothing was opened", reference)
+					"replacement, so no parcel took any of it", reference)
 		}
 
 		return normalizeItems(items)

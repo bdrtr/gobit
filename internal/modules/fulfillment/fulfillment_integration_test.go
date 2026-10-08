@@ -950,9 +950,10 @@ func TestSameLineItemCannotAppearTwiceInAShipment(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = testPool.Pool().Exec(ctx,
-		`INSERT INTO fulfillment_items (id, fulfillment_id, line_item_id, quantity)
-         VALUES ($1, $2, 'line_1', 1)`, models.NewFulfillmentItemID(), ful.ID)
+		`INSERT INTO fulfillment_items (id, fulfillment_id, line_item_id, quantity, reference)
+         VALUES ($1, $2, 'line_1', 1, $3)`, models.NewFulfillmentItemID(), ful.ID, testReference)
 	require.Error(t, err, "the same order line must not be writable twice")
+	assert.Contains(t, err.Error(), "fulfillment_items_line_uniq", "the index refuses it, nothing else")
 }
 
 // TestProfileDeleteWaitsForAnOpenOptionWrite verifies that the check-then-write
@@ -1072,15 +1073,16 @@ func TestItemQuantityUpperBoundIsEnforcedInTheSchema(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = testPool.Pool().Exec(ctx,
-		`INSERT INTO fulfillment_items (id, fulfillment_id, line_item_id, quantity)
-         VALUES ($1, $2, 'line_1', $3)`,
-		models.NewFulfillmentItemID(), ful.ID, models.MaxQuantity+1)
+		`INSERT INTO fulfillment_items (id, fulfillment_id, line_item_id, quantity, reference)
+         VALUES ($1, $2, 'line_1', $3, $4)`,
+		models.NewFulfillmentItemID(), ful.ID, models.MaxQuantity+1, testReference)
 	require.Error(t, err, "a quantity above the upper bound must not be writable to the schema")
+	assert.Contains(t, err.Error(), "fulfillment_items_quantity_max", "the bound refuses it, nothing else")
 
 	_, err = testPool.Pool().Exec(ctx,
-		`INSERT INTO fulfillment_items (id, fulfillment_id, line_item_id, quantity)
-         VALUES ($1, $2, 'line_2', $3)`,
-		models.NewFulfillmentItemID(), ful.ID, models.MaxQuantity)
+		`INSERT INTO fulfillment_items (id, fulfillment_id, line_item_id, quantity, reference)
+         VALUES ($1, $2, 'line_2', $3, $4)`,
+		models.NewFulfillmentItemID(), ful.ID, models.MaxQuantity, testReference)
 	require.NoError(t, err, "a quantity at the bound must be writable")
 }
 

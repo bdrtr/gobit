@@ -54,8 +54,10 @@ const (
 	// EventFieldReference is what the parcel was opened FOR, verbatim.
 	//
 	// It is the order identifier in every flow this repository ships: an
-	// outgoing parcel is held to the order its reference names and the order's
-	// parcels are counted by it (ADR 0409, ADR 0420). A subscriber reads the
+	// outgoing parcel is opened for the order its reference names, and an
+	// order's units are counted by the reference each item stores, the parcel's
+	// own for its items and an addition's for the units it put in when it
+	// joined (ADR 0409, ADR 0420, ADR 0428). A subscriber reads the
 	// "order_fulfillment" LINK first, because the link also binds the additions
 	// that joined the parcel (ADR 0197), which this field does not name; the
 	// order cancellation flow falls back to this field when the link names no

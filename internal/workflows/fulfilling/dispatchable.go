@@ -37,10 +37,11 @@ type dispatchableLine struct {
 // # Held is counted by reference, not through the link
 //
 // What the order's outgoing parcels hold is the fulfillment module's sum
-// over the parcels whose reference is the order, the count its open is checked
-// against. A count through the "order_fulfillment" link would miss a parcel
-// whose link write failed, or one opened before ADR 0140, and offer units the
-// module then refuses.
+// over the items whose reference is the order, the count its open is checked
+// against: its own parcels' and, for an addition, those it put into its
+// parent's parcel when it joined it (ADR 0428). A count through the
+// "order_fulfillment" link would miss a parcel whose link write failed, or one
+// opened before ADR 0140, and offer units the module then refuses.
 //
 // A line missing from the answer is a line the order does not have. That is a
 // meaning rather than an absence, and the caller has to treat it as a refusal:

@@ -98,15 +98,16 @@ func (w *Workflow) recountParcel(ctx context.Context, e eventbus.Event) error {
 
 	// The orders are read from the LINK first. A parcel is bound to MORE than one
 	// order since ADR 0197: the order it was opened for and the additions that
-	// joined it. Its items are the first order's lines, but the link does not say
-	// which order that is, so each line is put back against the bound order that
-	// HAS it.
+	// joined it. Its items are that order's lines and, since ADR 0428, the lines
+	// an addition owed when it joined, and the link does not say which order
+	// came first, so each line is put back against the bound order that HAS it.
 	//
-	// When the link names none, an OUTGOING parcel's reference is its order:
-	// the fulfillment module holds every outgoing parcel to the order its
-	// reference names and counts an order's parcels by it (ADR 0409, ADR 0420),
-	// so a parcel whose link write failed (D264) releases its units as a linked
-	// one does. A reference no order answers to releases nothing. A parcel
+	// When the link names none, an OUTGOING parcel's reference is the order it
+	// was opened for, whose items it holds: the fulfillment module counts an
+	// order's units by the reference each item stores (ADR 0409, ADR 0420, ADR
+	// 0428), so a parcel whose link write failed (D264) releases its order's
+	// units as a linked one does; an addition's lines in it are skipped. A
+	// reference no order answers to releases nothing. A parcel
 	// bringing a return back is bound to no order and holds none of its
 	// outgoing units (ADR 0384), so its cancel releases nothing either; the
 	// event names its return.

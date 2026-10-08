@@ -830,9 +830,9 @@ func (f *fakeStore) ReturningQuantities(
 	return out, nil
 }
 
-// HeldQuantitiesForReference sums the units of the outgoing parcels opened for
-// the reference, live and come back apart, the way the SQL does (ADR 0409,
-// ADR 0423).
+// HeldQuantitiesForReference sums the units the outgoing parcels hold for the
+// reference, by the reference each item stores, live and come back apart, the
+// way the SQL does (ADR 0409, ADR 0423, ADR 0428).
 func (f *fakeStore) HeldQuantitiesForReference(
 	_ context.Context,
 	reference string,
@@ -844,7 +844,7 @@ func (f *fakeStore) HeldQuantitiesForReference(
 	for _, id := range slices.Sorted(maps.Keys(f.items)) {
 		item := f.items[id]
 		parcel, known := f.fuls[item.FulfillmentID]
-		if !known || parcel.Reference != reference || parcel.ReturnID != "" {
+		if !known || item.Reference != reference || parcel.ReturnID != "" {
 			continue
 		}
 		units := out[item.LineItemID]
@@ -910,7 +910,7 @@ func (f *fakeStore) putLiveParcel(id, reference, lineID string, units int64) {
 	defer f.mu.Unlock()
 	f.fuls[id] = models.Fulfillment{ID: id, Reference: reference, Status: models.StatusPending}
 	f.items["item_"+id] = models.FulfillmentItem{
-		ID: "item_" + id, FulfillmentID: id, LineItemID: lineID, Quantity: units,
+		ID: "item_" + id, FulfillmentID: id, LineItemID: lineID, Quantity: units, Reference: reference,
 	}
 }
 
@@ -921,7 +921,7 @@ func (f *fakeStore) putLiveReturnParcel(id, reference, returnID, lineID string, 
 	defer f.mu.Unlock()
 	f.fuls[id] = models.Fulfillment{ID: id, Reference: reference, Status: models.StatusPending, ReturnID: returnID}
 	f.items["item_"+id] = models.FulfillmentItem{
-		ID: "item_" + id, FulfillmentID: id, LineItemID: lineID, Quantity: units,
+		ID: "item_" + id, FulfillmentID: id, LineItemID: lineID, Quantity: units, Reference: reference,
 	}
 }
 
@@ -1254,6 +1254,8 @@ type fakeDispatchBound struct {
 	// spoken is how many units a return or a replacement speaks for, per line
 	// (ADR 0423).
 	spoken map[string]int64
+	// orders are the orders DispatchCeilings was asked about, in order.
+	orders []string
 }
 
 // returnAsked returns how many return questions this fake was given.
@@ -1296,10 +1298,11 @@ func (f *fakeDispatchBound) asked() int {
 // DispatchCeilings answers what the order may ship per line; with no parcel
 // held, what it owes.
 func (f *fakeDispatchBound) DispatchCeilings(
-	_ context.Context, _ string, lineItemIDs []string,
+	_ context.Context, orderID string, lineItemIDs []string,
 ) (ceilings, spoken map[string]int64, err error) {
 	f.mu.Lock()
 	f.calls++
+	f.orders = append(f.orders, orderID)
 	during := f.during
 	f.mu.Unlock()
 

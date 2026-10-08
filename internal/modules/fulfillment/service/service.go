@@ -95,6 +95,11 @@ const (
 	// CodeNothingOwed refuses a parcel asked to hold what the order still owes
 	// when it owes no unit to a parcel (ADR 0409).
 	CodeNothingOwed = "fulfillment_nothing_owed"
+	// CodeJoinItemsDiffer refuses a join of an addition already in the parcel
+	// that names other units than the parcel holds for it: a joined parcel
+	// takes no more units, and canceling it is how its contents change (ADR
+	// 0428).
+	CodeJoinItemsDiffer = "fulfillment_join_items_differ"
 	// CodeItemsRequired refuses an outgoing parcel the module's own route is
 	// asked to open with no items: it would hold units nobody counts (ADR 0409,
 	// gap D264).
@@ -319,15 +324,16 @@ type Store interface {
 	// bringing order return returnID back hold — pending, shipped or delivered
 	// (ADR 0384).
 	ReturningQuantities(ctx context.Context, returnID string) (map[string]int64, error)
-	// HeldQuantitiesForReference sums, per order line, the units of the
-	// outgoing parcels opened for the reference, found by the reference rather
-	// than by the order's link (ADR 0409): the live parcels' and the units of
+	// HeldQuantitiesForReference sums, per order line, the units the outgoing
+	// parcels hold for the reference, found by the reference each item stores
+	// rather than by the order's link (ADR 0409, ADR 0428), an addition's units
+	// in its parent's parcel among them: the live parcels' and the units of
 	// those that came back undelivered, apart, a parcel that came back before
 	// ADR 0423 among the live ones (migration 000008).
 	HeldQuantitiesForReference(ctx context.Context, reference string) (map[string]models.HeldUnits, error)
-	// LockReferenceDispatch serializes the outgoing parcels opened for the
-	// reference until the transaction ends (ADR 0409, gap D265); it is called
-	// inside WithTx.
+	// LockReferenceDispatch serializes the opens of the reference's outgoing
+	// parcels and its joins of another order's parcel until the transaction
+	// ends (ADR 0409, ADR 0428, gap D265); it is called inside WithTx.
 	LockReferenceDispatch(ctx context.Context, reference string) error
 	// TryLockReferenceDispatch takes the same lock only if it is free and
 	// answers whether it did, without waiting (ADR 0420); it is called inside

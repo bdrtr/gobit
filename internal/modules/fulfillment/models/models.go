@@ -378,6 +378,11 @@ type FulfillmentItem struct {
 	// Quantity is the quantity that goes into the fulfillment; it is always
 	// positive.
 	Quantity int64
+	// Reference is the order the item's units belong to, not validated here
+	// either: the parcel's own reference, or that of an addition that joined
+	// the parcel (ADR 0428). Every count of what an order's parcels hold sums
+	// the items by it.
+	Reference string
 	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time

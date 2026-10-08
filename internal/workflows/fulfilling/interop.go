@@ -1,6 +1,7 @@
 package fulfilling
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 
@@ -89,10 +90,24 @@ func (i *Interop) OpenForReplacement(
 	return out.FulfillmentID, out.AlreadyOpen, nil
 }
 
+// interopJoinRequest is the body [Interop.ShipInParcel] accepts.
+type interopJoinRequest struct {
+	// Items are the units the addition puts into the parcel; left out, every
+	// unit it still owes, on an addition sold one delivery (ADR 0428).
+	Items []OpenItem `json:"items,omitempty"`
+}
+
 // ShipInParcel lets an order's goods travel in its parent's parcel; the rules
-// are [Workflows.ShipInParcel]'s.
-func (i *Interop) ShipInParcel(ctx context.Context, orderID, fulfillmentID string) error {
-	return i.w.ShipInParcel(ctx, orderID, fulfillmentID)
+// are [Workflows.ShipInParcel]'s. request is {"items":[...]} or empty.
+func (i *Interop) ShipInParcel(ctx context.Context, orderID, fulfillmentID string, request json.RawMessage) error {
+	var body interopJoinRequest
+	if len(bytes.TrimSpace(request)) > 0 {
+		if err := json.Unmarshal(request, &body); err != nil {
+			return errors.Invalid(CodeInvalidInput, "the join request could not be read: %v", err)
+		}
+	}
+
+	return i.w.ShipInParcel(ctx, orderID, fulfillmentID, body.Items)
 }
 
 // CorrectShippingAddress corrects where an order ships; the rules are

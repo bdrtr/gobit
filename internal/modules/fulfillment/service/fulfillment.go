@@ -143,7 +143,9 @@ type CreateFulfillmentInput struct {
 // ceiling less that count and no more (gaps D264, D265). Two opens for one order
 // under different keys therefore never hold more than the ceiling they read
 // between them: the second one waits on the lock and counts the first one's
-// units, whether or not the first one's link to the order is written yet.
+// units, whether or not the first one's link to the order is written yet. An
+// addition joining its parent's parcel takes its own order's lock and writes
+// its units under it the same way ([Service.JoinParcel], ADR 0428).
 //
 // A parcel bringing a return back takes the same lock, its reference being the
 // order: it may hold what its return names less what that return's live parcels
@@ -314,6 +316,7 @@ func (s *Service) CreateFulfillment(
 				FulfillmentID: updated.ID,
 				LineItemID:    item.LineItemID,
 				Quantity:      item.Quantity,
+				Reference:     reference,
 			})
 			if err != nil {
 				return err
@@ -1026,9 +1029,10 @@ func stampFor(status, target models.FulfillmentStatus, now time.Time) *time.Time
 }
 
 // CommittedQuantitiesForReference sums, per order line, the units the outgoing
-// parcels opened for the reference hold, counted by the reference this module
-// stores: the population an open is held to under the order's lock (ADR 0409),
-// so a parcel whose link to its order was not written counts.
+// parcels hold for the reference, counted by the reference this module stores
+// on each item: the population an open is held to under the order's lock (ADR
+// 0409), so a parcel whose link to its order was not written counts, and so do
+// an addition's units in its parent's parcel (ADR 0428).
 //
 // spoken is, per line, how many units a return or a replacement speaks for: a
 // parcel that came back undelivered holds its units only so far

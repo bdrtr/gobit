@@ -11,6 +11,48 @@ design. It is fixed with `1.0.0`.
 
 ### Breaking changes
 
+- **An addition's units travel as its parcel's items** (ADR 0428, D264). **For
+  API consumers:** `PUT /admin/v1/orders/{id}/fulfillments/{fulfillmentId}`
+  takes an optional body, `{"items":[{"line_item_id","quantity"}]}` in the
+  open's shape, and puts those units of the addition into the parent's parcel
+  as items, so `GET /admin/v1/fulfillments/{id}` lists the addition's lines
+  beside the parent's. With no items it puts in every unit the addition still
+  owes, and only on an addition sold exactly one delivery on a shipping
+  option; any other addition, one sold no delivery of its own among them,
+  answers 422 `fulfilling_items_required` where it used to be bound. A line
+  named past what it still owes answers 409
+  `fulfillment_line_not_dispatchable`, the default finding nothing owed 409
+  `fulfillment_nothing_owed`, and a parcel leaving pending while the addition
+  joins 409 `fulfillment_invalid_transition`. A unit not named stays owed. A
+  join of an addition already in the parcel naming no items, or exactly those
+  the parcel holds for it, adds no unit and binds it again in any state of the
+  parcel, so a binding that answered `fulfilling_link_failed` is written by
+  asking again while both orders are pending; it re-runs no recount, so a
+  cancel or a come-back of the parcel recounted before then leaves the
+  addition's written-off units off the shelf until the line's next act. One
+  naming other units answers 409 `fulfillment_join_items_differ`. **For operators:** once
+  an addition has joined, its page offers none of the units in the box, a
+  second parcel for them answers 409 `fulfillment_line_not_dispatchable`, a
+  write-off of its line puts none of them back on the shelf, and canceling
+  the parcel puts each written-off unit back against the order whose line it
+  is. A second join cannot add units to the parcel: cancel it to change what
+  it holds. A join made before the upgrade rode itemless: asking it again
+  while the parcel is pending puts its units in. Fulfillment migration 000009
+  adds `fulfillment_items.reference` and gives every item its parcel's
+  reference. During the upgrade an instance on the old code fails an open,
+  joins without items and misses a join's items in a write-off restock, so
+  upgrade with nobody opening parcels, joining them or writing lines off. Do
+  not roll 000009 back and apply it again once a join has written items: the
+  backfill gives the addition's items the parent's reference, and a later
+  join of the pair fails on `fulfillment_items_line_uniq`. **For plugin
+  authors:** the fulfilling flow resolves `fulfillment.interop` with
+  `JoinParcel(ctx, fulfillmentID, parentReference, additionReference, items,
+  itemsOwed)`, and an installation that registers its own without it fails at
+  startup; the order module's `Fulfilling` interface takes the join's body in
+  `ShipInParcel`; `models.FulfillmentItem` carries `Reference`, which
+  `service.Store`'s `CreateFulfillmentItem` writes and its
+  `HeldQuantitiesForReference` sums by.
+
 - **An exchange names its return and prices what it sends** (ADR 0432, D247).
   **For API consumers:** `POST /admin/v1/orders/{id}/exchanges` takes
   `return_id`, the return whose goods the exchange takes back, and the record
