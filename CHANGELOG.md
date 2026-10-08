@@ -58,6 +58,16 @@ authors concern an installation that registers its own.
   000012. Do not roll fulfillment 000008 or 000009 back and apply them again
   on a live database.
 
+- **Go 1.26.9 is required.** **For every module that requires gobit:** the
+  `go` line of gobit's `go.mod`, and of a project `gobit new` writes, is
+  `1.26.9` where v0.9.0 had `1.26.6`, because the HTTP/2 code of `net/http`
+  in go1.26.6 and of `golang.org/x/net` v0.57.0 carries GO-2026-6612,
+  GO-2026-6613 and GO-2026-6617, which `govulncheck` finds reachable from
+  gobit's own calls. A build under an older toolchain switches to go1.26.9
+  when `GOTOOLCHAIN` allows it and fails when it is `local`. `golang.org/x/net`
+  is v0.60.0, which raises `golang.org/x/crypto`, `x/mod`, `x/sys`, `x/text`
+  and `x/tools` with it.
+
 - **A generated client's admin order types and storefront profile body are
   renamed** (ADR 0193, ADR 0401, ADR 0376). **For integrators with a client
   generated from `/openapi.json`:** `GET /admin/v1/orders` answers items of
@@ -615,6 +625,14 @@ authors concern an installation that registers its own.
   funding collection with that reference.
 
 ### Fixes
+
+- **No known vulnerability is reachable** (GO-2026-6612, GO-2026-6613,
+  GO-2026-6617). Published after the last green lane, the three HTTP/2
+  advisories against go1.26.6's `net/http` and `golang.org/x/net` v0.57.0
+  failed `make vuln` through call paths that include `core/errors`'
+  `Error`, the observability scrape log and the PayTR provider's request.
+  The toolchain is go1.26.9 and `golang.org/x/net` v0.60.0 in the root
+  module and the five separate ones; no code changed.
 
 - **An exchange that names its return is on the order's documents** (ADR 0432,
   D247). An order whose buyer swapped a shirt at 20% for a jacket at 1% had

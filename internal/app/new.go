@@ -63,7 +63,7 @@ var readBuildInfo = debug.ReadBuildInfo
 // It is this repository's own, because a project requiring gobit cannot declare
 // an older language version than the library it compiles against. The value is
 // kept in step by a gate that reads the root go.mod (see the arch tests).
-const goDirective = "1.26.6"
+const goDirective = "1.26.9"
 
 // The error codes of this command.
 const (

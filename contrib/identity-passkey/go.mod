@@ -6,7 +6,7 @@
 // see, and the only thing that keeps it from paying is a separate go.mod.
 module github.com/bdrtr/gobit/contrib/identity-passkey
 
-go 1.26.6
+go 1.26.9
 
 require (
 	github.com/bdrtr/gobit v0.0.0
