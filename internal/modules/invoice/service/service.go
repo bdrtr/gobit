@@ -107,6 +107,9 @@ type Repo interface {
 	CountLiveAmendments(ctx context.Context, saleID string) (int64, error)
 	CountLiveAmendmentsWithKey(ctx context.Context, saleID, key string) (int64, error)
 	ListAmendmentsOf(ctx context.Context, saleID string, limit int64) ([]models.Invoice, error)
+	// RefundsByRow names, per row of the sale, the live refunds that gave
+	// back on it, once each in the order they were written (ADR 0432).
+	RefundsByRow(ctx context.Context, saleID string) (map[string][]models.DocumentRef, error)
 	// DocumentedTax lists the amending documents that name an act and were
 	// issued or voided inside [from, to), at most limit of them (ADR 0419).
 	DocumentedTax(ctx context.Context, from, to time.Time, currencyCode string, limit int64) ([]models.Invoice, error)

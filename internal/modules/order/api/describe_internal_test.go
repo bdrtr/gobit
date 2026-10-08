@@ -434,15 +434,25 @@ func describedEndpoints() []endpointExpectation {
 				Rows:     []invoicingAmendmentRow{{LineID: "carriage", Amount: 100}},
 				Metadata: map[string]any{"ticket": "T-1"},
 			},
-			response: invoiceIssuedDTO{InvoiceID: "inv_2", Number: "GBT2026000000002", AlreadyIssued: false},
+			response: amendmentIssuedDTO{
+				InvoiceID: "inv_2", Number: "GBT2026000000002", AlreadyIssued: false,
+				Documents: []amendmentDocumentDTO{
+					{InvoiceID: "inv_2", Number: "GBT2026000000002", Kind: "refund", Issued: true},
+				},
+			},
 		},
 		{
 			method: http.MethodGet, path: "/admin/v1/orders/{id}/invoice/amendments", status: "200",
 			response: orderActDTO{
-				Kind: "credit_line", ID: "ocl_1", OccurredAt: describeSampleTime, Amount: 100, Documentable: true,
+				Kind: "exchange", ID: "exch_1", OccurredAt: describeSampleTime, Amount: 100, Documentable: true,
 				Document: &actDocumentDTO{
-					InvoiceID: "inv_2", Number: "GBT2026000000002", Kind: "refund", Status: "issued",
+					InvoiceID: "inv_3", Number: "GBT2026000000003", Kind: "sale", Status: "issued",
 				},
+				Documents: []actDocumentDTO{
+					{InvoiceID: "inv_2", Number: "GBT2026000000002", Kind: "refund", Status: "issued"},
+					{InvoiceID: "inv_3", Number: "GBT2026000000003", Kind: "sale", Status: "issued"},
+				},
+				Withdrawn: true,
 			},
 			shape: unpagedList,
 		},

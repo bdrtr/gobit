@@ -101,6 +101,18 @@ type IssueResult struct {
 	// to a caller that only reads the number, and an operator pressing a button
 	// twice deserves to be told the second press did nothing.
 	AlreadyIssued bool
+	// Documents are the act's documents after the call, an amendment's, each
+	// saying whether this call issued it.
+	Documents []IssuedDocument
+}
+
+// IssuedDocument is one document an amendment's call answers with.
+type IssuedDocument struct {
+	InvoiceID string `json:"invoice_id"`
+	Number    string `json:"number"`
+	Kind      string `json:"kind"`
+	// Issued says this call issued the document; false for one that stood.
+	Issued bool `json:"issued"`
 }
 
 // documentLine is one row of the document this flow assembles.

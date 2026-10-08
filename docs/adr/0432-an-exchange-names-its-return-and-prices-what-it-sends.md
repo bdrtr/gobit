@@ -5,7 +5,7 @@ It costs naming the return before its receipt and a quote per variant sent; an e
 
 - **Status:** Accepted
 - **Date:** 2026-10-07
-- **Amends:** [0120](0120-an-exchange-can-take-its-difference.md), whose difference is derived for an exchange that names its return; [0145](0145-a-replacement-can-send-something-else.md), whose variant is priced; [0394](0394-a-sold-lines-price-and-tax-are-not-raised.md), whose exchange no longer raises a sold line when it names its return; [0423](0423-a-parcel-that-came-back-holds-only-what-a-return-or-a-replacement-speaks-for.md), whose count of what a line's returns and replacements speak for takes such an exchange once
+- **Amends:** [0120](0120-an-exchange-can-take-its-difference.md), whose difference is derived for an exchange that names its return; [0145](0145-a-replacement-can-send-something-else.md), whose variant is priced; [0394](0394-a-sold-lines-price-and-tax-are-not-raised.md), whose exchange no longer raises a sold line when it names its return; [0423](0423-a-parcel-that-came-back-holds-only-what-a-return-or-a-replacement-speaks-for.md), whose count of what a line's returns and replacements speak for takes such an exchange once; [0203](0203-an-exchanges-difference-is-on-the-books.md), whose difference's tax such an exchange's documents move against sales; [0406](0406-an-amount-moved-after-the-sale-is-a-document.md), which documents such an exchange as a refund and a sale; [0419](0419-a-documents-tax-is-on-the-books-at-the-document.md), whose journal places those two documents against sales
 
 Measurement: [measurements/0432](../measurements/0432-what-an-exchange-prices.md)
 

@@ -352,6 +352,29 @@ func (m *memRepo) CountLiveAmendmentsWithKey(_ context.Context, saleID, key stri
 	return count, nil
 }
 
+// RefundsByRow names the live refunds that gave back on each row of the sale.
+func (m *memRepo) RefundsByRow(_ context.Context, saleID string) (map[string][]models.DocumentRef, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	out := map[string][]models.DocumentRef{}
+	for i := range m.stored {
+		doc := &m.stored[i]
+		if doc.AmendsInvoiceID != saleID || doc.Kind != models.KindRefund || !doc.Status.Live() {
+			continue
+		}
+		for k := range doc.Lines {
+			row := doc.Lines[k].AmendsLineID
+			if row == "" || (len(out[row]) > 0 && out[row][len(out[row])-1].ID == doc.ID) {
+				continue
+			}
+			out[row] = append(out[row], models.DocumentRef{ID: doc.ID, Number: doc.Number})
+		}
+	}
+
+	return out, nil
+}
+
 // ListAmendmentsOf lists the documents amending the sale in the order written.
 func (m *memRepo) ListAmendmentsOf(_ context.Context, saleID string, limit int64) ([]models.Invoice, error) {
 	m.mu.Lock()

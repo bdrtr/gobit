@@ -162,7 +162,12 @@ func kindOrder(kind models.JournalKind) int {
 // A tax correction is an amending document that names an act (ADR 0419): its
 // tax_total leaves the account the act was booked to whole, at the document's
 // issued_at, and goes back at its voided_at. The act's account is the one
-// [givenBackTo] or [chargedTo] names for the act's kind.
+// [givenBackTo] or [chargedTo] names for the act's kind. An exchange that
+// names its return writes no entry beyond its funding's or its refund's: its
+// refund document of what came back and its sale of what was sent each move
+// their tax against sales, so sales nets the goods kept and sent without
+// their tax, and tax_payable moves by the sent goods' tax less the returned
+// ones' (ADR 0432).
 //
 // An order balances because its table holds it to
 // total = subtotal - discount_total + tax_total + shipping_total; the entry is
@@ -340,6 +345,10 @@ var givenBackTo = map[models.JournalKind]models.JournalAccount{
 	// A refund of an exchange's difference reverses the sale its funding
 	// booked (ADR 0203).
 	models.JournalExchangeRefunded: models.AccountSales,
+	// What an exchange takes back is a document's act only: its money is in
+	// the difference ADR 0203 books to sales, and its refund document takes
+	// the returned goods' tax out of sales (ADR 0432).
+	models.JournalExchangeReturned: models.AccountSales,
 }
 
 // chargedTo is the account each kind of amount added to what the order owes
@@ -349,6 +358,9 @@ var chargedTo = map[models.JournalKind]models.JournalAccount{
 	// An exchange's positive difference is goods sold for more than the goods
 	// they replace (ADR 0203).
 	models.JournalExchangeFunded: models.AccountSales,
+	// What an exchange sends is a document's act only, and its sale puts the
+	// sent goods' tax on tax_payable out of sales (ADR 0432).
+	models.JournalExchangeSent: models.AccountSales,
 }
 
 // CausedRefunds is the surface of the payment module ("payment.interop") the
@@ -482,13 +494,16 @@ const (
 )
 
 // documentedActs are the act kinds a document can name: what the invoicing
-// flow documents (ADR 0406). An exchange is on no document. The invoice module
-// refuses a key naming another kind, or naming one on the other kind of
-// document, when it is written, and internal/arch binds its map to
-// [DocumentedActs] and [DocumentKindOf] (ADR 0419).
+// flow documents (ADR 0406), and an exchange that names its return as what it
+// takes back and what it sends (ADR 0432). An exchange's funding and its
+// refund are on no document. The invoice module refuses a key naming another
+// kind, or naming one on the other kind of document, when it is written, and
+// internal/arch binds its map to [DocumentedActs] and [DocumentKindOf]
+// (ADR 0419).
 var documentedActs = []models.JournalKind{
 	models.JournalCreditLine, models.JournalDeliveryChanged, models.JournalDeliveryUpgraded,
 	models.JournalReturnRefunded, models.JournalClaimRefunded,
+	models.JournalExchangeReturned, models.JournalExchangeSent,
 }
 
 // DocumentedActs returns the act kinds a document can name; the slice is the
@@ -525,7 +540,8 @@ type actOrder struct {
 // The act is found from the document's key, "<journal kind>:<act id>" as the
 // invoicing flow wrote it: a credit line or a delivery change from this
 // module's own tables, a return's or a claim's refund through the payment
-// module's refund and then its cause. A key this module cannot read, an act it
+// module's refund and then its cause, and an exchange's two halves from the
+// exchange the key names (ADR 0432). A key this module cannot read, an act it
 // cannot find and a document in another currency than its order's are errors
 // rather than entries: books that silently left a correction out would balance
 // and be wrong.
@@ -557,7 +573,7 @@ func (s *Service) documentFacts(
 
 	acts := make([]models.JournalKind, len(documents))
 	ids := make([]string, len(documents))
-	var credits, changes, refunds []string
+	var credits, changes, refunds, exchanges []string
 	for i := range documents {
 		kind, id, ok := strings.Cut(documents[i].AmendmentKey, ":")
 		if !ok || id == "" || !slices.Contains(documentedActs, models.JournalKind(kind)) {
@@ -570,6 +586,8 @@ func (s *Service) documentFacts(
 			credits = append(credits, id)
 		case models.JournalDeliveryChanged, models.JournalDeliveryUpgraded:
 			changes = append(changes, id)
+		case models.JournalExchangeReturned, models.JournalExchangeSent:
+			exchanges = append(exchanges, id)
 		default:
 			refunds = append(refunds, id)
 		}
@@ -577,6 +595,9 @@ func (s *Service) documentFacts(
 
 	orders, err := s.actOrders(ctx, credits, changes, refunds)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.exchangeActOrders(ctx, exchanges, orders); err != nil {
 		return nil, err
 	}
 
@@ -608,6 +629,29 @@ func (s *Service) documentFacts(
 	}
 
 	return facts, nil
+}
+
+// exchangeActOrders finds the order of each exchange an exchange's documents
+// name, under both of its kinds (ADR 0432). An id that is no exchange of this
+// module is left out, and the document naming it is refused by the caller.
+func (s *Service) exchangeActOrders(ctx context.Context, exchanges []string, out map[string]actOrder) error {
+	if len(exchanges) == 0 {
+		return nil
+	}
+	causes, err := s.store.JournalCauses(ctx, exchanges)
+	if err != nil {
+		return err
+	}
+	for i := range causes {
+		if causes[i].Kind != causeExchange {
+			continue
+		}
+		order := actOrder{orderID: causes[i].OrderID, currency: causes[i].CurrencyCode}
+		out[string(models.JournalExchangeReturned)+":"+causes[i].ID] = order
+		out[string(models.JournalExchangeSent)+":"+causes[i].ID] = order
+	}
+
+	return nil
 }
 
 // within reports whether the moment is inside [from, to).

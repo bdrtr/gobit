@@ -278,7 +278,9 @@ func linePrice(line models.OrderLineItem, before, quantity int64) *models.Replac
 // a line's units, and the items after it would otherwise go on standing for
 // units no live item sends any more; priced again, a line's live items always
 // add up to the share of the units they send. The caller holds the exchange's
-// lock, and the exchange is requested: no document carries these figures yet.
+// lock, and the exchange is requested: its difference is held by no money, and
+// documents issued before a later withdrawal are canceled and asked for again
+// (ADR 0432).
 func (s *Service) repriceExchangeLines(ctx context.Context, exchange models.Exchange) error {
 	items, err := s.store.LiveExchangeLineItems(ctx, exchange.ID)
 	if err != nil || len(items) == 0 {

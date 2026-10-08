@@ -5,7 +5,7 @@ receivable against sales at the moment it was funded, and a refund naming the
 exchange as the same lines the other way. It costs one more window read and
 an index, and the two journals now close over an exchange as they do over a sale.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0432](0432-an-exchange-names-its-return-and-prices-what-it-sends.md), whose exchange that names its return moves its documents' tax against sales
 - **Date:** 2026-09-27
 
 Measurement: [measurements/0203](../measurements/0203-a-swap-outside-the-books.md)

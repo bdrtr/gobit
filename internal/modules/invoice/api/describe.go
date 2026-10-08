@@ -51,8 +51,8 @@ func Describe(d *openapi.Doc) {
 			"more than its row carried and was charged since, in amount, in tax or under one " +
 			"of its rates, answers 409 invoice_amendment_exceeds_sale. A sale that was " +
 			"rejected or canceled answers 409 invoice_amends_void. A \"sale\" naming a sale " +
-			"is refused here: a price raised after a sale is issued by the invoicing flow " +
-			"(ADR 0406).",
+			"is refused here: a price raised after a sale (ADR 0406) and the goods an " +
+			"exchange sends, reason \"exchanged\" (ADR 0432), are issued by the invoicing flow.",
 		RequestBody: d.RequestBody(issueRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response("The issued document", d.Item(invoiceDTO{})),

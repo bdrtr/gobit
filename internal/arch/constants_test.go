@@ -367,6 +367,11 @@ func TestTheBundleNamesAgree(t *testing.T) {
 	assert.Equal(t, productsvc.FieldBundleComponentVariantID, ordersvc.CatalogFieldBundleComponentVariantID)
 	assert.Equal(t, productsvc.FieldBundleComponentQuantity, ordersvc.CatalogFieldBundleComponentQuantity)
 	assert.Equal(t, checkoutwf.FilterIDs, ordersvc.CatalogFilterIDs)
+	// It names the variants an exchange sends, and their products, on the
+	// exchange's sale document (ADR 0432).
+	assert.Equal(t, productsvc.EntityProduct, ordersvc.CatalogEntityProduct)
+	assert.Equal(t, checkoutwf.FieldTitle, ordersvc.CatalogFieldTitle)
+	assert.Equal(t, checkoutwf.FieldProductID, ordersvc.CatalogFieldProductID)
 }
 
 // TestTheCostNamesAgree binds the checkout's spelling of a variant's unit costs

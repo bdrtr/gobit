@@ -423,8 +423,10 @@ why a new one is named apart from the ones the shop has.
 <p>Invoice <strong>{{ .Number }}</strong> <span class="pill">{{ .Status }}</span> <span class="muted">{{ .ID }}</span>{{ with .Open }} <a href="{{ . }}">Open the invoice</a>{{ end }}</p>
 {{/*
 What moved on the order after its sale, as its journal books it, each
-documented on request by a document amending the invoice (ADR 0406); no
-document carries an exchange's money (D247, ADR 0432).
+documented on request by a document amending the invoice (ADR 0406); an
+exchange that names its return is documented by a refund and a sale once its
+goods have moved both ways, and no document carries an exchange's money (D247,
+ADR 0432).
 */}}
 {{ if .ActsUnread }}
 <p class="muted">What moved after the sale could not be read.</p>
@@ -437,18 +439,23 @@ document carries an exchange's money (D247, ADR 0432).
       <td>{{ .Kind }} <span class="muted">{{ .ID }}</span></td>
       <td class="num">{{ .Printed }}</td>
       <td>
-        {{ if .Document }}<strong>{{ .Document.Number }}</strong> <span class="pill">{{ .Document.Status }}</span>{{ with .Open }} <a href="{{ . }}">Open</a>{{ end }}
+        {{ range .Documents }}<strong>{{ .Number }}</strong> <span class="pill">{{ .Status }}</span>{{ with .Open }} <a href="{{ . }}">Open</a>{{ end }}
+        {{ end }}
+        {{ if .Withdrawn }}<span class="muted">Withdrawn: its sale names goods it no longer sends; cancel both documents, as the return's own refund documents what came back.</span>
+        {{ else if .Document }}
+        {{ else if and (not .Documentable) (eq .Kind "exchange") }}<span class="muted">Documented once its return has come back and every replacement it sends has left.</span>
         {{ else if not .Documentable }}<span class="muted">No document carries it.</span>
-        {{ else if $.Invoice.CanAmend }}<form method="post" action="{{ $.OrdersPath }}/{{ $.Order.ID }}/invoice/amendments">
+        {{ else }}{{ if .Documents }}<span class="muted">The rest can be issued.</span>{{ end }}
+        {{ if $.Invoice.CanAmend }}<form method="post" action="{{ $.OrdersPath }}/{{ $.Order.ID }}/invoice/amendments">
           <input type="hidden" name="act_kind" value="{{ .Kind }}">
           <input type="hidden" name="act_id" value="{{ .ID }}">
           {{ with $.Invoice.Prefixes }}<select name="series" aria-label="series">
             {{ range . }}<option value="{{ . }}">{{ . }}</option>{{ end }}
           </select>{{ end }}
           <input name="new_series" placeholder="{{ if $.Invoice.Prefixes }}or a new series{{ else }}series, e.g. GBT{{ end }}" aria-label="new series" maxlength="3">
-          <button type="submit">Issue the document</button>
+          <button type="submit">{{ if .Documents }}Issue the rest{{ else }}Issue the document{{ end }}</button>
         </form>
-        {{ else }}<span class="muted">Not documented.</span>{{ end }}
+        {{ else }}<span class="muted">Not documented.</span>{{ end }}{{ end }}
       </td>
     </tr>
     {{ end }}

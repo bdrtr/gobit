@@ -99,13 +99,24 @@ type orderAct struct {
 	ID           string `json:"id"`
 	Amount       int64  `json:"amount"`
 	Documentable bool   `json:"documentable"`
-	Document     *struct {
-		InvoiceID string `json:"invoice_id"`
-		Number    string `json:"number"`
-		Status    string `json:"status"`
-	} `json:"document"`
+	// Document is set once the act is documented: its one document, or an
+	// exchange's sale once its refund and its sale both stand (ADR 0432).
+	Document *actDocument `json:"document"`
+	// Documents are every live document of the act, the one or an exchange's
+	// two, so an exchange documented half shows what stands and offers the
+	// rest.
+	Documents []actDocument `json:"documents"`
+	// Withdrawn says the act is an exchange withdrawn after its documents.
+	Withdrawn bool `json:"withdrawn"`
 	// Printed is the amount with its currency.
 	Printed string `json:"-"`
+}
+
+// actDocument is one live document of an act.
+type actDocument struct {
+	InvoiceID string `json:"invoice_id"`
+	Number    string `json:"number"`
+	Status    string `json:"status"`
 	// Open is the document's page, for an operator who may read the invoices.
 	Open string `json:"-"`
 }
@@ -201,8 +212,10 @@ func (u *UI) actsOf(
 	for i := range acts {
 		text, known := formatAmount(acts[i].Amount, currency, scales)
 		acts[i].Printed = withCurrency(text, currency, known)
-		if acts[i].Document != nil && principal.HasScope(scopeInvoiceRead) {
-			acts[i].Open = InvoicesPath + "/" + url.PathEscape(acts[i].Document.InvoiceID)
+		for k := range acts[i].Documents {
+			if principal.HasScope(scopeInvoiceRead) {
+				acts[i].Documents[k].Open = InvoicesPath + "/" + url.PathEscape(acts[i].Documents[k].InvoiceID)
+			}
 		}
 	}
 

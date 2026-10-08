@@ -93,15 +93,26 @@ type interopAmendRequest struct {
 	Metadata map[string]any `json:"metadata"`
 }
 
+// interopAmendment is the answer of [Interop.IssueAmendment].
+type interopAmendment struct {
+	InvoiceID     string           `json:"invoice_id"`
+	Number        string           `json:"number"`
+	AlreadyIssued bool             `json:"already_issued"`
+	Documents     []IssuedDocument `json:"documents"`
+}
+
 // IssueAmendment documents one act after the order's sale, or returns the
-// document it has (ADR 0406); alreadyIssued says which, as on
-// [Interop.IssueForOrder].
+// documents it has (ADR 0406), as a JSON object of {invoice_id, number,
+// already_issued, documents}: the act's document, an exchange's sale, and
+// every document of the act, each {invoice_id, number, kind, issued} saying
+// whether this call issued it (ADR 0432). already_issued is true when the call
+// issued nothing, as on [Interop.IssueForOrder].
 func (i *Interop) IssueAmendment(
 	ctx context.Context, orderID string, request json.RawMessage,
-) (invoiceID, number string, alreadyIssued bool, err error) {
+) (json.RawMessage, error) {
 	var body interopAmendRequest
 	if err := json.Unmarshal(request, &body); err != nil {
-		return "", "", false, errors.Invalid(CodeInvalidInput,
+		return nil, errors.Invalid(CodeInvalidInput,
 			"the amendment request could not be read: %v", err)
 	}
 
@@ -110,16 +121,17 @@ func (i *Interop) IssueAmendment(
 		Metadata: body.Metadata,
 	})
 	if err != nil {
-		return "", "", false, err
+		return nil, err
 	}
 
-	return out.InvoiceID, out.Number, out.AlreadyIssued, nil
+	return json.Marshal(interopAmendment(out))
 }
 
 // AmendmentsOfOrder lists the order's acts after its sale with the live
 // document of each, as a JSON array of {kind, id, occurred_at, amount,
-// documentable, document} where document is {invoice_id, number, kind, status}
-// or null.
+// documentable, document, documents, withdrawn} where document is
+// {invoice_id, number, kind, status} or null and documents lists every live
+// one (ADR 0432).
 func (i *Interop) AmendmentsOfOrder(ctx context.Context, orderID string) (json.RawMessage, error) {
 	acts, err := i.w.AmendmentsOfOrder(ctx, orderID)
 	if err != nil {

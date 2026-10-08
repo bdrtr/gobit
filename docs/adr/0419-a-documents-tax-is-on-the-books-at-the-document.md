@@ -3,7 +3,7 @@
 **Summary:** The order journal moves an amending document's tax between tax_payable and the account its act was booked to, at the document's issue and back at its voiding.
 It costs a third module read by the journal and a voided_at column, and an act nobody documents corrects no tax.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0432](0432-an-exchange-names-its-return-and-prices-what-it-sends.md), whose exchange's two documents move their tax against sales
 - **Date:** 2026-10-06
 - **Amends:** [0188](0188-the-order-module-keeps-derived-books.md) and [0406](0406-an-amount-moved-after-the-sale-is-a-document.md), whose journal booked each act whole
 

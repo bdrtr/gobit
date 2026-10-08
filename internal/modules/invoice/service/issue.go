@@ -106,8 +106,8 @@ type IssueInput struct {
 	// one; an amending document leaves Buyer zero and prints its sale's.
 	Amends string
 	// AmendmentReason is why it amends the sale; it comes with Amends and
-	// fits the kind: a price raised is a sale, a return or a price lowered a
-	// refund.
+	// fits the kind: a price raised and goods an exchange sends are a sale, a
+	// return or a price lowered a refund.
 	AmendmentReason models.AmendmentReason
 	// AmendmentKey names the act the invoicing flow documented; one live
 	// document per key and sale. Empty on a document issued directly.
@@ -383,8 +383,8 @@ func (in IssueInput) validateAmendment() error {
 		return errors.Invalid(CodeInvalidInput, "unknown amendment reason: %q", in.AmendmentReason)
 	case !in.AmendmentReason.Fits(in.Kind):
 		return errors.Invalid(CodeInvalidInput,
-			"a %s document cannot amend a sale for %q: a price raised is a sale, "+
-				"a return or a price lowered a refund", in.Kind, in.AmendmentReason)
+			"a %s document cannot amend a sale for %q: a price raised and goods an exchange "+
+				"sends are a sale, a return or a price lowered a refund", in.Kind, in.AmendmentReason)
 	case in.Buyer != (models.Party{}):
 		return errors.Invalid(CodeInvalidInput,
 			"an amendment prints its sale's buyer and takes none of its own")

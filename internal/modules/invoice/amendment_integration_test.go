@@ -341,6 +341,10 @@ type amendableRead struct {
 		Components []struct {
 			LeftTax int64 `json:"left_tax"`
 		} `json:"components"`
+		GivenBackBy []struct {
+			ID     string `json:"id"`
+			Number string `json:"number"`
+		} `json:"given_back_by"`
 	} `json:"rows"`
 	ChargeRows []struct {
 		LineID       string `json:"line_id"`
@@ -369,9 +373,9 @@ func TestTheAmendableReadSaysWhatEachRowHasLeft(t *testing.T) {
 		return doc
 	}
 
-	issue(amendRow("ALT", sale, 1, 1200, 200, models.ReasonReturned))
+	returned := issue(amendRow("ALT", sale, 1, 1200, 200, models.ReasonReturned))
 	issue(amendRow("ALT", sale, 1, 120, 20, models.ReasonPriceRaised))
-	issue(amendRow("ALT", sale, 0, 1100, 100, models.ReasonReturned,
+	stacked := issue(amendRow("ALT", sale, 0, 1100, 100, models.ReasonReturned,
 		service.LineTaxInput{RateBps: 500, TaxableAmount: 1000, TaxAmount: 100},
 		service.LineTaxInput{RateBps: 800, Compound: true, TaxableAmount: 1000, TaxAmount: 0}))
 	dead := issue(amendRow("ALT", sale, 1, 100, 0, models.ReasonPriceLowered))
@@ -398,6 +402,14 @@ func TestTheAmendableReadSaysWhatEachRowHasLeft(t *testing.T) {
 	assert.Empty(t, read.ChargeRows[0].AmendsLineID, "a row the sale did not have")
 	assert.Equal(t, int64(1500), read.ChargeRows[0].LeftTotal)
 	assert.Len(t, read.Amendments, 5)
+
+	// Each row names the live refunds that gave back on it, which an
+	// exchange's refusal names (ADR 0432): the canceled one is not among them.
+	require.Len(t, read.Rows[1].GivenBackBy, 1)
+	assert.Equal(t, returned.ID, read.Rows[1].GivenBackBy[0].ID)
+	assert.Equal(t, returned.Number, read.Rows[1].GivenBackBy[0].Number)
+	require.Len(t, read.Rows[0].GivenBackBy, 1)
+	assert.Equal(t, stacked.ID, read.Rows[0].GivenBackBy[0].ID)
 }
 
 // TestARateRemembersWhatItGaveBackOnPostgres: the per-rate sums read the

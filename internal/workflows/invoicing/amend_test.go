@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,8 +26,30 @@ type amendedRow struct {
 	TaxRateBps int32  `json:"tax_rate_bps"`
 	LeftTotal  int64  `json:"left_total"`
 	LeftTax    int64  `json:"left_tax"`
-	// AmendsLineID is a charge row's sale row; empty on the sale's rows.
+	// AmendsLineID is a charge row's sale row and InvoiceID its document;
+	// both empty on the sale's rows.
 	AmendsLineID string `json:"amends_line_id,omitempty"`
+	InvoiceID    string `json:"invoice_id,omitempty"`
+	// Components are a stacked row's rates, each with the tax it has left.
+	Components []amendedComponent `json:"components,omitempty"`
+	// GivenBackBy are the live refunds that gave back on the row.
+	GivenBackBy []givenBackBy `json:"given_back_by,omitempty"`
+}
+
+// givenBackBy names a live refund that gave back on a row.
+type givenBackBy struct {
+	ID     string `json:"id"`
+	Number string `json:"number"`
+}
+
+// amendedComponent is one rate of a stacked row of the fake's sale document.
+type amendedComponent struct {
+	RateID        string `json:"rate_id"`
+	RateBps       int32  `json:"rate_bps"`
+	Compound      bool   `json:"compound"`
+	TaxableAmount int64  `json:"taxable_amount"`
+	TaxAmount     int64  `json:"tax_amount"`
+	LeftTax       int64  `json:"left_tax"`
 }
 
 // sentDocument is a document the flow sent, as the invoice module reads it.
@@ -39,16 +62,29 @@ type sentDocument struct {
 		Name string `json:"name"`
 	} `json:"buyer"`
 	Lines []struct {
-		Description  string `json:"description"`
-		Quantity     int64  `json:"quantity"`
-		UnitPrice    int64  `json:"unit_price"`
-		Subtotal     int64  `json:"subtotal"`
-		TaxTotal     int64  `json:"tax_total"`
-		Total        int64  `json:"total"`
-		AmendsLineID string `json:"amends_line_id"`
+		Description   string `json:"description"`
+		Quantity      int64  `json:"quantity"`
+		UnitPrice     int64  `json:"unit_price"`
+		Subtotal      int64  `json:"subtotal"`
+		DiscountTotal int64  `json:"discount_total"`
+		TaxRateBps    int32  `json:"tax_rate_bps"`
+		TaxTotal      int64  `json:"tax_total"`
+		Total         int64  `json:"total"`
+		AmendsLineID  string `json:"amends_line_id"`
+		TaxComponents []struct {
+			RateBps       int32 `json:"rate_bps"`
+			TaxableAmount int64 `json:"taxable_amount"`
+			TaxAmount     int64 `json:"tax_amount"`
+		} `json:"tax_components"`
 	} `json:"lines"`
-	TaxTotal int64 `json:"tax_total"`
-	Total    int64 `json:"total"`
+	PricesIncludeTax bool  `json:"prices_include_tax"`
+	Subtotal         int64 `json:"subtotal"`
+	DiscountTotal    int64 `json:"discount_total"`
+	TaxTotal         int64 `json:"tax_total"`
+	Total            int64 `json:"total"`
+	// canceled is the fake's own mark of a document voided after it was
+	// written; the flow never sends it.
+	canceled bool
 }
 
 // amendingInvoices is an invoice surface holding one sale document and what
@@ -61,6 +97,18 @@ type amendingInvoices struct {
 	// conflictOnce makes the first issue answer that the act already has a
 	// document, after writing it, as a press that lost the race would see.
 	conflictOnce bool
+	// failKey makes the next issue under that key fail before writing, as an
+	// invoice module that went away between two documents would.
+	failKey string
+	// conflictKey makes the next issue under that key answer that the act
+	// already has a document, after writing it, as conflictOnce does for the
+	// first issue.
+	conflictKey string
+	// alongside writes a second document as the one under its key is written,
+	// as another press would between this press's two.
+	alongside map[string]sentDocument
+	// pricesIncludeTax is the sale document's convention.
+	pricesIncludeTax bool
 }
 
 // IssueJSON writes the amendment, refusing a second live one for an act.
@@ -72,14 +120,28 @@ func (f *amendingInvoices) IssueJSON(
 	if decodeErr := json.Unmarshal(body, &doc); decodeErr != nil {
 		return "", "", decodeErr
 	}
-	for _, sent := range f.sent {
-		if doc.AmendmentKey != "" && sent.AmendmentKey == doc.AmendmentKey {
+	if f.failKey != "" && doc.AmendmentKey == f.failKey {
+		f.failKey = ""
+
+		return "", "", errors.Unavailable("invoice_unavailable", "the invoice module did not answer")
+	}
+	for i := range f.sent {
+		if sent := &f.sent[i]; doc.AmendmentKey != "" && sent.AmendmentKey == doc.AmendmentKey && !sent.canceled {
 			return "", "", errors.Conflict("invoice_amendment_exists", "the act has a document")
 		}
 	}
 	f.sent = append(f.sent, doc)
-	if f.conflictOnce {
+	if other, ok := f.alongside[doc.AmendmentKey]; ok {
+		delete(f.alongside, doc.AmendmentKey)
+		defer func() { f.sent = append(f.sent, other) }()
+	}
+	switch {
+	case f.conflictOnce:
 		f.conflictOnce = false
+
+		return "", "", errors.Conflict("invoice_amendment_exists", "another press wrote it")
+	case f.conflictKey != "" && f.conflictKey == doc.AmendmentKey:
+		f.conflictKey = ""
 
 		return "", "", errors.Conflict("invoice_amendment_exists", "another press wrote it")
 	}
@@ -92,6 +154,16 @@ func (f *amendingInvoices) InvoiceIdentityJSON(_ context.Context, id string) (js
 	return json.Marshal(map[string]string{"id": id, "number": "GBT2026000000001", "status": "issued"})
 }
 
+// cancel voids the live document written under the key, as a status move to
+// canceled would.
+func (f *amendingInvoices) cancel(key string) {
+	for i := range f.sent {
+		if f.sent[i].AmendmentKey == key && !f.sent[i].canceled {
+			f.sent[i].canceled = true
+		}
+	}
+}
+
 // chargeLine is the id the fake gives line k of the n-th document it wrote.
 func chargeLine(n, k int) string { return fmt.Sprintf("invl_amend_%d_%d", n, k) }
 
@@ -100,20 +172,38 @@ func chargeLine(n, k int) string { return fmt.Sprintf("invl_amend_%d_%d", n, k) 
 func (f *amendingInvoices) AmendableJSON(_ context.Context, id string) (json.RawMessage, error) {
 	rows := make([]amendedRow, len(f.rows))
 	copy(rows, f.rows)
+	for i := range rows {
+		rows[i].Components = slices.Clone(rows[i].Components)
+	}
 	charged := []amendedRow{}
-	for n, doc := range f.sent {
-		if doc.Kind != "sale" {
+	for n := range f.sent {
+		doc := &f.sent[n]
+		if doc.Kind != "sale" || doc.canceled {
 			continue
 		}
 		for k, line := range doc.Lines {
 			charged = append(charged, amendedRow{
 				LineID: chargeLine(n+1, k), Total: line.Total, TaxTotal: line.TaxTotal,
 				LeftTotal: line.Total, LeftTax: line.TaxTotal, AmendsLineID: line.AmendsLineID,
+				InvoiceID: fmt.Sprintf("inv_amend_%d", n+1),
 			})
 		}
 	}
 	amendments := []map[string]any{}
-	for k, doc := range f.sent {
+	for k := range f.sent {
+		doc := &f.sent[k]
+		status := "issued"
+		if doc.canceled {
+			status = "canceled"
+		}
+		amendments = append(amendments, map[string]any{
+			"id": fmt.Sprintf("inv_amend_%d", k+1), "number": fmt.Sprintf("GBT20260000000%02d", k+2),
+			"kind": doc.Kind, "status": status, "amendment_reason": doc.AmendmentReason,
+			"amendment_key": doc.AmendmentKey, "total": doc.Total,
+		})
+		if doc.canceled {
+			continue
+		}
 		for _, line := range doc.Lines {
 			sign := int64(-1)
 			if doc.Kind == "sale" {
@@ -122,22 +212,28 @@ func (f *amendingInvoices) AmendableJSON(_ context.Context, id string) (json.Raw
 			for _, all := range [][]amendedRow{rows, charged} {
 				for i := range all {
 					if all[i].LineID == line.AmendsLineID {
+						if doc.Kind == "refund" {
+							all[i].GivenBackBy = append(all[i].GivenBackBy, givenBackBy{
+								ID: fmt.Sprintf("inv_amend_%d", k+1), Number: fmt.Sprintf("GBT20260000000%02d", k+2),
+							})
+						}
 						all[i].LeftTotal += sign * line.Total
 						all[i].LeftTax += sign * line.TaxTotal
+						for c := range all[i].Components {
+							if c < len(line.TaxComponents) {
+								all[i].Components[c].LeftTax += sign * line.TaxComponents[c].TaxAmount
+							}
+						}
 					}
 				}
 			}
 		}
-		amendments = append(amendments, map[string]any{
-			"id": fmt.Sprintf("inv_amend_%d", k+1), "number": fmt.Sprintf("GBT20260000000%02d", k+2),
-			"kind": doc.Kind, "status": "issued", "amendment_reason": doc.AmendmentReason,
-			"amendment_key": doc.AmendmentKey, "total": doc.Total,
-		})
 	}
 
 	return json.Marshal(map[string]any{
 		"id": id, "number": "GBT2026000000001", "kind": "sale", "status": "issued",
-		"currency_code": "TRY", "rows": rows, "charge_rows": charged, "amendments": amendments,
+		"currency_code": "TRY", "prices_include_tax": f.pricesIncludeTax,
+		"rows": rows, "charge_rows": charged, "amendments": amendments,
 	})
 }
 

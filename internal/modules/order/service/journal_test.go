@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,14 +59,41 @@ func (f *fakeStore) JournalActOrders(
 	return out, nil
 }
 
-// OrderAfterSaleCauses returns the order's scripted causes (ADR 0406).
+// OrderAfterSaleCauses returns the order's scripted causes (ADR 0406), or,
+// for an order none were scripted for, its returns, claims and exchanges as
+// the store holds them, in id order as the query reads them.
 func (f *fakeStore) OrderAfterSaleCauses(
-	_ context.Context, orderID string, _ int32,
+	ctx context.Context, orderID string, _ int32,
 ) ([]models.AfterSaleCause, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
+	scripted, ok := f.afterSaleCauses[orderID]
+	f.mu.Unlock()
+	if ok {
+		return slices.Clone(scripted), nil
+	}
 
-	return slices.Clone(f.afterSaleCauses[orderID]), nil
+	snapshot := f.view(ctx)
+	var out []models.AfterSaleCause
+	for id := range snapshot.returns {
+		if record := snapshot.returns[id]; record.OrderID == orderID {
+			out = append(out, models.AfterSaleCause{ID: record.ID, Kind: "return"})
+		}
+	}
+	for id := range snapshot.claims {
+		if record := snapshot.claims[id]; record.OrderID == orderID {
+			out = append(out, models.AfterSaleCause{ID: record.ID, Kind: "claim"})
+		}
+	}
+	for id := range snapshot.exchanges {
+		if record := snapshot.exchanges[id]; record.OrderID == orderID {
+			out = append(out, models.AfterSaleCause{
+				ID: record.ID, Kind: "exchange", FundedAt: record.FundedAt, DifferenceDue: record.DifferenceDue,
+			})
+		}
+	}
+	slices.SortFunc(out, func(a, b models.AfterSaleCause) int { return strings.Compare(a.ID, b.ID) })
+
+	return out, nil
 }
 
 // scriptedRefunds is the payment module's caused refunds, as a JSON answer.
@@ -428,6 +456,7 @@ func documentedOrder(t *testing.T, documents string) *service.Service {
 	store.causes = []models.JournalCause{
 		{ID: "ret_1", Kind: "return", OrderID: "order_1", CurrencyCode: "TRY"},
 		{ID: "claim_1", Kind: "claim", OrderID: "order_1", CurrencyCode: "TRY"},
+		{ID: "exch_1", Kind: "exchange", OrderID: "order_1", CurrencyCode: "TRY"},
 	}
 	svc, err := service.New(service.Options{
 		Repo: store, Events: newFakeBus(t),
@@ -493,6 +522,14 @@ func TestADocumentsTaxMovesFromTheActsAccountToTaxPayable(t *testing.T) {
 		}},
 		{"delivery_upgraded:change_1", "sale", []models.JournalLine{
 			{Account: models.AccountShipping, Debit: 200}, {Account: models.AccountTaxPayable, Credit: 200},
+		}},
+		// An exchange's two documents move their tax against sales, the
+		// account its difference is booked to (ADR 0203, 0432).
+		{"exchange_returned:exch_1", "refund", []models.JournalLine{
+			{Account: models.AccountTaxPayable, Debit: 200}, {Account: models.AccountSales, Credit: 200},
+		}},
+		{"exchange_sent:exch_1", "sale", []models.JournalLine{
+			{Account: models.AccountSales, Debit: 200}, {Account: models.AccountTaxPayable, Credit: 200},
 		}},
 	} {
 		t.Run(tc.key, func(t *testing.T) {
@@ -592,6 +629,13 @@ func TestADocumentTheJournalCannotPlaceIsAnError(t *testing.T) {
 		"a claim as a return":  `"kind":"refund","amendment_key":"return_refunded:refund_c","currency_code":"TRY"`,
 		"a sale on a credit":   `"kind":"sale","amendment_key":"credit_line:credit_1","currency_code":"TRY"`,
 		"a refund on a charge": `"kind":"refund","amendment_key":"delivery_upgraded:change_1","currency_code":"TRY"`,
+		// An exchange's halves name the exchange, each on its own kind of
+		// document (ADR 0432).
+		"an exchange it has not":   `"kind":"refund","amendment_key":"exchange_returned:exch_9","currency_code":"TRY"`,
+		"a return as an exchange":  `"kind":"refund","amendment_key":"exchange_returned:ret_1","currency_code":"TRY"`,
+		"a sale of what came back": `"kind":"sale","amendment_key":"exchange_returned:exch_1","currency_code":"TRY"`,
+		"a refund of what went":    `"kind":"refund","amendment_key":"exchange_sent:exch_1","currency_code":"TRY"`,
+		"the exchange itself":      `"kind":"sale","amendment_key":"exchange:exch_1","currency_code":"TRY"`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

@@ -26,7 +26,8 @@ type Kind string
 
 const (
 	// KindSale is the ordinary sales invoice. It also covers the price raised
-	// after a sale, naming the sale it amends (ADR 0406).
+	// after a sale (ADR 0406) and the goods an exchange sends for goods it
+	// takes back (ADR 0432), each naming the sale it amends.
 	KindSale Kind = "sale"
 	// KindRefund is the document that reverses a sale, in whole or in part. It
 	// names the sale it reverses and each row it moves, and it is refused
@@ -58,17 +59,22 @@ const (
 	ReasonPriceLowered AmendmentReason = "price_lowered"
 	// ReasonPriceRaised is a price raised after the sale: a sale.
 	ReasonPriceRaised AmendmentReason = "price_raised"
+	// ReasonExchanged is goods an exchange sends for goods it takes back: a
+	// sale adding a row for each item sent, beside the refund of what came
+	// back (ADR 0432).
+	ReasonExchanged AmendmentReason = "exchanged"
 )
 
 // Valid reports whether the reason is one this module knows.
 func (r AmendmentReason) Valid() bool {
-	return r == ReasonReturned || r == ReasonPriceLowered || r == ReasonPriceRaised
+	return r == ReasonReturned || r == ReasonPriceLowered || r == ReasonPriceRaised || r == ReasonExchanged
 }
 
 // Fits reports whether a document of the kind may carry the reason: a price
-// raised is a sale, and the other two are refunds.
+// raised and goods sent in an exchange are sales, and a return and a price
+// lowered are refunds.
 func (r AmendmentReason) Fits(kind Kind) bool {
-	return (r == ReasonPriceRaised) == (kind == KindSale)
+	return (r == ReasonPriceRaised || r == ReasonExchanged) == (kind == KindSale)
 }
 
 // String returns the reason as text.
@@ -77,16 +83,20 @@ func (r AmendmentReason) String() string { return string(r) }
 // amendmentActDocuments maps each kind of act an amendment's key may name to
 // the kind of document that documents it: the order journal's kinds of the
 // acts the invoicing flow documents (ADR 0406), a dearer delivery on a sale
-// and every amount given back on a refund. The journal finds a document's act
-// by its key to book the document's tax, and a document it cannot place
-// refuses every read of its window (ADR 0419), so a key it could not place is
-// refused when it is written. internal/arch binds the map to the journal's.
+// and every amount given back on a refund, and an exchange's two halves, what
+// came back on a refund and what was sent on a sale (ADR 0432). The journal
+// finds a document's act by its key to book the document's tax, and a
+// document it cannot place refuses every read of its window (ADR 0419), so a
+// key it could not place is refused when it is written. internal/arch binds
+// the map to the journal's.
 var amendmentActDocuments = map[string]Kind{
 	"credit_line":       KindRefund,
 	"delivery_changed":  KindRefund,
 	"delivery_upgraded": KindSale,
 	"return_refunded":   KindRefund,
 	"claim_refunded":    KindRefund,
+	"exchange_returned": KindRefund,
+	"exchange_sent":     KindSale,
 }
 
 // AmendmentActKinds returns the kinds of act an amendment's key may name, in
@@ -391,6 +401,11 @@ type AmendedRow struct {
 	// Components are, by the component's position, the tax given back and
 	// charged under each rate of a stacked row.
 	Components map[int32]AmendedComponent
+}
+
+// DocumentRef names a document by its id and number.
+type DocumentRef struct {
+	ID, Number string
 }
 
 // AmendedComponent is what one rate of a stacked sale row has moved.

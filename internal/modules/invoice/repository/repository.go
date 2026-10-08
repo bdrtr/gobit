@@ -534,6 +534,22 @@ func (r *Repository) LockInvoice(ctx context.Context, id string) (models.Invoice
 	return r.GetInvoice(ctx, id)
 }
 
+// RefundsByRow names, per row of the sale, the live refunds that gave back on
+// it, each once and in the order they were written (ADR 0432).
+func (r *Repository) RefundsByRow(ctx context.Context, saleID string) (map[string][]models.DocumentRef, error) {
+	rows, err := r.queries(ctx).RefundsByRow(ctx, saleID)
+	if err != nil {
+		return nil, wrapDB(err, codeQueryFailed, "the refunds of the sale's rows could not be read")
+	}
+
+	out := map[string][]models.DocumentRef{}
+	for i := range rows {
+		out[rows[i].LineID] = append(out[rows[i].LineID], models.DocumentRef{ID: rows[i].ID, Number: rows[i].Number})
+	}
+
+	return out, nil
+}
+
 // AmendedRows returns, per row of the sale, what its live amendments gave back
 // and charged, the stacked rows' components included.
 func (r *Repository) AmendedRows(ctx context.Context, saleID string) (map[string]models.AmendedRow, error) {

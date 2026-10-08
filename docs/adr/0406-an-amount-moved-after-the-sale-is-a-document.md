@@ -3,7 +3,7 @@
 **Summary:** A credit, a delivery change and a return's or a claim's refund are issued on request as a document naming the order's sale document and each row it moves.
 It costs a number per act and a row ceiling in the invoice module; an exchange stays on no document, and the journal still books no tax after the sale.
 
-- **Status:** Accepted; amended by [0419](0419-a-documents-tax-is-on-the-books-at-the-document.md), whose order journal books a document's tax at the document
+- **Status:** Accepted; amended by [0419](0419-a-documents-tax-is-on-the-books-at-the-document.md), whose order journal books a document's tax at the document, and [0432](0432-an-exchange-names-its-return-and-prices-what-it-sends.md), which documents an exchange that names its return as a refund and a sale
 - **Date:** 2026-10-06
 - **Amends:** [0394](0394-a-sold-lines-price-and-tax-are-not-raised.md), whose D247
   consequence this replaces, and [0344](0344-the-panel-shows-an-invoice-and-moves-its-status.md),

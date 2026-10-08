@@ -1359,12 +1359,35 @@ type interopAfterSaleAct struct {
 	Kind       string    `json:"kind"`
 	ID         string    `json:"id"`
 	OccurredAt time.Time `json:"occurred_at"`
-	// Amount is what the act moved, positive.
+	// Amount is what the act moved, positive; for an exchange, what it sends.
 	Amount int64 `json:"amount"`
-	// Documentable is false for an exchange's funding and refund.
+	// Documentable is false for an exchange's funding and refund, and for an
+	// exchange whose goods have not all left.
 	Documentable bool `json:"documentable"`
-	// Returned are the units a return's refund paid for, by order line.
+	// Returned are the units a return's refund paid for, or an exchange's
+	// return takes back, by order line.
 	Returned []interopReturnedUnits `json:"returned"`
+	// Sent are the items an exchange sends, each at its recorded price
+	// (ADR 0432).
+	Sent []interopSentItem `json:"sent"`
+	// Withdrawn says the act is an exchange that was withdrawn.
+	Withdrawn bool `json:"withdrawn"`
+}
+
+// interopSentItem is one item an exchange sends, as its sale document prints
+// it (ADR 0432): the order line or the variant it sends, what names it, and
+// the figures recorded when it was written, for its whole quantity.
+type interopSentItem struct {
+	LineID        string           `json:"line_id,omitempty"`
+	VariantID     string           `json:"variant_id,omitempty"`
+	Title         string           `json:"title"`
+	ProductTitle  string           `json:"product_title"`
+	Quantity      int64            `json:"quantity"`
+	UnitPrice     int64            `json:"unit_price"`
+	Total         int64            `json:"total"`
+	TaxTotal      int64            `json:"tax_total"`
+	TaxRateBps    int32            `json:"tax_rate_bps"`
+	TaxComponents []interopLineTax `json:"tax_components"`
 }
 
 // interopReturnedUnits is how many units of one order line a return took back.
@@ -1374,8 +1397,12 @@ type interopReturnedUnits struct {
 }
 
 // AfterSaleActsJSON lists the order's acts after its sale, oldest first, as a
-// JSON array of {kind, id, occurred_at, amount, documentable, returned}
-// (ADR 0406). The kinds and ids are the order journal's.
+// JSON array of {kind, id, occurred_at, amount, documentable, returned, sent,
+// withdrawn}
+// (ADR 0406). The kinds and ids are the order journal's, and an exchange that
+// names its return is one act of kind "exchange" whose sent items carry their
+// recorded prices (ADR 0432); its variants are named only when it is read on
+// its own.
 func (i *Interop) AfterSaleActsJSON(ctx context.Context, orderID string) (json.RawMessage, error) {
 	acts, err := i.svc.AfterSaleActs(ctx, orderID)
 	if err != nil {
@@ -1407,9 +1434,22 @@ func interopAfterSaleActOf(act AfterSaleAct) interopAfterSaleAct {
 	out := interopAfterSaleAct{
 		Kind: string(act.Kind), ID: act.ID, OccurredAt: act.OccurredAt.UTC(), Amount: act.Amount,
 		Documentable: act.Documentable, Returned: make([]interopReturnedUnits, 0, len(act.Returned)),
+		Sent: make([]interopSentItem, 0, len(act.Sent)), Withdrawn: act.Withdrawn,
 	}
 	for _, units := range act.Returned {
 		out.Returned = append(out.Returned, interopReturnedUnits(units))
+	}
+	for i := range act.Sent {
+		sent := &act.Sent[i]
+		item := interopSentItem{
+			LineID: sent.LineID, VariantID: sent.VariantID, Title: sent.Title, ProductTitle: sent.ProductTitle,
+			Quantity: sent.Quantity, UnitPrice: sent.Price.UnitPrice, Total: sent.Price.Total,
+			TaxTotal: sent.Price.TaxTotal, TaxRateBps: sent.Price.TaxRateBps,
+		}
+		for _, c := range sent.Price.TaxComponents {
+			item.TaxComponents = append(item.TaxComponents, interopLineTax(c))
+		}
+		out.Sent = append(out.Sent, item)
 	}
 
 	return out

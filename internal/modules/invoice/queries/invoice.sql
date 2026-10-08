@@ -71,6 +71,21 @@ WHERE i.amends_invoice_id = sqlc.arg('sale_id')::text
   AND l.amends_line_id IS NOT NULL
 GROUP BY l.amends_line_id, t.position;
 
+-- RefundsByRow names, per row of the sale, the live refunds that gave back on
+-- it, each once and in the order they were written (ADR 0432): what an
+-- exchange's refusal names when the row has too little left.
+--
+-- name: RefundsByRow :many
+SELECT l.amends_line_id::text AS line_id, i.id, i.number
+FROM invoices i
+JOIN invoice_lines l ON l.invoice_id = i.id
+WHERE i.amends_invoice_id = sqlc.arg('sale_id')::text
+  AND i.kind = 'refund'
+  AND i.status IN ('issued', 'sent', 'accepted')
+  AND l.amends_line_id IS NOT NULL
+GROUP BY l.amends_line_id, i.id, i.number, i.created_at
+ORDER BY i.created_at, i.id, l.amends_line_id;
+
 -- name: CountLiveAmendments :one
 SELECT count(*) FROM invoices
 WHERE amends_invoice_id = sqlc.arg('sale_id')::text

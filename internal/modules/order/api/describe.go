@@ -332,7 +332,21 @@ func describeInvoicing(d *openapi.Doc) {
 		Summary: "Documents an act after the sale on a document amending the order's invoice.",
 		Description: "An act is an order journal entry after the sale, named by its kind and id " +
 			"as GET lists them: a credit_line, a delivery_changed (cheaper) or delivery_upgraded " +
-			"(dearer, paid), a return_refunded or a claim_refunded. A dearer delivery is " +
+			"(dearer, paid), a return_refunded or a claim_refunded, or an exchange that names its " +
+			"return (ADR 0432). An exchange is documented by two documents in one call, once " +
+			"its return has come back and every replacement it sends has left: a \"refund\" " +
+			"(\"returned\", key " +
+			"exchange_returned:<id>) giving back the units its return takes back on their " +
+			"invoice rows at what they were sold for, and a \"sale\" (\"exchanged\", key " +
+			"exchange_sent:<id>) adding a row for each item it sends at the price and the tax " +
+			"recorded when the item was written. A stacked row's rates give back their share of " +
+			"the units' tax by what each charged, a rate short of its share giving the rest to " +
+			"the rates with room, and the part that takes what a row has left in amount takes the " +
+			"tax each rate has left. The answer names the act's document, an exchange's sale, and lists " +
+			"every document of the act in \"documents\", each with \"issued\" saying whether " +
+			"this call issued it; it is 201 when the call issued one and 200 with " +
+			"\"already_issued\" when it issued none, and a call after a failure between an " +
+			"exchange's two issues the second alone. A dearer delivery is " +
 			"documented by a \"sale\" charging the carriage row, or, on an invoice with no " +
 			"carriage row because the order shipped free, a row of its own; the others by a " +
 			"\"refund\" naming the order's invoice and, row by row, the row it gives back part " +
@@ -346,9 +360,15 @@ func describeInvoicing(d *openapi.Doc) {
 			"to the act's. An act is documented once: a second call answers 200 with " +
 			"\"already_issued\". Refusals: 409 invoicing_no_sale_document when the order has " +
 			"no invoice yet; 409 invoicing_act_not_documented for an exchange's funding or " +
-			"refund, which no document carries; 409 invoicing_act_does_not_fit " +
-			"when the rows have less left than the act moved, or a named row less than is put " +
-			"on it; 409 invoicing_sale_document_differs when the invoice does not print the " +
+			"refund, which no document carries (an exchange that names no return is on no " +
+			"document), for an exchange whose return has not come back or whose goods have not " +
+			"all left, and for one that was withdrawn and does not have both documents standing " +
+			"(with both, 200 already_issued); 409 " +
+			"invoicing_act_does_not_fit when the rows have less left than the act moved, or a " +
+			"named row less than is put on it, or an exchange's returned units more than their " +
+			"row has left, naming the documents that gave back on the row first, which the " +
+			"exchange cannot be documented beside; 409 " +
+			"invoicing_sale_document_differs when the invoice does not print the " +
 			"order as the flow printed it; 404 invoicing_act_unknown for an act the order " +
 			"does not have; 422 invoicing_invalid_input for named rows that name a row twice, " +
 			"a gift card's row or no row of the invoice, that do not add up to the act, or " +
@@ -361,16 +381,23 @@ func describeInvoicing(d *openapi.Doc) {
 			"records, which are refused rather than cut.",
 		RequestBody: d.RequestBody(invoicingAmendmentRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("The document the act already had", d.Item(invoiceIssuedDTO{})),
-			"201": openapi.Response("The issued document", d.Item(invoiceIssuedDTO{})),
+			"200": openapi.Response("The documents the act already had", d.Item(amendmentIssuedDTO{})),
+			"201": openapi.Response("The act's documents, one of them issued", d.Item(amendmentIssuedDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/orders/{id}/invoice/amendments", openapi.Operation{
 		Summary: "Lists the order's acts after its sale with the document of each.",
 		Description: "The order journal's entries for this order after its sale, oldest first, " +
-			"each with the live document amending the order's invoice for it, or null. " +
-			"\"documentable\" is false for an exchange's funding and refund (ADR 0406).",
+			"and each exchange that names its return as one act of kind \"exchange\" whose amount " +
+			"is what it sends (ADR 0432), each with the live document amending the order's " +
+			"invoice for it, or null, and \"documents\" listing every live one: an exchange's " +
+			"refund and its sale, its \"document\" being the sale once both stand. " +
+			"\"documentable\" is false for an exchange's funding and refund (ADR 0406), and for " +
+			"an exchange until its return has come back and every replacement it sends has left. " +
+			"A withdrawn exchange is listed, \"withdrawn\" and not documentable, only while " +
+			"documents issued before it was withdrawn stand: its sale names goods it no longer " +
+			"sends, and both are canceled, the return's own refund then documenting what came back.",
 		Responses: map[string]any{
 			"200": openapi.Response("The acts", d.Item([]orderActDTO{})),
 		},

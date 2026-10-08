@@ -193,3 +193,87 @@ func TestTheTrialBalanceBalancesInEveryCurrency(t *testing.T) {
 		}
 	})
 }
+
+// TestAnExchangesDocumentsNetItsGoodsOnTheBooks is ADR 0432's arithmetic on
+// the order journal, over every sign of an exchange's difference: what came
+// back is worth Vb with Tb of tax, what was sent Vo with To, and the
+// difference D = Vo - Vb is booked to sales whole when it is funded, the other
+// way when it is refunded, and not at all when it is zero (ADR 0203). The
+// refund document of what came back and the sale of what was sent then leave
+// sales holding the goods' difference net of their tax, (Vo - To) - (Vb - Tb),
+// and tax_payable To - Tb; voided, both documents leave the difference whole
+// in sales and no tax moved. Each sign is drawn as often as the others.
+func TestAnExchangesDocumentsNetItsGoodsOnTheBooks(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		at := time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+		back := rapid.Int64Range(0, 1_000_000).Draw(t, "returned worth")
+		backTax := rapid.Int64Range(0, back).Draw(t, "returned tax")
+		var sent int64
+		switch rapid.SampledFrom([]string{"owed by the buyer", "even", "owed to the buyer"}).Draw(t, "sign") {
+		case "owed by the buyer":
+			sent = back + rapid.Int64Range(1, 1_000_000).Draw(t, "dearer by")
+		case "even":
+			sent = back
+		default:
+			if back == 0 {
+				back, backTax = 1, 0
+			}
+			sent = back - rapid.Int64Range(1, back).Draw(t, "cheaper by")
+		}
+		sentTax := rapid.Int64Range(0, sent).Draw(t, "sent tax")
+		voided := rapid.Bool().Draw(t, "both documents voided")
+		difference := sent - back
+
+		facts := []models.JournalFact{}
+		switch {
+		case difference > 0:
+			facts = append(facts, models.JournalFact{
+				ID: "exch_1", Kind: models.JournalExchangeFunded, OrderID: "order_1", CurrencyCode: "TRY",
+				OccurredAt: at, Amount: difference,
+			})
+		case difference < 0:
+			facts = append(facts, models.JournalFact{
+				ID: "refund_1", Kind: models.JournalExchangeRefunded, OrderID: "order_1", CurrencyCode: "TRY",
+				OccurredAt: at, Amount: -difference,
+			})
+		}
+		for _, document := range []struct {
+			id, kind string
+			act      models.JournalKind
+			tax      int64
+		}{
+			{"inv_back", documentRefund, models.JournalExchangeReturned, backTax},
+			{"inv_sent", documentSale, models.JournalExchangeSent, sentTax},
+		} {
+			fact := models.JournalFact{
+				ID: document.id, Kind: models.JournalTaxCorrected, OrderID: "order_1", CurrencyCode: "TRY",
+				OccurredAt: at.Add(time.Hour), Amount: document.tax, ActKind: document.act, DocumentKind: document.kind,
+			}
+			facts = append(facts, fact)
+			if voided {
+				fact.Kind, fact.OccurredAt = models.JournalTaxCorrectionVoided, at.Add(2*time.Hour)
+				facts = append(facts, fact)
+			}
+		}
+
+		entries, err := journalEntries(facts)
+		require.NoError(t, err)
+		net := map[models.JournalAccount]int64{}
+		for _, row := range trialBalance(entries) {
+			net[row.Account] = row.Credit - row.Debit
+		}
+
+		wantSales, wantTax := (sent-sentTax)-(back-backTax), sentTax-backTax
+		if voided {
+			wantSales, wantTax = difference, 0
+		}
+		require.Equal(t, wantSales, net[models.AccountSales], "sales hold the goods' difference net of their tax")
+		require.Equal(t, wantTax, net[models.AccountTaxPayable], "tax_payable moves by the sent goods' tax less the returned")
+		require.Equal(t, -difference, net[models.AccountReceivable], "the buyer owes the difference and no more")
+		for account, amount := range net {
+			if account != models.AccountSales && account != models.AccountTaxPayable && account != models.AccountReceivable {
+				require.Zero(t, amount, "an exchange moves nothing on %s", account)
+			}
+		}
+	})
+}

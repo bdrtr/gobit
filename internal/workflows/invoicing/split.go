@@ -103,6 +103,15 @@ type saleRow struct {
 	Charged bool
 	// OrderLineID is the order line the row printed; empty for carriage.
 	OrderLineID string
+	// GivenBackBy are the live refunds that gave back on the row, which an
+	// exchange's refusal names (ADR 0432).
+	GivenBackBy []documentNamed
+}
+
+// documentNamed is a document by its id and number.
+type documentNamed struct {
+	ID     string `json:"id"`
+	Number string `json:"number"`
 }
 
 // saleRowComponent is one rate of a stacked sale row.

@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"slices"
 	"sort"
 
 	"github.com/bdrtr/gobit/internal/modules/invoice/models"
@@ -54,6 +55,31 @@ func (f *fakeRepo) AmendedRows(_ context.Context, saleID string) (map[string]mod
 				row.Components[component.Position] = moved
 			}
 			out[line.AmendsLineID] = row
+		}
+	}
+
+	return out, nil
+}
+
+// RefundsByRow names, per row of the sale, the live refunds that gave back on
+// it, once each, in the order they were written, as the grouped query does.
+func (f *fakeRepo) RefundsByRow(ctx context.Context, saleID string) (map[string][]models.DocumentRef, error) {
+	documents, err := f.ListAmendmentsOf(ctx, saleID, 1<<30)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string][]models.DocumentRef{}
+	for k := range documents {
+		doc := &documents[k]
+		if doc.Kind != models.KindRefund || !doc.Status.Live() {
+			continue
+		}
+		for l := range doc.Lines {
+			row := doc.Lines[l].AmendsLineID
+			if row == "" || slices.ContainsFunc(out[row], func(r models.DocumentRef) bool { return r.ID == doc.ID }) {
+				continue
+			}
+			out[row] = append(out[row], models.DocumentRef{ID: doc.ID, Number: doc.Number})
 		}
 	}
 

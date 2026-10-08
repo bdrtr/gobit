@@ -11,6 +11,62 @@ design. It is fixed with `1.0.0`.
 
 ### Breaking changes
 
+- **An exchange is documented as a return and a sale** (ADR 0432, D247).
+  **For API consumers:** `GET /admin/v1/orders/{id}/invoice/amendments` lists
+  each exchange that names its return as one act of kind `exchange`, its id
+  the exchange's and its `amount` what it sends, `documentable` once its return
+  has been received and every replacement it sends has left; every act carries
+  `documents`, each live document of it in the order issued, and an exchange's
+  `document` is its sale once both of its documents stand. A withdrawn
+  exchange is listed, `withdrawn` and not documentable, only while documents
+  issued before it was withdrawn stand. `POST` with that act issues two
+  documents amending the order's invoice in one call: a `refund` with reason
+  `returned` under key `exchange_returned:<id>`, giving back the units the
+  exchange's return takes back on their invoice rows at what they were sold
+  for, and a `sale` with the new reason `exchanged` under `exchange_sent:<id>`,
+  adding a row for each item sent at the price and tax recorded when it was
+  written. A stacked row's rates give back their share of the units' tax by
+  what each charged, a rate short of its share giving the rest to the rates
+  with room, and the part that takes what a row has left in amount takes what
+  each rate has left. Every answer of the endpoint now carries `documents`, the act's
+  documents with `issued` saying whether this call issued each, and is 201
+  when it issued one and 200 with `already_issued` when it issued none; a
+  request after a failure between an exchange's two issues the sale alone. It
+  answers 409 `invoicing_act_not_documented` before the return has come back
+  or the goods have left and for a withdrawn exchange whose two documents do
+  not both stand (with both standing it answers 200 `already_issued`), 409
+  `invoicing_act_does_not_fit` when a returned row has less left than its units
+  were sold for, naming the documents that gave back on the row first, which
+  the exchange cannot be documented beside, and 422
+  `invoicing_invalid_input` for named `rows`. An exchange's funding and refund
+  are still refused 409 `invoicing_act_not_documented`, with a message naming
+  the exchange act. **For integrators reading the documents:** an invoice's
+  `amendment_reason` may be `exchanged`, which is a sale's, and an amendment's
+  key may name `exchange_returned` on a refund or `exchange_sent` on a sale;
+  invoice migration 000008 holds `price_raised` and `exchanged` to a sale and
+  `returned` and `price_lowered` to a refund, and rolling it back is refused
+  while a document of an exchange stands. **For accountants:** the order
+  journal's `tax_corrected` entries include an exchange's two documents, each
+  moving its tax between `tax_payable` and `sales`, so sales hold the goods
+  kept and sent net of their tax and `tax_payable` moves by the sent goods'
+  tax less the returned goods'; an even swap on a row nothing else gave back
+  from moves neither, and one on a row an earlier refund gave back part of can
+  move `tax_payable` by a rounding unit. **For plugin
+  authors:** `workflows.invoicing.interop`'s `IssueAmendment`, and so the
+  order API's `Invoicing`, answers a JSON object of `{invoice_id, number,
+  already_issued, documents}` instead of three values, and its act list
+  carries `documents` and `withdrawn`; `invoice.interop`'s amendable read
+  names, per row, the live refunds that gave back on it (`given_back_by`);
+  `order.interop`'s `AfterSaleActsJSON` and `AfterSaleActJSON` carry each act's
+  `sent` items and `withdrawn`, and the latter names an exchange's variants
+  from the catalog; the invoice models gain `ReasonExchanged` and the two act
+  kinds, and the order models `JournalExchange`, `JournalExchangeReturned` and
+  `JournalExchangeSent`. **For operators:** the order page lists such an
+  exchange with both of its documents and issues them in one press, says when
+  one not yet documentable will be, offers the rest of one documented half,
+  and shows a withdrawn one's documents to be canceled. An exchange whose
+  return never comes back is never documented.
+
 - **An addition's units travel as its parcel's items** (ADR 0428, D264). **For
   API consumers:** `PUT /admin/v1/orders/{id}/fulfillments/{fulfillmentId}`
   takes an optional body, `{"items":[{"line_item_id","quantity"}]}` in the
@@ -407,6 +463,16 @@ design. It is fixed with `1.0.0`.
   operator who can sign in can protect their account.
 
 ### Fixes
+
+- **An exchange that names its return is on the order's documents** (ADR 0432,
+  D247). An order whose buyer swapped a shirt at 20% for a jacket at 1% had
+  documents that printed the shirt sold and nothing of the jacket, while the
+  buyer paid the difference. Once the shirt has come back and the jacket has
+  left, the exchange is now documented as a refund of the shirt on its own row
+  at its own tax and a sale of the jacket at its quote's 1%, so the sale and
+  its amendments add up to what the buyer paid and kept paid, and the order
+  journal's `tax_payable` moves by the jacket's tax less the shirt's. An
+  exchange written without a return stays on no document.
 
 - **The badge counts the warehouses that serve the region** (ADR 0422, D267).
   **For integrators:** `GET /store/v1/sales-channels/{sales_channel_id}/products`,

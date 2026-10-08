@@ -15,7 +15,8 @@ import (
 // An order's acts after its sale are the order journal's entries: a credit, a
 // cheaper or a dearer delivery, a return's or a claim's refund. Each is
 // documented on request, once, by a document naming the order's sale document
-// and, row by row, the sale row each of its rows moves.
+// and, row by row, the sale row each of its rows moves. An exchange that names
+// its return is one act documented by two (ADR 0432).
 
 // The reasons an amendment carries, the invoice module's values repeated as
 // literals for the reason [kindSale] is.
@@ -23,6 +24,7 @@ const (
 	reasonReturned     = "returned"
 	reasonPriceLowered = "price_lowered"
 	reasonPriceRaised  = "price_raised"
+	reasonExchanged    = "exchanged"
 )
 
 // The journal kinds an act may be, the order module's values repeated as
@@ -35,6 +37,11 @@ const (
 	actClaimRefunded    = "claim_refunded"
 	actExchangeFunded   = "exchange_funded"
 	actExchangeRefunded = "exchange_refunded"
+	// actExchange is an exchange that names its return, one act documented
+	// under the two keys below (ADR 0432).
+	actExchange         = "exchange"
+	actExchangeReturned = "exchange_returned"
+	actExchangeSent     = "exchange_sent"
 )
 
 // CarriageRow is what a request names the sale's carriage row by, since the
@@ -84,6 +91,25 @@ type actOfOrder struct {
 		LineID   string `json:"line_id"`
 		Quantity int64  `json:"quantity"`
 	} `json:"returned"`
+	// Sent are the items an exchange sends (ADR 0432).
+	Sent []sentOfOrder `json:"sent"`
+	// Withdrawn says the act is an exchange that was withdrawn.
+	Withdrawn bool `json:"withdrawn"`
+}
+
+// sentOfOrder is one item an exchange sends, as the order surface sends it:
+// the figures recorded when it was written, for its whole quantity.
+type sentOfOrder struct {
+	LineID        string                `json:"line_id"`
+	VariantID     string                `json:"variant_id"`
+	Title         string                `json:"title"`
+	ProductTitle  string                `json:"product_title"`
+	Quantity      int64                 `json:"quantity"`
+	UnitPrice     int64                 `json:"unit_price"`
+	Total         int64                 `json:"total"`
+	TaxTotal      int64                 `json:"tax_total"`
+	TaxRateBps    int32                 `json:"tax_rate_bps"`
+	TaxComponents []invoiceOrderItemTax `json:"tax_components"`
 }
 
 // amendableSale is the sale document as the invoice surface sends it.
@@ -113,7 +139,11 @@ type amendableRow struct {
 	LeftTotal    int64  `json:"left_total"`
 	LeftTax      int64  `json:"left_tax"`
 	AmendsLineID string `json:"amends_line_id"`
-	Components   []struct {
+	// InvoiceID is a charge row's document; empty on the sale's own rows.
+	InvoiceID string `json:"invoice_id"`
+	// GivenBackBy are the live refunds that gave back on the row.
+	GivenBackBy []documentNamed `json:"given_back_by"`
+	Components  []struct {
 		RateID        string `json:"rate_id"`
 		RateBps       int32  `json:"rate_bps"`
 		Compound      bool   `json:"compound"`
@@ -128,6 +158,7 @@ func saleRowOf(printed *amendableRow) saleRow {
 	row := saleRow{
 		LineID: printed.LineID, Position: printed.Position, Total: printed.Total, TaxTotal: printed.TaxTotal,
 		TaxRateBps: printed.TaxRateBps, LeftTotal: printed.LeftTotal, LeftTax: printed.LeftTax,
+		GivenBackBy: printed.GivenBackBy,
 	}
 	for _, component := range printed.Components {
 		row.Components = append(row.Components, saleRowComponent{
@@ -189,9 +220,13 @@ func (w *Workflows) IssueAmendment(ctx context.Context, in AmendInput) (IssueRes
 	if err != nil {
 		return IssueResult{}, err
 	}
+	if in.Act.Kind == actExchange {
+		return w.issueExchange(ctx, in, sale)
+	}
 	key := actKey(in.Act)
 	if document, ok := liveFor(sale, key); ok {
-		return IssueResult{InvoiceID: document.ID, Number: document.Number, AlreadyIssued: true}, nil
+		return oneDocument(IssueResult{InvoiceID: document.ID, Number: document.Number, AlreadyIssued: true},
+			document.Kind), nil
 	}
 
 	order, err := w.readOrder(ctx, in.OrderID)
@@ -225,12 +260,39 @@ func (w *Workflows) IssueAmendment(ctx context.Context, in AmendInput) (IssueRes
 		AmendsInvoiceID: sale.ID, AmendmentReason: reason, AmendmentKey: key,
 	}
 	for _, part := range parts {
-		line := amendingLine(part, order.PricesIncludeTax)
-		body.Lines = append(body.Lines, line)
-		body.Subtotal += line.Subtotal
-		body.TaxTotal += line.TaxTotal
-		body.Total += line.Total
+		body.add(amendingLine(part, order.PricesIncludeTax))
 	}
+	result, err := w.issueKeyed(ctx, &body)
+	if err != nil {
+		return IssueResult{}, err
+	}
+
+	return oneDocument(result, kind), nil
+}
+
+// oneDocument puts an act's one document in the answer's documents, issued by
+// this call unless it stood.
+func oneDocument(result IssueResult, kind string) IssueResult {
+	result.Documents = []IssuedDocument{{
+		InvoiceID: result.InvoiceID, Number: result.Number, Kind: kind, Issued: !result.AlreadyIssued,
+	}}
+
+	return result
+}
+
+// add puts a row on the document and its figures in the document's totals.
+func (d *document) add(line documentLine) {
+	d.Lines = append(d.Lines, line)
+	d.Subtotal += line.Subtotal
+	d.DiscountTotal += line.DiscountTotal
+	d.TaxTotal += line.TaxTotal
+	d.Total += line.Total
+}
+
+// issueKeyed issues an amending document under its act's key. A refusal
+// because the key already has a live document is the other press's document,
+// read again and answered as already issued.
+func (w *Workflows) issueKeyed(ctx context.Context, body *document) (IssueResult, error) {
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		return IssueResult{}, errors.Internal(CodeInvalidInput, "the document could not be encoded: %v", err)
@@ -240,11 +302,11 @@ func (w *Workflows) IssueAmendment(ctx context.Context, in AmendInput) (IssueRes
 	if errors.CodeOf(err) == codeAmendmentExists {
 		// Another press documented the act between the read and the issue;
 		// its document is the answer.
-		again, readErr := w.readAmendable(ctx, sale.ID)
+		again, readErr := w.readAmendable(ctx, body.AmendsInvoiceID)
 		if readErr != nil {
 			return IssueResult{}, readErr
 		}
-		if document, ok := liveFor(again, key); ok {
+		if document, ok := liveFor(again, body.AmendmentKey); ok {
 			return IssueResult{InvoiceID: document.ID, Number: document.Number, AlreadyIssued: true}, nil
 		}
 	}
@@ -262,8 +324,16 @@ type ActDocument struct {
 	OccurredAt   time.Time `json:"occurred_at"`
 	Amount       int64     `json:"amount"`
 	Documentable bool      `json:"documentable"`
-	// Document is the live document of the act; nil when none stands.
+	// Document is the live document of the act; nil when none stands. An
+	// exchange's is its sale, set once its refund and its sale both stand
+	// (ADR 0432).
 	Document *ActDocumentIdentity `json:"document"`
+	// Documents are every live document of the act, in the order they are
+	// issued: the one, or an exchange's refund and then its sale.
+	Documents []ActDocumentIdentity `json:"documents"`
+	// Withdrawn says the act is an exchange withdrawn after its documents
+	// were issued (ADR 0432).
+	Withdrawn bool `json:"withdrawn"`
 }
 
 // ActDocumentIdentity names a document of an act.
@@ -307,12 +377,28 @@ func (w *Workflows) AmendmentsOfOrder(ctx context.Context, orderID string) ([]Ac
 	for i := range acts {
 		act := ActDocument{
 			Kind: acts[i].Kind, ID: acts[i].ID, OccurredAt: acts[i].OccurredAt, Amount: acts[i].Amount,
-			Documentable: acts[i].Documentable,
+			Documentable: acts[i].Documentable, Documents: []ActDocumentIdentity{},
+			Withdrawn: acts[i].Withdrawn,
 		}
-		if document, ok := liveFor(sale, actKey(ActRef{Kind: acts[i].Kind, ID: acts[i].ID})); ok {
-			act.Document = &ActDocumentIdentity{
-				InvoiceID: document.ID, Number: document.Number, Kind: document.Kind, Status: document.Status,
+		keys := []string{actKey(ActRef{Kind: acts[i].Kind, ID: acts[i].ID})}
+		if acts[i].Kind == actExchange {
+			keys = exchangeKeys(acts[i].ID)
+		}
+		for _, key := range keys {
+			if document, ok := liveFor(sale, key); ok {
+				act.Documents = append(act.Documents, ActDocumentIdentity{
+					InvoiceID: document.ID, Number: document.Number, Kind: document.Kind, Status: document.Status,
+				})
 			}
+		}
+		if len(act.Documents) == len(keys) {
+			act.Document = &act.Documents[len(act.Documents)-1]
+		}
+		if act.Withdrawn && len(act.Documents) == 0 {
+			// A withdrawn exchange is listed only for the documents issued
+			// before it was withdrawn, whose sale names goods it no longer
+			// sends and which are canceled.
+			continue
 		}
 		out = append(out, act)
 	}
@@ -369,14 +455,18 @@ func (w *Workflows) readAct(ctx context.Context, orderID string, ref ActRef) (ac
 // documentOf is what documents an act: a paid dearer delivery raises a price on
 // a sale, a return's refund is a return, and a credit, a cheaper delivery and
 // a claim's refund lower a price. No document carries an exchange's funding
-// or refund: an exchange written without a return names neither goods nor
-// tax, and the documents of one that names its return are ADR 0432's second
-// commit.
+// or refund: an exchange that names its return is documented as its exchange
+// act, by its goods ([Workflows.issueExchange]), and one written without a
+// return names neither goods nor tax.
 func documentOf(act actOfOrder) (kind, reason string, err error) {
 	switch {
-	case !act.Documentable || act.Kind == actExchangeFunded || act.Kind == actExchangeRefunded:
+	case act.Kind == actExchangeFunded || act.Kind == actExchangeRefunded:
 		return "", "", errors.Conflict(CodeActNotDocumented,
-			"no document carries a %s act: an exchange's money is on no document", act.Kind)
+			"no document carries a %s act: an exchange that names its return is documented as its "+
+				"exchange act, and an exchange that names no return is on no document", act.Kind)
+	case !act.Documentable:
+		return "", "", errors.Conflict(CodeActNotDocumented,
+			"the order says no document carries its %s act %s", act.Kind, act.ID)
 	case act.Kind == actDeliveryUpgraded:
 		return kindSale, reasonPriceRaised, nil
 	case act.Kind == actReturnRefunded:
@@ -391,9 +481,10 @@ func documentOf(act actOfOrder) (kind, reason string, err error) {
 // saleRowsOf maps the sale document's rows onto the order: line i was printed
 // as row i+1, and the carriage, when the order charged one, as the last row. A
 // sale document that is not the order's as this flow printed it is refused
-// rather than amended at rows it does not know. The rows live charges added,
-// which only a dearer delivery on a sale that shipped free adds, follow as
-// carriage.
+// rather than amended at rows it does not know. The rows live charges added
+// follow as carriage when a dearer delivery on a sale that shipped free added
+// them; the rows an exchange's sale added are its goods and no later act's
+// split falls on them (ADR 0432).
 func saleRowsOf(sale amendableSale, order invoiceOrder) ([]saleRow, error) {
 	want := len(order.Items)
 	if order.ShippingTotal != 0 {
@@ -426,8 +517,14 @@ func saleRowsOf(sale amendableSale, order invoiceOrder) ([]saleRow, error) {
 		}
 		rows = append(rows, row)
 	}
+	exchanged := map[string]bool{}
+	for i := range sale.Amendments {
+		if sale.Amendments[i].AmendmentReason == reasonExchanged {
+			exchanged[sale.Amendments[i].ID] = true
+		}
+	}
 	for i := range sale.ChargeRows {
-		if sale.ChargeRows[i].AmendsLineID != "" {
+		if sale.ChargeRows[i].AmendsLineID != "" || exchanged[sale.ChargeRows[i].InvoiceID] {
 			continue
 		}
 		row := saleRowOf(&sale.ChargeRows[i])

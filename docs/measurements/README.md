@@ -208,4 +208,4 @@ truth: a report says what was true on the day it was taken.
 | [Turkish without its marks — measured 2026-10-06](0408-turkish-without-its-marks.md) | 76 |
 | [A document's tax on the books — measured 2026-10-06](0419-a-documents-tax-on-the-books.md) | 83 |
 | [A parcel that came back — measured 2026-10-07](0423-a-parcel-that-came-back.md) | 116 |
-| [What an exchange prices — measured 2026-10-07](0432-what-an-exchange-prices.md) | 304 |
+| [What an exchange prices — measured 2026-10-07](0432-what-an-exchange-prices.md) | 667 |

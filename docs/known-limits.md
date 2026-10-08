@@ -312,13 +312,46 @@ past and is not corrected retroactively.
   act no document names, and a document issued on the admin route that names no
   act, correct no tax, and an order canceled under a live refund document owes
   negative tax on these books until the document is canceled.
-- **An exchange's money is on no document.** Its funding and its refund are
-  booked by the order journal and printed on nothing. An exchange written
-  without a return carries a figure the operator typed, which names neither
-  goods nor tax, so no row of the sale could carry it (D247). One that names
-  its return prices its goods and their tax when they are written
+- **An exchange written without a return is on no document.** Its funding
+  and its refund are booked by the order journal and printed on nothing: it
+  carries a figure the operator typed, which names neither goods nor tax, so
+  no row of the sale could carry it (D247). One that names its return is
+  documented on request, once its return has come back and every replacement
+  it sends has left, as a refund of the units its return takes back on their
+  sale rows and an amending sale adding a row for each item it sends
   ([ADR 0432](adr/0432-an-exchange-names-its-return-and-prices-what-it-sends.md)),
-  and the documents that carry them are not issued yet.
+  with these limits:
+  - An exchange of goods that an earlier credit or claim refund fell on is
+    refused while that document stands (409 `invoicing_act_does_not_fit`,
+    naming it); voiding it to make room is the operator's call, and a credit
+    issued again may then find no row with room, for example on an order sold
+    one row with free delivery.
+  - A stacked row's rate short of its share of the units' tax, after an earlier
+    part took a rounding unit from it, gives the rest to the rates with room,
+    so a row given back in parts can move a unit between its rates while the
+    row's tax agrees. The part that takes what the row has left in amount
+    takes what each rate has left; a row whose units' shares do not add up to
+    its total keeps the remainder, as ADR 0406's parts do, and an even swap on
+    a row an earlier refund gave back part of can move `tax_payable` by a
+    rounding unit.
+  - An exchange whose return never comes back is never documented, and
+    neither the return it names nor a completed exchange can then be
+    withdrawn; the goods it sent can be invoiced only as a document of their
+    own on `POST /admin/v1/invoices`, which names no act and moves no tax on
+    the order journal.
+  - A replacement written, withdrawn or sent back after its documents is on
+    neither of them; the two are canceled and asked for again. An exchange
+    withdrawn after its documents keeps them listed under it, not
+    documentable: its sale names goods it no longer sends, and both are
+    canceled, the return's own refund then documenting what came back.
+  - A variant it sends is named by the catalog when the documents are issued,
+    not when the exchange was written, and by its id when the catalog no
+    longer has it.
+  - The rows its sale adds take no later act's split, and a return of a unit
+    it sent again names the order line, whose row its refund already gave back
+    from.
+  - Its two documents spend two numbers, and a failure between them leaves the
+    refund standing and the sale issued by the next request.
 - **A tax charged too low is the shop's, and the order journal does not say
   so.** A placed order keeps the tax it charged on its lines, its invoice and its
   `tax_payable`, which then understates what the shop owes by the difference
@@ -850,8 +883,9 @@ past and is not corrected retroactively.
     module's refund route pays back.
   - A rate stack whose cumulative split would take one of its rates below
     nothing splits that item's tax on its own, so the per-rate figures of a
-    line sent in pieces can differ from the line's while their totals agree;
-    the documents of the second commit have to carry that.
+    line sent in pieces can differ from the line's while their totals agree,
+    and an even swap's refund and sale, which print the returned units' and
+    each item's own, can then move tax from one rate to another.
   - A line worth under one minor unit a unit can give a piece of it a share
     of the tax above its share of the total, which no row may carry: the write,
     or the withdrawal that would price it so, answers 409

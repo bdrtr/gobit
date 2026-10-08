@@ -925,11 +925,11 @@ func (p *invoicingFlow) InvoiceOfOrder(
 // IssueAmendment documents an act after the order's sale (ADR 0406).
 func (p *invoicingFlow) IssueAmendment(
 	ctx context.Context, orderID string, request json.RawMessage,
-) (invoiceID, number string, alreadyIssued bool, err error) {
+) (json.RawMessage, error) {
 	p.once.Do(func() { p.resolve(ctx) })
 
 	if p.err != nil {
-		return "", "", false, p.err
+		return nil, p.err
 	}
 
 	return p.svc.IssueAmendment(ctx, orderID, request)

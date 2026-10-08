@@ -111,7 +111,10 @@ func describeOrderJournal(d *openapi.Doc) {
 			"refund document debits tax_payable and credits the account its act was booked to " +
 			"(credit_allowances, shipping, sales_returns or claim_allowances) with the tax it " +
 			"gave back, and a sale document debits shipping and credits tax_payable with the " +
-			"tax it charged. When the document is rejected or canceled, a " +
+			"tax it charged. An exchange that names its return is documented by a refund of " +
+			"what came back and a sale of what was sent, each moving its tax between " +
+			"tax_payable and sales, the account its difference is booked to (ADR 0432). When " +
+			"the document is rejected or canceled, a " +
 			"\"tax_correction_voided\" entry at that moment books the same lines the other way. " +
 			"An act no document names, and a document that names no act, correct no tax. " +
 			"issued_at is the issuing process's clock and the voiding the database's. A " +

@@ -247,6 +247,15 @@ type amendableRow struct {
 	// it names; empty on the sale's own rows.
 	InvoiceID    string `json:"invoice_id,omitempty"`
 	AmendsLineID string `json:"amends_line_id,omitempty"`
+	// GivenBackBy are the live refunds that gave back on the row, in the order
+	// they were issued, so a refusal can name what took its room (ADR 0432).
+	GivenBackBy []amendableDocument `json:"given_back_by"`
+}
+
+// amendableDocument names a document by its id and number.
+type amendableDocument struct {
+	ID     string `json:"id"`
+	Number string `json:"number"`
 }
 
 // amendableComponent is one rate of a stacked row and the tax it has left.
@@ -276,9 +285,10 @@ type amendableHistory struct {
 // each rate, and the documents amending it in the order they were issued.
 //
 // What a row has left is the row and what live documents charged on it, less
-// what live documents gave back. The figures are read without a lock, so they
-// are what the invoicing flow splits an act by; the issue holds the split to
-// them again with the sale locked.
+// what live documents gave back, and each row names the live refunds that gave
+// back on it. The figures are read without a lock, so they are what the
+// invoicing flow splits an act by; the issue holds the split to them again
+// with the sale locked.
 func (i *Interop) AmendableJSON(ctx context.Context, id string) (json.RawMessage, error) {
 	sale, err := i.svc.GetInvoice(ctx, id)
 	if err != nil {
@@ -305,8 +315,21 @@ func (i *Interop) AmendableJSON(ctx context.Context, id string) (json.RawMessage
 		ChargeRows:      []amendableRow{},
 		Amendments:      make([]amendableHistory, 0, len(history)),
 	}
+	refunds, err := i.svc.repo.RefundsByRow(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	givenBy := func(row string) []amendableDocument {
+		out := make([]amendableDocument, 0, len(refunds[row]))
+		for _, refund := range refunds[row] {
+			out = append(out, amendableDocument{ID: refund.ID, Number: refund.Number})
+		}
+		return out
+	}
 	for k := range sale.Lines {
-		out.Rows = append(out.Rows, amendableRowOf(&sale.Lines[k], amended[sale.Lines[k].ID]))
+		row := amendableRowOf(&sale.Lines[k], amended[sale.Lines[k].ID])
+		row.GivenBackBy = givenBy(sale.Lines[k].ID)
+		out.Rows = append(out.Rows, row)
 	}
 	for k := range history {
 		if history[k].Kind != models.KindSale || !history[k].Status.Live() {
@@ -322,6 +345,7 @@ func (i *Interop) AmendableJSON(ctx context.Context, id string) (json.RawMessage
 			}
 			row := amendableRowOf(&charge.Lines[c], amended[charge.Lines[c].ID])
 			row.InvoiceID, row.AmendsLineID = charge.ID, charge.Lines[c].AmendsLineID
+			row.GivenBackBy = givenBy(charge.Lines[c].ID)
 			out.ChargeRows = append(out.ChargeRows, row)
 		}
 	}

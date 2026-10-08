@@ -73,6 +73,21 @@ const (
 	// JournalExchangeRefunded is a refund whose cause is one of the order's
 	// exchanges: the difference sent back (ADR 0203).
 	JournalExchangeRefunded JournalKind = "exchange_refunded"
+	// JournalExchange is an exchange that names its return, listed as one act
+	// after the sale (ADR 0432). It is no entry: its money is its funding's or
+	// its refund's, and it is documented by the two kinds below. Its id is
+	// the exchange's.
+	JournalExchange JournalKind = "exchange"
+	// JournalExchangeReturned is what an exchange's refund document names:
+	// the units its return takes back, given back on their sale rows. It is no
+	// entry either; a document naming it moves its tax against sales, the
+	// account ADR 0203 books the exchange's difference to (ADR 0432). Its id is
+	// the exchange's.
+	JournalExchangeReturned JournalKind = "exchange_returned"
+	// JournalExchangeSent is what an exchange's amending sale names: the goods
+	// its replacements send, a row each. A document naming it moves its tax
+	// against sales the other way (ADR 0432). Its id is the exchange's.
+	JournalExchangeSent JournalKind = "exchange_sent"
 	// JournalTaxCorrected is an amending document that names one of the
 	// order's acts, at its issued_at: the tax it gave back or charged moves
 	// between tax_payable and the account the act was booked to (ADR 0419).

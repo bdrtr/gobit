@@ -1055,6 +1055,47 @@ func (q *Queries) LockInvoice(ctx context.Context, id string) (Invoice, error) {
 	return i, err
 }
 
+const refundsByRow = `-- name: RefundsByRow :many
+SELECT l.amends_line_id::text AS line_id, i.id, i.number
+FROM invoices i
+JOIN invoice_lines l ON l.invoice_id = i.id
+WHERE i.amends_invoice_id = $1::text
+  AND i.kind = 'refund'
+  AND i.status IN ('issued', 'sent', 'accepted')
+  AND l.amends_line_id IS NOT NULL
+GROUP BY l.amends_line_id, i.id, i.number, i.created_at
+ORDER BY i.created_at, i.id, l.amends_line_id
+`
+
+type RefundsByRowRow struct {
+	LineID string
+	ID     string
+	Number string
+}
+
+// RefundsByRow names, per row of the sale, the live refunds that gave back on
+// it, each once and in the order they were written (ADR 0432): what an
+// exchange's refusal names when the row has too little left.
+func (q *Queries) RefundsByRow(ctx context.Context, saleID string) ([]RefundsByRowRow, error) {
+	rows, err := q.db.Query(ctx, refundsByRow, saleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RefundsByRowRow{}
+	for rows.Next() {
+		var i RefundsByRowRow
+		if err := rows.Scan(&i.LineID, &i.ID, &i.Number); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setInvoiceBuyerEmailFolded = `-- name: SetInvoiceBuyerEmailFolded :execrows
 UPDATE invoices
 SET buyer_email_folded = $1::text

@@ -72,6 +72,14 @@ func declaredKinds(t *testing.T, file *ast.File) []models.JournalKind {
 	return kinds
 }
 
+// actOnlyKinds name an act and are no fact the journal books: an exchange that
+// names its return, listed as one act, and the two halves its documents name,
+// whose tax [auditCorrection] books (ADR 0432). The journal refuses each as a
+// fact.
+var actOnlyKinds = []models.JournalKind{
+	models.JournalExchange, models.JournalExchangeReturned, models.JournalExchangeSent,
+}
+
 // TestOnlyADearerDeliveryAndAnExchangeChargeAfterTheSale holds ADR 0394 in
 // the order journal: after the sale, revenue is credited, and the buyer's
 // receivable debited, for a dearer delivery (ADR 0200) and an exchange's
@@ -80,7 +88,8 @@ func declaredKinds(t *testing.T, file *ast.File) []models.JournalKind {
 // The population is every JournalKind the models declare, read from their
 // source, and each is booked through [journalEntry] itself; a kind the
 // journal cannot book fails here rather than passing unread. The sale and its
-// cancellation are the two kinds left out: they ARE the sale.
+// cancellation are the two kinds left out: they ARE the sale. A kind that only
+// names an act is held to being refused as a fact.
 //
 // A document's tax correction and its voiding (ADR 0419) are booked for every
 // act and document kind a document can carry, and held to touching neither the
@@ -104,6 +113,13 @@ func TestOnlyADearerDeliveryAndAnExchangeChargeAfterTheSale(t *testing.T) {
 		}
 		if kind == models.JournalTaxCorrected || kind == models.JournalTaxCorrectionVoided {
 			auditCorrection(t, kind)
+			continue
+		}
+		if slices.Contains(actOnlyKinds, kind) {
+			_, err := journalEntry(&models.JournalFact{
+				ID: "fact_1", Kind: kind, OrderID: "order_1", CurrencyCode: "eur", Amount: 100,
+			})
+			require.Error(t, err, "%q names an act and is booked as no entry of its own", kind)
 			continue
 		}
 		entry, err := journalEntry(&models.JournalFact{
@@ -144,9 +160,11 @@ func auditCorrection(t *testing.T, kind models.JournalKind) {
 	t.Helper()
 
 	for _, act := range documentedActs {
-		document, account := documentRefund, givenBackTo[act]
-		if act == models.JournalDeliveryUpgraded {
-			document, account = documentSale, chargedTo[act]
+		document, ok := DocumentKindOf(act)
+		require.True(t, ok, "%q is documented on no kind of document", act)
+		account := givenBackTo[act]
+		if document == documentSale {
+			account = chargedTo[act]
 		}
 		entry, err := journalEntry(&models.JournalFact{
 			ID: "fact_1", Kind: kind, OrderID: "order_1", CurrencyCode: "eur", Amount: 100,

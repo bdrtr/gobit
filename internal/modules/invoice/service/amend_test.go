@@ -107,8 +107,9 @@ func TestARefundNamesItsSaleAndRows(t *testing.T) {
 	assert.Equal(t, 1, repo.documentCount(), "nothing but the sale was written")
 }
 
-// TestAReasonFitsItsKind: a price raised is a sale, a return or a price
-// lowered a refund, a reason comes with its sale and a sale with its reason.
+// TestAReasonFitsItsKind: a price raised and goods an exchange sends are a
+// sale, a return or a price lowered a refund, a reason comes with its sale and
+// a sale with its reason.
 func TestAReasonFitsItsKind(t *testing.T) {
 	t.Parallel()
 
@@ -130,6 +131,7 @@ func TestAReasonFitsItsKind(t *testing.T) {
 
 	for name, in := range map[string]service.IssueInput{
 		"a refund raising a price": refund(models.ReasonPriceRaised),
+		"a refund of goods sent":   refund(models.ReasonExchanged),
 		"a sale for a return":      charge(models.ReasonReturned),
 		"a sale lowering a price":  charge(models.ReasonPriceLowered),
 		"an unknown reason":        refund("discounted"),
@@ -148,6 +150,7 @@ func TestAReasonFitsItsKind(t *testing.T) {
 
 	for name, in := range map[string]service.IssueInput{
 		"a sale raising a price": charge(models.ReasonPriceRaised),
+		"goods an exchange sent": charge(models.ReasonExchanged),
 		"a return":               refund(models.ReasonReturned),
 		"a price lowered":        refund(models.ReasonPriceLowered),
 	} {
@@ -205,7 +208,9 @@ func TestAKeyNamesAnActTheJournalPlaces(t *testing.T) {
 		":ocl_1": models.KindRefund, "Credit_line:ocl_1": models.KindRefund,
 		// The kind fits the other kind of document.
 		"delivery_upgraded:dc_1": models.KindRefund, "credit_line:ocl_1": models.KindSale,
-		"return_refunded:re_1": models.KindSale,
+		"return_refunded:re_1":     models.KindSale,
+		"exchange_returned:exch_1": models.KindSale, "exchange_sent:exch_1": models.KindRefund,
+		"exchange:exch_1": models.KindSale,
 		// The id carries spaces the journal would look up as they are.
 		"credit_line: ocl_1": models.KindRefund, "credit_line:ocl_1 ": models.KindRefund,
 	}

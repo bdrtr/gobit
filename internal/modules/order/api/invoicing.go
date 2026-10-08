@@ -41,10 +41,10 @@ type Invoicing interface {
 	)
 
 	// IssueAmendment documents one act after the order's sale on a document
-	// amending its sale document, or returns the one the act has (ADR 0406).
-	IssueAmendment(ctx context.Context, orderID string, request json.RawMessage) (
-		invoiceID, number string, alreadyIssued bool, err error,
-	)
+	// amending its sale document, or returns the one the act has (ADR 0406),
+	// as a JSON object of {invoice_id, number, already_issued, documents}
+	// where each document says whether this call issued it (ADR 0432).
+	IssueAmendment(ctx context.Context, orderID string, request json.RawMessage) (json.RawMessage, error)
 
 	// AmendmentsOfOrder lists the order's acts after its sale with the live
 	// document of each.
@@ -241,16 +241,43 @@ type orderActDTO struct {
 	OccurredAt   time.Time `json:"occurred_at"`
 	Amount       int64     `json:"amount"`
 	Documentable bool      `json:"documentable"`
-	// Document is the live document of the act; null when none stands.
+	// Document is the live document of the act; null when none stands. An
+	// exchange's is its sale, once its refund and its sale both stand
+	// (ADR 0432).
 	Document *actDocumentDTO `json:"document"`
+	// Documents are every live document of the act, in the order they are
+	// issued: the one, or an exchange's refund and then its sale.
+	Documents []actDocumentDTO `json:"documents"`
+	// Withdrawn says the act is an exchange withdrawn after its documents
+	// were issued; it is not documentable.
+	Withdrawn bool `json:"withdrawn"`
+}
+
+// amendmentDocumentDTO is one document of an act, as the amendment endpoint
+// answers it (ADR 0432).
+type amendmentDocumentDTO struct {
+	InvoiceID string `json:"invoice_id"`
+	Number    string `json:"number"`
+	Kind      string `json:"kind"`
+	// Issued says this request issued the document; false for one that stood.
+	Issued bool `json:"issued"`
+}
+
+// amendmentIssuedDTO is the amendment endpoint's answer: the act's document,
+// an exchange's sale, and every document of the act.
+type amendmentIssuedDTO struct {
+	InvoiceID     string                 `json:"invoice_id"`
+	Number        string                 `json:"number"`
+	AlreadyIssued bool                   `json:"already_issued"`
+	Documents     []amendmentDocumentDTO `json:"documents"`
 }
 
 // adminIssueAmendment documents an act after the order's sale (ADR 0406).
 //
 // POST /admin/v1/orders/{id}/invoice/amendments
 //
-// It answers 201 when it issued the document and 200 when the act already
-// had one, as the issue endpoint does.
+// It answers 201 when it issued a document and 200 when the act already had
+// every one, as the issue endpoint does, naming every document of the act.
 func (h *Handler) adminIssueAmendment(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -275,19 +302,22 @@ func (h *Handler) adminIssueAmendment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	invoiceID, number, already, err := flow.IssueAmendment(ctx, orderID(r), body)
+	raw, err := flow.IssueAmendment(ctx, orderID(r), body)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 
 		return
 	}
+	var issued amendmentIssuedDTO
+	if err := json.Unmarshal(raw, &issued); err != nil {
+		corehttp.WriteError(ctx, w, coreerrors.Wrap(err, coreerrors.KindInternal, codeInvalidRequest,
+			"the invoicing flow answered an amendment this endpoint cannot read"))
 
-	response := singleEnvelope{Data: invoiceIssuedDTO{
-		InvoiceID:     invoiceID,
-		Number:        number,
-		AlreadyIssued: already,
-	}}
-	if already {
+		return
+	}
+
+	response := singleEnvelope{Data: issued}
+	if issued.AlreadyIssued {
 		corehttp.WriteJSON(ctx, w, http.StatusOK, response)
 
 		return

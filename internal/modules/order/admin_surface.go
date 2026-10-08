@@ -431,8 +431,21 @@ func (s *AfterSalesSurface) IssueAmendment(
 		return "", "", false, errors.Wrap(err, errors.KindInternal, codeSetupFailed,
 			"the amendment request could not be encoded")
 	}
+	raw, err := s.invoicing.IssueAmendment(ctx, orderID, request)
+	if err != nil {
+		return "", "", false, err
+	}
+	var issued struct {
+		InvoiceID     string `json:"invoice_id"`
+		Number        string `json:"number"`
+		AlreadyIssued bool   `json:"already_issued"`
+	}
+	if err := json.Unmarshal(raw, &issued); err != nil {
+		return "", "", false, errors.Wrap(err, errors.KindInternal, codeSetupFailed,
+			"the invoicing flow answered an amendment the panel cannot read")
+	}
 
-	return s.invoicing.IssueAmendment(ctx, orderID, request)
+	return issued.InvoiceID, issued.Number, issued.AlreadyIssued, nil
 }
 
 // CancelOrder cancels an order the checkout placed and writes off every unit
