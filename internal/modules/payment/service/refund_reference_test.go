@@ -42,7 +42,7 @@ func TestEveryRefundOfASplitCarriesTheCause(t *testing.T) {
 	svc, _ := newRefundService(t)
 	collectionID := twiceCapturedCollection(t, svc)
 
-	refunds, err := svc.RefundCollection(t.Context(), collectionID, 0, "returned", "ret_42")
+	refunds, err := svc.RefundCollection(t.Context(), collectionID, 0, 2*refundAmount, "returned", "ret_42")
 
 	require.NoError(t, err)
 	require.Len(t, refunds, 2, "the fixture has to spread the refund, or it proves one row")
@@ -58,7 +58,7 @@ func TestTheMovementsCarryTheCause(t *testing.T) {
 	ctx := t.Context()
 	collectionID := capturedCollection(t, svc, "movements-cause")
 
-	_, err := svc.RefundCollection(ctx, collectionID, 1_000, "damaged", "claim_7")
+	_, err := svc.RefundCollection(ctx, collectionID, 1_000, 1_000, "damaged", "claim_7")
 	require.NoError(t, err)
 
 	movements, err := svc.ListPaymentMovementsByIDs(ctx, []string{collectionID})
@@ -94,7 +94,7 @@ func TestAReferenceIsAnIDNotProse(t *testing.T) {
 	ctx := t.Context()
 	collectionID := capturedCollection(t, svc, "padded-reference")
 
-	_, err := svc.RefundCollection(ctx, collectionID, 1_000, "", " ret_1")
+	_, err := svc.RefundCollection(ctx, collectionID, 1_000, refundAmount, "", " ret_1")
 
 	assert.True(t, errors.IsInvalid(err), "%v", err)
 	current, err := svc.GetPaymentCollection(ctx, collectionID)

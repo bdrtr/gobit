@@ -168,6 +168,10 @@ func TestAnOpeningTheFormCannotSayIsRefusedOnThePage(t *testing.T) {
 		"a fraction": {"return", url.Values{"line_id": {"oli_ring"}, "quantity": {"1.5"}}, "A quantity must be a whole number"},
 		"unpaired":   {"return", url.Values{"line_id": {"oli_ring", "oli_card"}, "quantity": {"1"}}, "Every line needs its quantity box."},
 		"negative":   {"return", url.Values{"line_id": {"oli_ring"}, "quantity": {"-1"}}, "A quantity must be a whole number"},
+		// A return naming no line values nothing, so no refund could complete
+		// it (ADR 0433).
+		"no line": {"return", url.Values{"line_id": {"oli_ring", "oli_card"}, "quantity": {"", "0"}},
+			"Name at least one line coming back."},
 	} {
 		surface := &fakeAfterSales{}
 		rec := act(t, surface, afterSalesCatalog(nil), openPath(tc.kind), tc.form, "order:read", "order:write")

@@ -898,6 +898,25 @@ past and is not corrected retroactively.
     second replacement and raises the difference by it, and a funding checked
     against the first figure is refused (409 `order_exchange_difference_moved`).
 
+- **A return gives back what its units were sold for, and nothing beside
+  them.** Its refunds add up to at most what its lines' units were sold for,
+  less what refunds naming it gave back
+  ([ADR 0433](adr/0433-a-return-gives-back-at-most-what-its-units-sold-for.md)):
+  - Shipping given back with a return, and the money of a return that names no
+    line, is a credit and the payment module's refund route; the order page
+    writes the credit and not the refund.
+  - A refund made before ADR 0187 names no return and is not counted, and a
+    return refunded past its units before ADR 0433 refunds nothing more and
+    keeps what it paid.
+  - Each return values its units by their share of the line rounded down, so
+    a line returned in parts can give back up to one minor unit per unit less
+    than it sold for; the payment module's own refund route pays the rest.
+  - A credit or a claim's refund given for the same goods is not taken off.
+  - A partial amount sent twice pays twice, up to what is left.
+  - A claim is refunded once: settling one whose stamp failed after its refund
+    records it settled and refunds nothing, and one whose refund went out in
+    part is finished through the payment module's refund route.
+
 - **A lost authenticator is answered only at the machine.** A person enrolls,
   replaces and removes their own factor in the panel
   ([ADR 0266](adr/0266-the-panel-enrolls-a-second-factor.md)) or through the
@@ -1096,8 +1115,8 @@ past and is not corrected retroactively.
   most 25 of each kind, takes every act the API takes on one
   ([ADR 0271](adr/0271-the-panel-acts-on-an-orders-after-sales.md)) and opens
   each kind ([ADR 0272](adr/0272-the-panel-opens-an-orders-after-sales.md)),
-  a return with each line's part of the refund and a replacement with one
-  variant the order never sold
+  a return naming at least one line (ADR 0433) with each line's part of the
+  refund and a replacement with one variant the order never sold
   ([ADR 0279](adr/0279-the-panel-opens-a-return-and-a-replacement-with-their-detail.md)).
   A replacement that sends more than one such variant, or one at an operator's
   unit price (ADR 0432), is still an `/admin/v1` call.

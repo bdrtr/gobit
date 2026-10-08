@@ -96,7 +96,21 @@ const (
 	// CodeReturnSettledByExchange reports a refund asked of a return a live
 	// exchange takes back (ADR 0432).
 	CodeReturnSettledByExchange = "returns_workflow_return_settled_by_exchange"
+	// CodeRefundExceedsReturn reports a refund that would take what a return's
+	// refunds gave back past what its units were sold for (ADR 0433).
+	CodeRefundExceedsReturn = "returns_workflow_refund_exceeds_return"
+	// CodeReturnNamesNoLine reports a refund asked of a return that names no
+	// line, whose worth cannot be told (ADR 0433).
+	CodeReturnNamesNoLine = "returns_workflow_return_names_no_line"
+	// CodeClaimRefunded reports a claim a refund already names that could not
+	// be recorded settled (ADR 0433).
+	CodeClaimRefunded = "returns_workflow_claim_refunded"
 )
+
+// codeRefundExceedsCause is the payment module's code for a refund that would
+// pass the ceiling of its cause (ADR 0433), repeated here for the reason
+// [LinkVariantInventory] gives: the flow answers it in its own record's words.
+const codeRefundExceedsCause = "payment_refund_exceeds_cause"
 
 // codeExchangeDifferenceHeld is the order module's code for a replacement a
 // funded exchange holds money for (ADR 0432), repeated here for the reason
@@ -162,11 +176,15 @@ type Orders interface {
 // Payments is the surface of the payment module used by this flow.
 type Payments interface {
 	// RefundCollection refunds an amount against a collection and returns what
-	// actually went back. A zero amount refunds everything left. Every refund
-	// row it writes carries reference: the id of the return, claim or exchange
-	// that caused it, so the order's books can tell them apart (ADR 0187).
+	// actually went back. Every refund row it writes carries reference: the id
+	// of the return, claim or exchange that caused it, so the order's books can
+	// tell them apart (ADR 0187). The refunds naming that record add up to at
+	// most ceiling: one that would pass it is refused with the payment
+	// module's payment_refund_exceeds_cause and moves nothing, and a zero
+	// amount asks for what the record has left under it, as far as the
+	// collection holds (ADR 0433).
 	RefundCollection(
-		ctx context.Context, collectionID string, amount int64, reason, reference string,
+		ctx context.Context, collectionID string, amount, ceiling int64, reason, reference string,
 	) (int64, error)
 	// Collection returns the collection's status and amounts.
 	Collection(ctx context.Context, collectionID string) (

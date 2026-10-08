@@ -146,8 +146,10 @@ type Orders interface {
 	// ArchiveOrder archives a completed order.
 	ArchiveOrder(ctx context.Context, orderID string) (models.Order, error)
 
-	// CreateReturn opens a return record on the order.
-	CreateReturn(ctx context.Context, in service.CreateReturnInput) (models.Return, error)
+	// CreateReturnRecord opens a return record on the order and answers it
+	// with its lines and what its units were sold for, from the write itself
+	// (ADR 0433).
+	CreateReturnRecord(ctx context.Context, in service.CreateReturnInput) (service.ReturnRecord, error)
 	// GetReturn returns the return record by its id.
 	GetReturn(ctx context.Context, returnID string) (models.Return, error)
 	// ListReturns pages the order's return records.
@@ -158,6 +160,9 @@ type Orders interface {
 	// units a request is holding against the order's lines; what that costs
 	// while nothing calls it is in [Handler.adminCancelReturn].
 	CancelReturn(ctx context.Context, returnID string) (models.Return, error)
+	// ReturnsWithLines fills the returns' lines and says what each one's
+	// units were sold for, in two reads however many are given (ADR 0433).
+	ReturnsWithLines(ctx context.Context, returns []models.Return) ([]service.ReturnRecord, error)
 
 	// CreateExchange opens an exchange record on the order.
 	CreateExchange(ctx context.Context, in service.CreateExchangeInput) (models.Exchange, error)
@@ -645,10 +650,32 @@ type returnDTO struct {
 	Reason       string         `json:"reason,omitempty"`
 	Note         string         `json:"note,omitempty"`
 	Metadata     map[string]any `json:"metadata,omitempty"`
-	ReceivedAt   *time.Time     `json:"received_at,omitempty"`
-	CanceledAt   *time.Time     `json:"canceled_at,omitempty"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
+	// Lines are the order lines coming back, an empty list on a return that
+	// names none (ADR 0433).
+	//
+	// Lines and SoldFor are absent only from the answer to a withdrawal whose
+	// lines could not be read after it was written, and Warnings says so: the
+	// withdrawal stands, and an error would invite repeating it.
+	Lines *[]returnLineDTO `json:"lines,omitempty"`
+	// SoldFor is what the return's units were sold for: each line's total
+	// shared by the units coming back, rounded down. The return's refunds add
+	// up to at most this figure; what they gave back is the payment module's
+	// to say, and is not copied here (ADR 0119, ADR 0433).
+	SoldFor    *int64     `json:"sold_for,omitempty"`
+	ReceivedAt *time.Time `json:"received_at,omitempty"`
+	CanceledAt *time.Time `json:"canceled_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	// Warnings are what the answer could not read; they need a human.
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// returnLineDTO is one order line a return names.
+type returnLineDTO struct {
+	OrderLineItemID string `json:"order_line_item_id"`
+	Quantity        int64  `json:"quantity"`
+	// RefundAmount is the part of the planned refund the line was opened with.
+	RefundAmount int64 `json:"refund_amount"`
 }
 
 // exchangeDTO is the external representation of an exchange record.
@@ -915,8 +942,27 @@ func toSummaryDTO(summary models.OrderSummary, orderTotal, creditedTotal int64) 
 	}
 }
 
-// toReturnDTO converts the model to the external representation.
-func toReturnDTO(ret models.Return) returnDTO {
+// toReturnDTO converts the record to the external representation.
+func toReturnDTO(ret *service.ReturnRecord) returnDTO {
+	lines := make([]returnLineDTO, 0, len(ret.Items))
+	for i := range ret.Items {
+		lines = append(lines, returnLineDTO{
+			OrderLineItemID: ret.Items[i].OrderLineItemID,
+			Quantity:        ret.Items[i].Quantity,
+			RefundAmount:    ret.Items[i].RefundAmount,
+		})
+	}
+
+	out := toReturnHeadDTO(&ret.Return)
+	soldFor := ret.SoldFor
+	out.Lines, out.SoldFor = &lines, &soldFor
+
+	return out
+}
+
+// toReturnHeadDTO converts the return's own row, without its lines and their
+// worth.
+func toReturnHeadDTO(ret *models.Return) returnDTO {
 	return returnDTO{
 		ID:           ret.ID,
 		OrderID:      ret.OrderID,
@@ -930,6 +976,57 @@ func toReturnDTO(ret models.Return) returnDTO {
 		CreatedAt:    ret.CreatedAt,
 		UpdatedAt:    ret.UpdatedAt,
 	}
+}
+
+// returnDTOs reads the returns' lines and what their units were sold for, and
+// converts them (ADR 0433).
+func (h *Handler) returnDTOs(ctx context.Context, returns []models.Return) ([]returnDTO, error) {
+	records, err := h.svc.ReturnsWithLines(ctx, returns)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]returnDTO, 0, len(records))
+	for i := range records {
+		out = append(out, toReturnDTO(&records[i]))
+	}
+
+	return out, nil
+}
+
+// writeReturn answers a read with one return record, its lines and what its
+// units were sold for.
+func (h *Handler) writeReturn(ctx context.Context, w http.ResponseWriter, status int, ret models.Return) {
+	data, err := h.returnDTOs(ctx, []models.Return{ret})
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	corehttp.WriteJSON(ctx, w, status, singleEnvelope{Data: data[0]})
+}
+
+// writeWrittenReturn answers a write that committed with the record, its lines
+// and what its units were sold for. When the lines cannot be read after the
+// write, the record is answered without them and with a warning, and the
+// failure is logged: the write stands, and an error would invite repeating
+// it.
+func (h *Handler) writeWrittenReturn(ctx context.Context, w http.ResponseWriter, status int, ret models.Return) {
+	data, err := h.returnDTOs(ctx, []models.Return{ret})
+	if err != nil {
+		corehttp.LoggerFromContext(ctx).ErrorContext(ctx,
+			"the return was written and its lines could not be read for the answer",
+			"return_id", ret.ID, "order_id", ret.OrderID, "error", err)
+		head := toReturnHeadDTO(&ret)
+		head.Warnings = []string{"The return was written; its lines and what they were sold for " +
+			"could not be read for this answer. Read the return again."}
+		corehttp.WriteJSON(ctx, w, status, singleEnvelope{Data: head})
+
+		return
+	}
+
+	corehttp.WriteJSON(ctx, w, status, singleEnvelope{Data: data[0]})
 }
 
 // toExchangeDTO converts the model to the external representation.

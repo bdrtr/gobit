@@ -81,23 +81,37 @@ type ReturnLineInput struct {
 // a REQUEST and the received stamp is put on it when the goods are really taken
 // back, in the workflow of the next phase.
 func (s *Service) CreateReturn(ctx context.Context, in CreateReturnInput) (models.Return, error) {
-	if err := requireID("order_id", in.OrderID); err != nil {
-		return models.Return{}, err
-	}
-	if err := checkAmount("refund_amount", in.RefundAmount, models.MaxTotal); err != nil {
-		return models.Return{}, err
-	}
-	if err := checkTextLen("reason", in.Reason); err != nil {
-		return models.Return{}, err
-	}
-	if err := checkTextLen("note", in.Note); err != nil {
-		return models.Return{}, err
-	}
-	if err := checkReturnLines(in.Lines); err != nil {
+	record, err := s.CreateReturnRecord(ctx, in)
+	if err != nil {
 		return models.Return{}, err
 	}
 
+	return record.Return, nil
+}
+
+// CreateReturnRecord is [Service.CreateReturn] answering with the record's
+// lines and what its units were sold for (ADR 0433), from what the write
+// itself read: an answer that read after the commit could fail for a return
+// that exists, and a caller retrying it would open a second one.
+func (s *Service) CreateReturnRecord(ctx context.Context, in CreateReturnInput) (ReturnRecord, error) {
+	if err := requireID("order_id", in.OrderID); err != nil {
+		return ReturnRecord{}, err
+	}
+	if err := checkAmount("refund_amount", in.RefundAmount, models.MaxTotal); err != nil {
+		return ReturnRecord{}, err
+	}
+	if err := checkTextLen("reason", in.Reason); err != nil {
+		return ReturnRecord{}, err
+	}
+	if err := checkTextLen("note", in.Note); err != nil {
+		return ReturnRecord{}, err
+	}
+	if err := checkReturnLines(in.Lines); err != nil {
+		return ReturnRecord{}, err
+	}
+
 	var created models.Return
+	var orderLines []models.OrderLineItem
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {
 		order, err := s.requireLiveOrder(ctx, in.OrderID, "a return record")
 		if err != nil {
@@ -110,6 +124,7 @@ func (s *Service) CreateReturn(ctx context.Context, in CreateReturnInput) (model
 		if err != nil {
 			return err
 		}
+		orderLines = lines
 
 		// The rule is checked BEFORE the record is written, under the order's
 		// lock taken by requireLiveOrder. Writing first and validating after
@@ -161,9 +176,9 @@ func (s *Service) CreateReturn(ctx context.Context, in CreateReturnInput) (model
 		return nil
 	})
 	if err != nil {
-		return models.Return{}, err
+		return ReturnRecord{}, err
 	}
-	return created, nil
+	return ReturnRecord{Return: created, SoldFor: returnedWorth(orderLines, created.Items)}, nil
 }
 
 // GetReturn returns the return record by its identifier.
@@ -182,6 +197,73 @@ func (s *Service) ListReturns(ctx context.Context, orderID string, page Page) ([
 		return nil, 0, err
 	}
 	return s.store.ListReturns(ctx, filter)
+}
+
+// ReturnRecord is a return with its lines and what its units were sold for.
+type ReturnRecord struct {
+	// Return carries its Items.
+	models.Return
+	// SoldFor is what the return's units were sold for: each line's total
+	// shared by the units coming back, rounded down. A return's refunds add
+	// up to at most this figure (ADR 0433).
+	SoldFor int64
+}
+
+// ReturnsWithLines fills the returns' lines and says what each one's units
+// were sold for (ADR 0433): one read of the returns' lines and one of each
+// order's lines, however many returns are given. A return that carries its
+// Items already, as the one [Service.CreateReturn] answers does, keeps them.
+//
+// The figure is the order module's own, over its own lines, and is the one the
+// returns flow holds a return's refunds to; what the refunds gave back is the
+// payment module's to say.
+func (s *Service) ReturnsWithLines(ctx context.Context, returns []models.Return) ([]ReturnRecord, error) {
+	out := make([]ReturnRecord, 0, len(returns))
+	if len(returns) == 0 {
+		return out, nil
+	}
+
+	ids := make([]string, 0, len(returns))
+	for i := range returns {
+		if returns[i].Items == nil {
+			ids = append(ids, returns[i].ID)
+		}
+	}
+	items := map[string][]models.ReturnItem{}
+	if len(ids) > 0 {
+		read, err := s.store.ReturnItemsOf(ctx, ids)
+		if err != nil {
+			return nil, err
+		}
+		items = read
+	}
+
+	linesOf := map[string][]models.OrderLineItem{}
+	for i := range returns {
+		orderID := returns[i].OrderID
+		if _, read := linesOf[orderID]; read {
+			continue
+		}
+		lines, err := s.store.ListLineItems(ctx, orderID)
+		if err != nil {
+			return nil, err
+		}
+		linesOf[orderID] = lines
+	}
+
+	for i := range returns {
+		record := ReturnRecord{Return: returns[i]}
+		if record.Items == nil {
+			record.Items = items[returns[i].ID]
+		}
+		if record.Items == nil {
+			record.Items = []models.ReturnItem{}
+		}
+		record.SoldFor = returnedWorth(linesOf[returns[i].OrderID], record.Items)
+		out = append(out, record)
+	}
+
+	return out, nil
 }
 
 // CreateExchangeInput is the input of a new exchange record.

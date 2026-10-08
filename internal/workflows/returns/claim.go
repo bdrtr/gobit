@@ -50,6 +50,14 @@ type SettleClaimResult struct {
 // flow that sends it (ADR 0090); what is left is that money and goods are two
 // different verbs, which is a distinction rather than a limit.
 //
+// # A claim is refunded once
+//
+// The amount asked is the ceiling of the refunds naming the claim (ADR 0433),
+// so a refund already naming it refuses the next. A claim still requested that
+// a refund already names is one whose stamp failed after its money left, or
+// one that met another settle: it is recorded settled and nothing moves,
+// which is what the settle that made the refund would have done.
+//
 // # Why it is not a return
 //
 // A claim is about goods that arrived damaged or short. Nothing comes back, so
@@ -98,8 +106,15 @@ func (w *Workflows) SettleClaim(
 			claimID)
 	}
 
-	refunded, err := w.payments.RefundCollection(ctx, collectionID, amount, reason, claimID)
+	// The amount asked is the ceiling as well (ADR 0433): a claim keeps a figure
+	// typed above its own, and a refund that already names the claim refuses
+	// the next, which holds two settles that meet, or one whose stamp failed,
+	// to one refund.
+	refunded, err := w.payments.RefundCollection(ctx, collectionID, amount, amount, reason, claimID)
 	if err != nil && refunded == 0 {
+		if errors.CodeOf(err) == codeRefundExceedsCause {
+			return w.settleRefundedClaim(ctx, detail, collectionID, err)
+		}
 		return SettleClaimResult{}, errors.Wrap(err, errors.KindOf(err), CodeRefundFailed,
 			"the refund for claim %s could not be made", claimID)
 	}
@@ -121,15 +136,48 @@ func (w *Workflows) SettleClaim(
 	result.Warnings = append(result.Warnings, refundResult.Warnings...)
 
 	// The claim is stamped LAST. The money has moved either way, and a stamp
-	// that could not be written leaves a claim an operator can settle again —
-	// which is visible — while stamping first would leave one that looks
-	// settled with nothing sent.
+	// that could not be written leaves a claim that still looks open — which is
+	// visible, and settling it again is refused because a refund names it
+	// (ADR 0433) — while stamping first would leave one that looks settled with
+	// nothing sent.
 	if err := w.orders.CompleteClaim(ctx, claimID); err != nil {
 		w.log.ErrorContext(ctx,
 			"the claim could not be stamped settled; the money LEFT and the claim still looks open",
 			"claim_id", claimID, "order_id", detail.OrderID, "refunded", refunded, "error", err)
 		result.Warnings = append(result.Warnings, "the claim was not stamped settled: "+err.Error())
 	}
+
+	return result, nil
+}
+
+// settleRefundedClaim records as settled a claim still requested that a refund
+// already names (ADR 0433). Its money left with that refund, so nothing moves:
+// the order's summary is brought up to the collection and the claim is
+// stamped, which the settle that made the refund would have done had its stamp
+// been written. A stamp that cannot be written answers
+// [CodeClaimRefunded] and leaves the claim as it was.
+func (w *Workflows) settleRefundedClaim(
+	ctx context.Context, detail claimDetail, collectionID string, refused error,
+) (SettleClaimResult, error) {
+	result := SettleClaimResult{ClaimID: detail.ClaimID, OrderID: detail.OrderID}
+
+	refundResult := RefundResult{ReturnID: detail.ClaimID, OrderID: detail.OrderID}
+	w.recordRefund(ctx, collectionID, &refundResult)
+	result.SummaryRecorded = refundResult.SummaryRecorded
+
+	if err := w.orders.CompleteClaim(ctx, detail.ClaimID); err != nil {
+		return SettleClaimResult{}, errors.Wrap(err, errors.KindOf(err), CodeClaimRefunded,
+			"a refund already names claim %s, so nothing was refunded again, and the claim could "+
+				"not be recorded settled", detail.ClaimID)
+	}
+	w.log.WarnContext(ctx, "a refund already named the claim; it was recorded settled and nothing moved",
+		"claim_id", detail.ClaimID, "order_id", detail.OrderID, "collection_id", collectionID,
+		"refunds", messageOf(refused))
+
+	result.Warnings = append(result.Warnings,
+		"a refund already named the claim, so nothing was refunded again and the claim is recorded "+
+			"settled with what was given back: "+messageOf(refused))
+	result.Warnings = append(result.Warnings, refundResult.Warnings...)
 
 	return result, nil
 }

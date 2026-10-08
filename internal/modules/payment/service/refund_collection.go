@@ -11,8 +11,12 @@ import (
 // amount left.
 const CodeCollectionNothingToRefund = "payment_collection_nothing_to_refund"
 
+// CodeRefundExceedsCause reports a refund that would take what the refunds
+// naming its cause gave back past the ceiling the caller named (ADR 0433).
+const CodeRefundExceedsCause = "payment_refund_exceeds_cause"
+
 // RefundCollection refunds an amount against a COLLECTION rather than against
-// one capture.
+// one capture, for a cause and up to a ceiling.
 //
 // # Why the caller should not have to name a capture
 //
@@ -41,25 +45,33 @@ const CodeCollectionNothingToRefund = "payment_collection_nothing_to_refund"
 // order is a behavior change nobody has asked for. The trigger is the first
 // provider that reports a closed refund window.
 //
-// A zero amount refunds EVERYTHING that is left, which is what "give the
-// customer their money back" means when nobody named a figure.
-//
-// # It is NOT idempotent
-//
-// For [Service.RefundPayment]'s reason, which applies unchanged: two calls for
-// ten units are a real refund of twenty, and the record must show two lines.
-// The caller is responsible for calling it once — in the return flow that
-// guarantee comes from a return being refundable only once.
-//
-// # The reference names the cause
+// # The reference names the cause, and the ceiling bounds it
 //
 // Every refund row it writes carries the reference, in the transaction that
 // writes the row (ADR 0187). The caller passes the id of its own record that
 // caused the refund — a return, a claim, an exchange — so the order's books can
-// tell a return's money from a claim's; "" leaves the refund unattributed. The
-// reference is the caller's and this module never reads it.
+// tell a return's money from a claim's. The reference is required: this module
+// does not read what it names, it sums by it (ADR 0433).
+//
+// The ceiling is the most the refunds naming that cause may give back between
+// them, in every collection: what a return's units were sold for, the amount
+// a claim's settle asks, an exchange's difference. The caller names the
+// figure, because what the cause is worth is the caller's to know. An amount
+// past what the cause has left under it is refused with
+// [CodeRefundExceedsCause] before money moves, and a ZERO amount asks for what
+// the cause has left, as far as the collection holds.
+//
+// # It is NOT idempotent, and the ceiling is what holds it
+//
+// For [Service.RefundPayment]'s reason, which applies unchanged: two calls for
+// ten units are a real refund of twenty, and the record must show two lines.
+// What holds a cause to its figure is the ceiling, and the sum is read twice:
+// here, so that a refund past it moves nothing, and again by each part under
+// the collection's lock before the provider is called, so that two refunds of
+// one cause at once give back at most the ceiling between them. The first read
+// alone would let both pass: a refund in flight is not yet a refund.
 func (s *Service) RefundCollection(
-	ctx context.Context, collectionID string, amount int64, reason, reference string,
+	ctx context.Context, collectionID string, amount, ceiling int64, reason, reference string,
 ) ([]models.Refund, error) {
 	if err := requireText("collection_id", collectionID); err != nil {
 		return nil, err
@@ -70,13 +82,39 @@ func (s *Service) RefundCollection(
 	if err := checkTextLen("reason", reason); err != nil {
 		return nil, err
 	}
+	if err := requireText("reference", reference); err != nil {
+		return nil, err
+	}
 	if err := checkReference(reference); err != nil {
 		return nil, err
+	}
+	if ceiling <= 0 {
+		return nil, errors.Invalid(CodeInvalidInput,
+			"the refunds naming %s are held to a ceiling, and it has to be positive: %d", reference, ceiling)
 	}
 
 	payments, err := s.store.ListPaymentsByCollection(ctx, collectionID)
 	if err != nil {
 		return nil, err
+	}
+
+	given, err := s.store.RefundedForReference(ctx, reference)
+	if err != nil {
+		return nil, err
+	}
+	left := ceiling - given
+	if left <= 0 {
+		return nil, errors.Conflict(CodeRefundExceedsCause,
+			"the refunds naming %s gave back %d of the %d it may give back, so nothing is left",
+			reference, given, ceiling)
+	}
+	if amount == 0 {
+		amount = min(left, refundableOf(payments))
+	}
+	if amount > left {
+		return nil, errors.Conflict(CodeRefundExceedsCause,
+			"%d was asked back for %s, whose refunds gave back %d of the %d it may give back, so %d is left",
+			amount, reference, given, ceiling, left)
 	}
 
 	plan, err := planRefund(collectionID, payments, amount)
@@ -92,7 +130,7 @@ func (s *Service) RefundCollection(
 	// money really did go back.
 	made := make([]models.Refund, 0, len(plan))
 	for _, part := range plan {
-		refund, refundErr := s.refundPayment(ctx, part.paymentID, part.amount, reason, reference)
+		refund, refundErr := s.refundPayment(ctx, part.paymentID, part.amount, reason, reference, ceiling)
 		if refundErr != nil {
 			if len(made) == 0 {
 				return nil, refundErr
@@ -117,6 +155,15 @@ type refundPart struct {
 	amount    int64
 }
 
+// refundableOf is what the captures still hold.
+func refundableOf(payments []models.Payment) int64 {
+	var refundable int64
+	for i := range payments {
+		refundable += payments[i].Amount - payments[i].RefundedAmount
+	}
+	return refundable
+}
+
 // planRefund decides which captures the amount comes out of.
 //
 // The plan is built BEFORE anything is refunded so that an amount larger than
@@ -126,10 +173,7 @@ type refundPart struct {
 func planRefund(
 	collectionID string, payments []models.Payment, amount int64,
 ) ([]refundPart, error) {
-	var refundable int64
-	for i := range payments {
-		refundable += payments[i].Amount - payments[i].RefundedAmount
-	}
+	refundable := refundableOf(payments)
 	if refundable <= 0 {
 		return nil, errors.Conflict(CodeCollectionNothingToRefund,
 			"collection %s has nothing left to refund", collectionID)

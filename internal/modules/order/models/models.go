@@ -647,9 +647,10 @@ type Return struct {
 	UpdatedAt time.Time
 	// Items are the lines coming back.
 	//
-	// It is EMPTY on a listing and filled on a single read: a listing that
-	// carried every record's lines would be an N+1 in the one place an operator
-	// scrolls.
+	// The store's reads of a return leave it empty, and the creation fills it
+	// with what it wrote. A reader that wants the lines asks for them: the
+	// order module's ReturnsWithLines reads a page of returns' lines in one
+	// query, which is what keeps a listing from an N+1 (ADR 0433).
 	Items []ReturnItem
 }
 

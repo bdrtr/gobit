@@ -278,7 +278,35 @@ func TestEveryCartAShopperCanBuildIsSoldAsQuoted(t *testing.T) {
 			require.Equal(rt, restocked[variant], afterReceipt[variant]-beforeReceipt[variant], "the return puts %s back", variant)
 		}
 
-		amount := rapid.Int64Range(1, stored.Total).Draw(rt, "refunded")
+		// What comes back is refunded up to what its units were sold for, the
+		// figure the return's single read publishes (ADR 0433): an amount past
+		// it, up to the order's total, is refused and moves nothing. This draw
+		// went up to the order's total before, the fault as a property (D269).
+		read, err := adminRequestWithBody(http.MethodGet, "/admin/v1/orders/"+order.ID+"/returns/"+opened.ID, nil)
+		require.NoError(rt, err)
+		require.Equal(rt, http.StatusOK, read.Code, read.Body.String())
+		var record struct {
+			Data returnRecordBody `json:"data"`
+		}
+		require.NoError(rt, json.Unmarshal(read.Body.Bytes(), &record))
+		require.Len(rt, record.Data.Lines, len(request.Lines), "the record names the lines asked back")
+		soldFor := record.Data.SoldFor
+		require.GreaterOrEqual(rt, soldFor, int64(0))
+		require.LessOrEqual(rt, soldFor, stored.Total, "the units are worth no more than the order")
+		if soldFor < stored.Total {
+			over := rapid.Int64Range(soldFor+1, stored.Total).Draw(rt, "refunded past the units")
+			_, _, _, err := returnsFlow.RefundReturn(ctx, opened.ID, over, "property")
+			require.Error(rt, err, "%d past the %d the units were sold for", over, soldFor)
+			require.Equal(rt, returnswf.CodeRefundExceedsReturn, errors.CodeOf(err), "%v", err)
+			collection, err = paymentSvc.GetPaymentCollection(ctx, placed.PaymentCollectionID)
+			require.NoError(rt, err)
+			require.Zero(rt, collection.RefundedAmount, "the refused refund moved nothing")
+		}
+		if soldFor == 0 {
+			return
+		}
+
+		amount := rapid.Int64Range(1, soldFor).Draw(rt, "refunded")
 		refunded, _, refundWarnings, err := returnsFlow.RefundReturn(ctx, opened.ID, amount, "property")
 		require.NoError(rt, err)
 		require.Empty(rt, refundWarnings)

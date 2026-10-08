@@ -5,7 +5,7 @@ it, written in the transaction that writes the row. It costs a column and an
 argument on the payment module's refund surface, and it lets the order's books
 say why each refund left.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0433](0433-a-return-gives-back-at-most-what-its-units-sold-for.md), whose payment module holds the refunds naming a cause to its caller's ceiling
 - **Date:** 2026-09-25
 
 Measurement: [measurements/0187](../measurements/0187-why-the-money-went-back.md)

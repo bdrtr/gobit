@@ -335,6 +335,8 @@ func TestTheOrderPageOffersTheActsARecordsStatusAllows(t *testing.T) {
 	}
 	assert.Contains(t, body, `name="location_id"`)
 	assert.Contains(t, body, `placeholder="empty: the claim&#39;s own amount"`)
+	assert.Contains(t, body, `placeholder="empty: the rest of what the returned units sold for"`,
+		"an empty refund of a return gives back what is left of its units' worth (ADR 0433)")
 	assert.Contains(t, body, `<input type="hidden" name="currency" value="TRY">`,
 		"a typed amount is read in the order's currency")
 

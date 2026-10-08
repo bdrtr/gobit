@@ -41,6 +41,16 @@ type RefundResult struct {
 // behalf; a shop that wants to pay before inspection can receive first and
 // refund immediately, which is the same two facts in the same order.
 //
+// # A return gives back at most what its units were sold for
+//
+// Its refunds add up to at most what the return's units were sold for, the
+// order module's figure for them, which the payment module holds them to under
+// the collection's lock (ADR 0433): an amount past what is left, and any
+// refund once nothing is, is refused and moves nothing. A ZERO amount asks for
+// what is left, as far as the collection holds. A return that names no line
+// values nothing and is refused: its money, like shipping given back, is a
+// credit and the payment module's own refund route.
+//
 // # The order is told LAST, and a failure there does not undo the money
 //
 // The refund reaches a payment provider; the summary write is local. Doing the
@@ -80,13 +90,29 @@ func (w *Workflows) RefundReturn(
 				"exchange to refund the return", returnID, detail.SettledByExchange)
 	}
 
+	if len(detail.Lines) == 0 {
+		return RefundResult{}, errors.Conflict(CodeReturnNamesNoLine,
+			"return %s names no line, so what it may give back cannot be valued; give it back as a "+
+				"credit and refund it through the payment module", returnID)
+	}
+	if detail.SoldFor <= 0 {
+		return RefundResult{}, errors.Conflict(CodeRefundExceedsReturn,
+			"return %s gives back at most what its units were sold for, and they were sold for nothing",
+			returnID)
+	}
+
 	collectionID, err := w.collectionOf(ctx, detail.OrderID)
 	if err != nil {
 		return RefundResult{}, err
 	}
 
-	refunded, err := w.payments.RefundCollection(ctx, collectionID, amount, reason, returnID)
+	refunded, err := w.payments.RefundCollection(ctx, collectionID, amount, detail.SoldFor, reason, returnID)
 	if err != nil && refunded == 0 {
+		if errors.CodeOf(err) == codeRefundExceedsCause {
+			return RefundResult{}, errors.Wrap(err, errors.KindConflict, CodeRefundExceedsReturn,
+				"return %s gives back at most what its units were sold for, %d: %s",
+				returnID, detail.SoldFor, messageOf(err))
+		}
 		return RefundResult{}, errors.Wrap(err, errors.KindOf(err), CodeRefundFailed,
 			"the refund for return %s could not be made", returnID)
 	}
@@ -110,6 +136,16 @@ func (w *Workflows) RefundReturn(
 	w.recordRefund(ctx, collectionID, &result)
 
 	return result, nil
+}
+
+// messageOf is the sentence a typed error carries, or the error's text.
+func messageOf(err error) string {
+	var typed *errors.Error
+	if errors.As(err, &typed) && typed.Message != "" {
+		return typed.Message
+	}
+
+	return err.Error()
 }
 
 // collectionOf finds the payment collection bound to the order.

@@ -755,11 +755,15 @@ func filledOrder() orderDTO {
 // filledReturn produces a return record whose omitempty fields are written too.
 func filledReturn() returnDTO {
 	now := time.Now().UTC()
+	soldFor := int64(5_400)
 
 	return returnDTO{
 		Reason:     "damaged",
 		Note:       "the carrier delivered it",
 		Metadata:   map[string]any{"k": "v"},
+		Lines:      &[]returnLineDTO{{OrderLineItemID: "oli_1", Quantity: 1, RefundAmount: 100}},
+		SoldFor:    &soldFor,
+		Warnings:   []string{"the lines could not be read"},
 		ReceivedAt: &now,
 		CanceledAt: &now,
 	}

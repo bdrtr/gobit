@@ -45,10 +45,8 @@ func TestAnOrderReadNowIsTheLiveOrder(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	first, err := paymentSvc.RefundCollection(ctx, placed.PaymentCollectionID, 1_000, "first part", "")
-	require.NoError(t, err)
-	second, err := paymentSvc.RefundCollection(ctx, placed.PaymentCollectionID, 500, "second part", "")
-	require.NoError(t, err)
+	first := operatorRefund(t, placed.PaymentCollectionID, 1_000, "first part")
+	second := operatorRefund(t, placed.PaymentCollectionID, 500, "second part")
 
 	detail, err := orderSvc.GetOrder(ctx, placed.OrderID)
 	require.NoError(t, err)
@@ -98,8 +96,8 @@ func TestAnOrderReadNowIsTheLiveOrder(t *testing.T) {
 	assert.Equal(t, ordermodels.ContactHeld, now.Contact)
 
 	// Between the two refunds: the first had moved and the second had not.
-	between := second[0].CreatedAt.Add(-time.Microsecond)
-	require.True(t, between.After(first[0].CreatedAt) || between.Equal(first[0].CreatedAt),
+	between := second.CreatedAt.Add(-time.Microsecond)
+	require.True(t, between.After(first.CreatedAt) || between.Equal(first.CreatedAt),
 		"the two refunds were stamped at distinct microseconds")
 
 	then, err := orderSvc.OrderAsOf(ctx, placed.OrderID, between)

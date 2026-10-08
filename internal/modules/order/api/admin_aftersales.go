@@ -96,9 +96,10 @@ func (h *Handler) adminReceiveReturn(w http.ResponseWriter, r *http.Request) {
 
 // refundReturnRequest is the body of the return refund.
 type refundReturnRequest struct {
-	// Amount is how much to send back (minor unit). ZERO means everything the
-	// collection has left, which is what "give the customer their money back"
-	// means when nobody named a figure.
+	// Amount is how much to send back (minor unit). On a return, ZERO means
+	// what its units were sold for less what refunds naming it gave back, as
+	// far as the collection holds (ADR 0433); on a claim, the claim's own
+	// figure.
 	Amount int64 `json:"amount"`
 	// Reason is free text kept on the refund record; it is optional.
 	Reason string `json:"reason"`
@@ -152,9 +153,9 @@ func (h *Handler) adminRefundReturn(w http.ResponseWriter, r *http.Request) {
 // adminSettleClaim settles a damage or shortage claim by refunding it.
 //
 // A claim to be settled with a REPLACEMENT comes back as a conflict, and the
-// message says why: shipping goods against an existing order is not something
-// this framework can do. Stamping it complete would record a settlement that
-// never reached the customer.
+// message says why: its goods are sent by dispatching its replacement.
+// Stamping it complete would record a settlement that never reached the
+// customer.
 func (h *Handler) adminSettleClaim(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -226,7 +227,7 @@ func (h *Handler) adminCreateReturn(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	ret, err := h.svc.CreateReturn(ctx, service.CreateReturnInput{
+	ret, err := h.svc.CreateReturnRecord(ctx, service.CreateReturnInput{
 		OrderID:      orderID(r),
 		RefundAmount: body.RefundAmount,
 		Reason:       body.Reason,
@@ -238,7 +239,7 @@ func (h *Handler) adminCreateReturn(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
-	corehttp.WriteJSON(ctx, w, http.StatusCreated, singleEnvelope{Data: toReturnDTO(ret)})
+	corehttp.WriteJSON(ctx, w, http.StatusCreated, singleEnvelope{Data: toReturnDTO(&ret)})
 }
 
 // adminGetReturn returns the return record by its id.
@@ -257,7 +258,7 @@ func (h *Handler) adminGetReturn(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
-	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toReturnDTO(ret)})
+	h.writeReturn(ctx, w, http.StatusOK, ret)
 }
 
 // adminListReturns returns the order's return records paged.
@@ -276,9 +277,10 @@ func (h *Handler) adminListReturns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data := make([]returnDTO, 0, len(items))
-	for i := range items {
-		data = append(data, toReturnDTO(items[i]))
+	data, err := h.returnDTOs(ctx, items)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
 	}
 	corehttp.WriteJSON(ctx, w, http.StatusOK, listEnvelope{
 		Data: data, Count: count, Offset: page.Offset, Limit: page.Limit,
@@ -332,7 +334,7 @@ func (h *Handler) adminCancelReturn(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
-	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toReturnDTO(ret)})
+	h.writeWrittenReturn(ctx, w, http.StatusOK, ret)
 }
 
 // createExchangeRequest is the body of POST /admin/v1/orders/{id}/exchanges.

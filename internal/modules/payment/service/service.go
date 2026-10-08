@@ -367,6 +367,9 @@ type Store interface {
 	CreateRefund(ctx context.Context, ref models.Refund) (models.Refund, error)
 	// ListRefundsByPayment returns the capture's refunds.
 	ListRefundsByPayment(ctx context.Context, paymentID string) ([]models.Refund, error)
+	// RefundedForReference sums what the refunds naming one cause gave back,
+	// in every collection; 0 for a cause no refund names (ADR 0433).
+	RefundedForReference(ctx context.Context, reference string) (int64, error)
 }
 
 // Options are the construction dependencies of the service.

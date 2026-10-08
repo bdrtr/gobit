@@ -173,17 +173,24 @@ func (s *Service) RefundPayment(
 	amount int64,
 	reason string,
 ) (models.Refund, error) {
-	return s.refundPayment(ctx, paymentID, amount, reason, "")
+	return s.refundPayment(ctx, paymentID, amount, reason, "", 0)
 }
 
 // refundPayment is [Service.RefundPayment] with the reference of the record
 // that caused the refund, which is written on the refund row in the same
-// transaction (ADR 0187). An operator's refund has none.
+// transaction (ADR 0187), and the ceiling the refunds naming that record are
+// held to (ADR 0433). An operator's refund has neither.
+//
+// The ceiling is checked under the collection's lock, after every refund of
+// the collection that committed before this one took it and before the
+// provider is called: a refund of the same cause in flight holds the lock until
+// its row is written, so the sum read here counts it.
 func (s *Service) refundPayment(
 	ctx context.Context,
 	paymentID string,
 	amount int64,
 	reason, reference string,
+	ceiling int64,
 ) (models.Refund, error) {
 	if err := requireText("payment_id", paymentID); err != nil {
 		return models.Refund{}, err
@@ -232,6 +239,17 @@ func (s *Service) refundPayment(
 			return errors.Conflict(CodeInvalidTransition,
 				"the refund amount cannot exceed the remaining amount: %d requested, %d remaining (%s)",
 				refund, remaining, payment.ID)
+		}
+		if reference != "" {
+			given, err := s.store.RefundedForReference(ctx, reference)
+			if err != nil {
+				return err
+			}
+			if given+refund > ceiling {
+				return errors.Conflict(CodeRefundExceedsCause,
+					"the refunds naming %s gave back %d of the %d it may give back, so %d more would pass it",
+					reference, given, ceiling, refund)
+			}
 		}
 
 		if err := prov.Refund(ctx, ses.ExternalID, refund); err != nil {

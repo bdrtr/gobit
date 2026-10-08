@@ -86,7 +86,7 @@ func TestACollectionCanBeRefundedWithoutNamingACapture(t *testing.T) {
 	ctx := t.Context()
 	collectionID := capturedCollection(t, svc, "refund-collection")
 
-	refunds, err := svc.RefundCollection(ctx, collectionID, 1_000, "returned", "")
+	refunds, err := svc.RefundCollection(ctx, collectionID, 1_000, refundAmount, "returned", "ret_1")
 	require.NoError(t, err)
 
 	require.Len(t, refunds, 1)
@@ -97,14 +97,15 @@ func TestACollectionCanBeRefundedWithoutNamingACapture(t *testing.T) {
 	assert.Equal(t, int64(1_000), current.RefundedAmount)
 }
 
-// TestAZeroAmountRefundsEverythingLeft is what "give the customer their money
-// back" means when nobody named a figure.
-func TestAZeroAmountRefundsEverythingLeft(t *testing.T) {
+// TestAZeroAmountRefundsWhatTheCollectionHoldsUnderTheCeiling: zero asks for
+// what the cause has left (ADR 0433), and a cause whose ceiling is above what
+// the collection holds is given everything the collection has left.
+func TestAZeroAmountRefundsWhatTheCollectionHoldsUnderTheCeiling(t *testing.T) {
 	svc, _ := newRefundService(t)
 	ctx := t.Context()
 	collectionID := capturedCollection(t, svc, "refund-all")
 
-	refunds, err := svc.RefundCollection(ctx, collectionID, 0, "", "")
+	refunds, err := svc.RefundCollection(ctx, collectionID, 0, 2*refundAmount, "", "ret_1")
 	require.NoError(t, err)
 
 	var total int64
@@ -127,7 +128,7 @@ func TestMoreCannotBeRefundedThanTheCollectionHolds(t *testing.T) {
 
 	before := prov.refundCalls
 
-	_, err := svc.RefundCollection(ctx, collectionID, refundAmount+1, "", "")
+	_, err := svc.RefundCollection(ctx, collectionID, refundAmount+1, 2*refundAmount, "", "ret_1")
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
@@ -141,7 +142,7 @@ func TestACollectionWithNoCaptureHasNothingToRefund(t *testing.T) {
 	svc, _ := newRefundService(t)
 	collectionID := emptyCollection(t, svc)
 
-	_, err := svc.RefundCollection(t.Context(), collectionID, 0, "", "")
+	_, err := svc.RefundCollection(t.Context(), collectionID, 0, refundAmount, "", "ret_1")
 
 	require.Error(t, err)
 	assert.Equal(t, service.CodeCollectionNothingToRefund, errors.CodeOf(err))
@@ -154,13 +155,13 @@ func TestASecondRefundComesOutOfWhatIsLeft(t *testing.T) {
 	ctx := t.Context()
 	collectionID := capturedCollection(t, svc, "refund-twice")
 
-	_, err := svc.RefundCollection(ctx, collectionID, 4_000, "first", "")
+	_, err := svc.RefundCollection(ctx, collectionID, 4_000, refundAmount, "first", "ret_1")
 	require.NoError(t, err)
 
-	_, err = svc.RefundCollection(ctx, collectionID, refundAmount-4_000+1, "second", "")
+	_, err = svc.RefundCollection(ctx, collectionID, refundAmount-4_000+1, 2*refundAmount, "second", "clm_2")
 	require.Error(t, err, "the second refund may not exceed what is left")
 
-	_, err = svc.RefundCollection(ctx, collectionID, refundAmount-4_000, "second", "")
+	_, err = svc.RefundCollection(ctx, collectionID, refundAmount-4_000, 2*refundAmount, "second", "clm_2")
 	require.NoError(t, err)
 
 	current, err := svc.GetPaymentCollection(ctx, collectionID)

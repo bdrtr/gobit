@@ -121,7 +121,7 @@ func (h *Handler) storeRequestReturn(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	created, err := h.svc.CreateReturn(ctx, service.CreateReturnInput{
+	created, err := h.svc.CreateReturnRecord(ctx, service.CreateReturnInput{
 		OrderID: orderID(r),
 		Reason:  body.Reason,
 		Lines:   lines,
@@ -132,7 +132,7 @@ func (h *Handler) storeRequestReturn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	corehttp.WriteJSON(ctx, w, http.StatusCreated, singleEnvelope{Data: toReturnDTO(created)})
+	corehttp.WriteJSON(ctx, w, http.StatusCreated, singleEnvelope{Data: toReturnDTO(&created)})
 }
 
 // storeTimelineEntryDTO is one thing that happened, as a CUSTOMER may see it.

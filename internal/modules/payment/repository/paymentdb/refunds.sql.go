@@ -104,3 +104,20 @@ func (q *Queries) ListRefundsByPayment(ctx context.Context, paymentID string) ([
 	}
 	return items, nil
 }
+
+const refundedForReference = `-- name: RefundedForReference :one
+SELECT COALESCE(SUM(amount), 0)::bigint AS refunded FROM refunds
+WHERE reference = $1 AND reference <> ''
+`
+
+// What the refunds naming one cause gave back, in every collection (ADR 0433):
+// the returns flow holds a cause's refunds to a ceiling, and the sum is read
+// again under the collection's lock before a refund row is written. The second
+// predicate lets the planner use refunds_reference_idx, which leaves out the
+// refunds that name no cause.
+func (q *Queries) RefundedForReference(ctx context.Context, reference string) (int64, error) {
+	row := q.db.QueryRow(ctx, refundedForReference, reference)
+	var refunded int64
+	err := row.Scan(&refunded)
+	return refunded, err
+}

@@ -4,7 +4,7 @@
 claim, exchange or replacement, through an `order.admin` surface whose methods
 are the API's own, under `order:write`.
 
-- **Status:** Accepted; amended by [0272](0272-the-panel-opens-an-orders-after-sales.md), which lets the panel open the records too
+- **Status:** Accepted; amended by [0272](0272-the-panel-opens-an-orders-after-sales.md), which lets the panel open the records too, and by [0433](0433-a-return-gives-back-at-most-what-its-units-sold-for.md), whose return refund, left empty or repeated, is answered by what is left of its units' worth, not by the record's status
 - **Date:** 2026-09-30
 
 ## Context

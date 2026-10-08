@@ -529,11 +529,21 @@ type orderShipmentDTO struct {
 	Status string `json:"status"`
 }
 
+// returnRecordNote is what a return record says of its lines and their worth
+// (ADR 0433).
+const returnRecordNote = "The record carries \"lines\", the order lines coming back with a " +
+	"quantity and the part of the planned refund for each, and \"sold_for\", what those units " +
+	"were sold for: each line's total shared by the units coming back, rounded down. The " +
+	"return's refunds add up to at most \"sold_for\"; what they gave back is read from the " +
+	"payment collection. A withdrawal whose lines cannot be read after it was written answers " +
+	"without the two and with \"warnings\"."
+
 // describeReturns describes the return record endpoints.
 func describeReturns(d *openapi.Doc) {
 	d.Describe(http.MethodGet, "/admin/v1/orders/{id}/returns", openapi.Operation{
-		Summary:    "Lists the order's return records with paging.",
-		Parameters: pageParameters(),
+		Summary:     "Lists the order's return records with paging.",
+		Description: returnRecordNote,
+		Parameters:  pageParameters(),
 		Responses: map[string]any{
 			"200": openapi.Response("Page of return records", d.List(returnDTO{})),
 		},
@@ -542,7 +552,8 @@ func describeReturns(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/admin/v1/orders/{id}/returns", openapi.Operation{
 		Summary: "Opens a return record on the order.",
 		Description: amountNote + " lines name the order lines coming back, a quantity and the part of " +
-			"the refund for each; a return that names none cannot be restocked when it is received.",
+			"the refund for each; a return that names none cannot be restocked when it is received, " +
+			"and cannot be refunded (409 \"returns_workflow_return_names_no_line\"). " + returnRecordNote,
 		RequestBody: d.RequestBody(createReturnRequest{}),
 		Responses: map[string]any{
 			// The handler writes 201 (see admin.go); a new record is born.
@@ -551,7 +562,8 @@ func describeReturns(d *openapi.Doc) {
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/orders/{id}/returns/{returnId}", openapi.Operation{
-		Summary: "Returns the return record by its id.",
+		Summary:     "Returns the return record by its id.",
+		Description: returnRecordNote,
 		Responses: map[string]any{
 			"200": openapi.Response("Return record", d.Item(returnDTO{})),
 		},
@@ -1227,13 +1239,18 @@ func describeAfterSales(d *openapi.Doc) {
 			"physical fact, refunding is a decision the shop makes after looking at what " +
 			"arrived. One endpoint doing both would refund goods nobody has inspected. " +
 			"\n\n" +
-			"\"amount\" ZERO is not a no-op — it means everything the payment collection " +
-			"has left, which is what \"give the customer their money back\" means when " +
-			"nobody named a figure. Send an explicit amount for a partial refund. " +
+			"A return's refunds add up to at most what its units were sold for, the record's " +
+			"\"sold_for\" (ADR 0433). \"amount\" ZERO is not a no-op — it means what is left " +
+			"of that figure after the refunds naming the return, as far as the payment " +
+			"collection holds. An amount above what is left, and any refund once nothing is, " +
+			"answers 409 \"returns_workflow_refund_exceeds_return\" and moves nothing; a " +
+			"return that names no line answers 409 \"returns_workflow_return_names_no_line\". " +
+			"Shipping, and the money of a return without lines, go back as a credit on the " +
+			"order and a refund through POST /admin/v1/payments/{id}/refunds. " +
 			amountNote +
 			"\n\n" +
 			"\"reason\" is free text kept on the refund record and is optional. " +
-			"\"summary_recorded\" says whether the return's own summary was updated; a " +
+			"\"summary_recorded\" says whether the order's summary was updated; a " +
 			"false there with a non-zero \"refunded_amount\" means the money went back and " +
 			"the bookkeeping did not, which is exactly what the warnings are for. " +
 			"\n\n" +
@@ -1250,13 +1267,18 @@ func describeAfterSales(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/admin/v1/orders/{id}/claims/{claimId}/settle", openapi.Operation{
 		Summary: "Settles a claim by refunding it.",
 		Description: "The body and the answer are the refund endpoint's, because settling a " +
-			"claim IS a refund: zero means whatever the collection has left, and the same " +
-			"two figures come back. " + amountNote +
+			"claim IS a refund: zero means the claim's own figure, and the same two figures " +
+			"come back. A claim already settled answers 409 \"returns_workflow_invalid_input\" " +
+			"and moves nothing. One still requested that a refund already names — its stamp " +
+			"failed after its money left, or two settles met — moves nothing and is recorded " +
+			"settled, with a warning naming what was given back; when that record cannot be " +
+			"written the answer is \"returns_workflow_claim_refunded\" and the claim stays as " +
+			"it was (ADR 0433). " + amountNote +
 			"\n\n" +
 			"A claim to be settled with a REPLACEMENT comes back as a CONFLICT, and the " +
-			"message says why: shipping goods against an existing order is not something " +
-			"this framework can do. Stamping such a claim complete would record a settlement " +
-			"that never reached the customer, which is worse than refusing it.",
+			"message says why: its goods are sent by dispatching its replacement. Stamping " +
+			"such a claim complete would record a settlement that never reached the " +
+			"customer, which is worse than refusing it.",
 		RequestBody: d.RequestBody(refundReturnRequest{}),
 		Responses: map[string]any{
 			"200": openapi.Response("How much was refunded against the claim",
@@ -1275,7 +1297,7 @@ func describeAfterSales(d *openapi.Doc) {
 			"would let a customer decide their own refund, which is the same defect as a " +
 			"cart that names its own shipping price. " +
 			"\n\n" +
-			"\"reason\" is optional free text.",
+			"\"reason\" is optional free text. " + returnRecordNote,
 		RequestBody: d.RequestBody(storeReturnRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response("The opened return request", d.Item(returnDTO{})),

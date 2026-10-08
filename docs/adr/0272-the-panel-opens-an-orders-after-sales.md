@@ -5,7 +5,7 @@ claim, an exchange, and the replacement a claim or an exchange sends, through
 the `order.admin` surface under `order:write`; the admin API's return takes
 its lines as the storefront's does.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0433](0433-a-return-gives-back-at-most-what-its-units-sold-for.md), whose return form names at least one line
 - **Date:** 2026-09-30
 - **Amends:** [0271](0271-the-panel-acts-on-an-orders-after-sales.md), which left opening a record to the API
 

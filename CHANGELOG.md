@@ -11,6 +11,43 @@ design. It is fixed with `1.0.0`.
 
 ### Breaking changes
 
+- **A return gives back at most what its units were sold for** (ADR 0433,
+  D269). **For API consumers:**
+  `POST /admin/v1/orders/{id}/returns/{returnId}/refund` at `amount` 0
+  refunds what the return's units were sold for less what refunds naming it
+  gave back, as far as the collection holds, where it used to refund
+  everything the collection held. An amount above that, or any refund once it
+  is spent, answers 409 `returns_workflow_refund_exceeds_return` and moves
+  nothing; a return that names no line answers 409
+  `returns_workflow_return_names_no_line`.
+  `POST /admin/v1/orders/{id}/claims/{claimId}/settle` still answers a claim
+  already settled with 409 `returns_workflow_invalid_input`; a claim still
+  requested that a refund already names (its stamp failed, or two settles
+  met) now moves nothing and is recorded settled with a warning, where it was
+  refunded again, and answers `returns_workflow_claim_refunded` only when
+  that record cannot be written. The return record carries `lines`, each
+  `order_line_item_id`, `quantity` and `refund_amount`, and `sold_for`, what
+  those units were sold for, on `GET /admin/v1/orders/{id}/returns`,
+  `GET /admin/v1/orders/{id}/returns/{returnId}`, the opening and withdrawal
+  answers and `POST /store/v1/orders/{id}/returns`; a withdrawal whose lines
+  cannot be read after it was written answers without the two and with
+  `warnings`. The payment module's code for the refusal is
+  `payment_refund_exceeds_cause`. **For operators:** the
+  order page's refund of a return, left empty, gives back what is left of the
+  returned units' worth, and the same form again refuses; shipping, and a
+  return opened without lines, go back as a credit on the order page and a
+  refund through `POST /admin/v1/payments/{id}/refunds`; the return form
+  refuses one naming no line. A return already refunded past its worth
+  refunds nothing more and keeps what it paid; measurements/0433 shows how to
+  find one. **For plugin authors:** the returns flow resolves
+  `payment.interop` with
+  `RefundCollection(ctx, collectionID, amount, ceiling, reason, reference)`,
+  and an installation that registers its own without it fails at startup; the
+  payment service's `RefundCollection` takes the ceiling and requires the
+  reference, `service.Store` gains `RefundedForReference`, and the order API's
+  `Orders` interface gains `ReturnsWithLines` and takes `CreateReturnRecord`
+  in place of `CreateReturn`.
+
 - **An exchange is documented as a return and a sale** (ADR 0432, D247).
   **For API consumers:** `GET /admin/v1/orders/{id}/invoice/amendments` lists
   each exchange that names its return as one act of kind `exchange`, its id

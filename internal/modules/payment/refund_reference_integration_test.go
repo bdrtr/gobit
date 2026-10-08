@@ -36,7 +36,7 @@ func TestARefundKeepsItsCauseInTheRealSchema(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	refunds, err := svc.RefundCollection(ctx, collection.ID, 0, "returned", "ret_cause")
+	refunds, err := svc.RefundCollection(ctx, collection.ID, 0, 10_000, "returned", "ret_cause_"+collection.ID)
 	require.NoError(t, err)
 	require.Len(t, refunds, 2)
 
@@ -46,6 +46,6 @@ func TestARefundKeepsItsCauseInTheRealSchema(t *testing.T) {
 	for _, movement := range movements {
 		causes[movement.Kind+":"+movement.Reference]++
 	}
-	assert.Equal(t, map[string]int{"capture:": 2, "refund:ret_cause": 2}, causes,
+	assert.Equal(t, map[string]int{"capture:": 2, "refund:ret_cause_" + collection.ID: 2}, causes,
 		"both refund rows carry the cause and neither capture has one")
 }

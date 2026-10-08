@@ -13,6 +13,9 @@ import (
 
 const testCollectionID = "pcol_1"
 
+// testSoldFor is what the harness return's units were sold for (ADR 0433).
+const testSoldFor int64 = 12_000
+
 // refundHarness builds a harness whose return has already been received and
 // whose order is bound to a collection.
 func refundHarness(t *testing.T) *harness {
@@ -20,6 +23,7 @@ func refundHarness(t *testing.T) *harness {
 
 	h := newHarness(t)
 	h.orders.detail.Status = statusReceived
+	h.orders.detail.SoldFor = testSoldFor
 	h.links.links[testOrderID] = []string{testCollectionID}
 	h.payments.refunded = 1200
 	h.payments.captured = 6100
@@ -42,9 +46,9 @@ func TestRefundingSendsTheMoneyBackAndTellsTheOrder(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, h.payments.refundCalls, 1)
-	assert.Equal(t, refundCall{collectionID: testCollectionID, amount: 1200, reason: "damaged",
-		reference: testReturnID}, h.payments.refundCalls[0],
-		"the refund names the return that caused it (ADR 0187)")
+	assert.Equal(t, refundCall{collectionID: testCollectionID, amount: 1200, ceiling: testSoldFor,
+		reason: "damaged", reference: testReturnID}, h.payments.refundCalls[0],
+		"the refund names the return that caused it (ADR 0187) and what its units sold for (ADR 0433)")
 
 	assert.Equal(t, int64(1200), out.RefundedAmount)
 	assert.True(t, out.SummaryRecorded)
@@ -104,8 +108,9 @@ func TestAnOrderWithNoCollectionCannotBeRefunded(t *testing.T) {
 	assert.Empty(t, h.payments.refundCalls)
 }
 
-// TestAZeroAmountRefundsWhatIsLeft carries the "give the money back" case
-// through untouched.
+// TestAZeroAmountRefundsWhatIsLeft carries zero to the payment module with the
+// return's ceiling, where it asks for what the return has left under it
+// (ADR 0433): only the module that writes the refund rows knows what was given.
 func TestAZeroAmountRefundsWhatIsLeft(t *testing.T) {
 	h := refundHarness(t)
 
@@ -113,8 +118,69 @@ func TestAZeroAmountRefundsWhatIsLeft(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, h.payments.refundCalls, 1)
-	assert.Zero(t, h.payments.refundCalls[0].amount,
-		"zero has to reach the payment module, which is where it means 'everything left'")
+	assert.Zero(t, h.payments.refundCalls[0].amount, "zero reaches the payment module")
+	assert.Equal(t, testSoldFor, h.payments.refundCalls[0].ceiling,
+		"with what the return's units were sold for as its ceiling")
+}
+
+// TestARefundPastWhatTheUnitsSoldForIsTheReturns answers the payment module's
+// ceiling in the return's words, with the figures, and records nothing.
+func TestARefundPastWhatTheUnitsSoldForIsTheReturns(t *testing.T) {
+	h := refundHarness(t)
+	h.payments.refunded = 0
+	h.payments.refundErr = coreerrors.Conflict(codeRefundExceedsCause,
+		"the refunds naming ret_1 gave back 12000 of the 12000 it may give back, so nothing is left")
+
+	_, err := h.wf.RefundReturn(context.Background(), testReturnID, 1, "")
+
+	require.Error(t, err)
+	assert.True(t, coreerrors.IsConflict(err))
+	assert.Equal(t, CodeRefundExceedsReturn, coreerrors.CodeOf(err))
+	assert.Contains(t, err.Error(), "gave back 12000 of the 12000", "the payment module's figures")
+	assert.Zero(t, h.orders.summaryCalls, "nothing moved, so nothing is recorded")
+}
+
+// TestAnotherPaymentConflictIsARefundThatFailed keeps the mapping to the
+// ceiling's code alone: a collection with nothing left is not the return's.
+func TestAnotherPaymentConflictIsARefundThatFailed(t *testing.T) {
+	h := refundHarness(t)
+	h.payments.refunded = 0
+	h.payments.refundErr = coreerrors.Conflict("payment_collection_nothing_to_refund",
+		"collection pcol_1 has nothing left to refund")
+
+	_, err := h.wf.RefundReturn(context.Background(), testReturnID, 0, "")
+
+	require.Error(t, err)
+	assert.True(t, coreerrors.IsConflict(err))
+	assert.Equal(t, CodeRefundFailed, coreerrors.CodeOf(err))
+}
+
+// TestAReturnThatNamesNoLineIsNotRefunded: what it may give back cannot be
+// valued, so no refund is asked of the payment module (ADR 0433).
+func TestAReturnThatNamesNoLineIsNotRefunded(t *testing.T) {
+	h := refundHarness(t)
+	h.orders.detail.Lines = nil
+	h.orders.detail.SoldFor = 0
+
+	_, err := h.wf.RefundReturn(context.Background(), testReturnID, 1200, "")
+
+	require.Error(t, err)
+	assert.True(t, coreerrors.IsConflict(err))
+	assert.Equal(t, CodeReturnNamesNoLine, coreerrors.CodeOf(err))
+	assert.Empty(t, h.payments.refundCalls)
+}
+
+// TestAReturnSoldForNothingGivesNothingBack: units sold for nothing leave no
+// ceiling to refund under.
+func TestAReturnSoldForNothingGivesNothingBack(t *testing.T) {
+	h := refundHarness(t)
+	h.orders.detail.SoldFor = 0
+
+	_, err := h.wf.RefundReturn(context.Background(), testReturnID, 0, "")
+
+	require.Error(t, err)
+	assert.Equal(t, CodeRefundExceedsReturn, coreerrors.CodeOf(err))
+	assert.Empty(t, h.payments.refundCalls)
 }
 
 // TestMoneyThatLEFTIsRecordedEvenWhenTheRefundFailedPartWay keeps a partial

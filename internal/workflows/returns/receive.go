@@ -21,6 +21,9 @@ type returnDetail struct {
 	// back; empty when none does (ADR 0432).
 	SettledByExchange string       `json:"settled_by_exchange,omitempty"`
 	Lines             []returnLine `json:"lines"`
+	// SoldFor is what the return's units were sold for, the most its refunds
+	// give back between them (ADR 0433).
+	SoldFor int64 `json:"sold_for"`
 }
 
 // returnLine is one line coming back.

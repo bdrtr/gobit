@@ -46,6 +46,10 @@ type ReturnDetail struct {
 	SettledByExchange string
 	// Lines are the lines coming back, with their variants.
 	Lines []ReturnLine
+	// SoldFor is what the return's units were sold for: each line's total
+	// shared by the units coming back, rounded down. The returns flow holds
+	// the return's refunds to it (ADR 0433).
+	SoldFor int64
 }
 
 // ReturnDetailJSON returns a return with its lines and their variants.
@@ -102,6 +106,7 @@ func (s *Service) ReturnDetailJSON(ctx context.Context, returnID string) (json.R
 		ReceivedLocationID: ret.ReceivedLocationID,
 		SettledByExchange:  exchangeID,
 		Lines:              make([]returnLineJSON, 0, len(items)),
+		SoldFor:            returnedWorth(lines, items),
 	}
 	for i := range items {
 		variantID, known := variantOf[items[i].OrderLineItemID]
@@ -134,6 +139,7 @@ type returnDetailJSON struct {
 	ReceivedLocationID string           `json:"received_location_id"`
 	SettledByExchange  string           `json:"settled_by_exchange,omitempty"`
 	Lines              []returnLineJSON `json:"lines"`
+	SoldFor            int64            `json:"sold_for"`
 }
 
 // returnLineJSON is the wire form of [ReturnLine].

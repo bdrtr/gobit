@@ -35,8 +35,8 @@ type AfterSalesAdmin interface {
 	// stock back; warnings need a human.
 	ReceiveReturn(ctx context.Context, returnID, locationID string) (
 		restockedLines int, restockedUnits int64, warnings []string, err error)
-	// RefundReturn sends money back for a received return; zero is everything
-	// the collection has left.
+	// RefundReturn sends money back for a received return; zero is what is
+	// left of what its units were sold for (ADR 0433).
 	RefundReturn(ctx context.Context, returnID string, amount int64, reason string) (
 		refunded int64, summaryRecorded bool, warnings []string, err error)
 	// CancelReturn withdraws a return that was not received.
@@ -215,7 +215,7 @@ func afterSaleForms(kind, status, claimType string) []afterSaleForm {
 		case "received":
 			return []afterSaleForm{{
 				Act: actRefund, Label: "Refund", Amount: true, Reason: true,
-				AmountHint: "empty: everything the collection has left",
+				AmountHint: "empty: the rest of what the returned units sold for",
 			}}
 		}
 	case kindClaim:
@@ -252,7 +252,8 @@ func afterSaleForms(kind, status, claimType string) []afterSaleForm {
 // reports — the units restocked, the parcel opened, a warning that needs a
 // human — is said once and is not a property of the order a later read could
 // show. A second submission of the same form is refused by the record's own
-// status.
+// status, and a return's refund by what is left of what its units were sold
+// for (ADR 0433).
 func (u *UI) submitAfterSale(w http.ResponseWriter, r *http.Request) {
 	orderID := chi.URLParam(r, "id")
 	act, ok := afterSaleActs[chi.URLParam(r, "kind")][chi.URLParam(r, "act")]
@@ -336,6 +337,11 @@ var afterSaleOpeners = map[string]afterSaleOpener{
 		lineIDs, quantities, rows, err := formOrderLines(r)
 		if err != nil {
 			return "", err
+		}
+		// A return naming no line values nothing, so no refund could complete
+		// it (ADR 0433); the API still opens one, as ADR 0272 keeps.
+		if len(lineIDs) == 0 {
+			return "", errors.Invalid(CodeAmountInvalid, "Name at least one line coming back.")
 		}
 		amount, currency, err := u.formAmount(r)
 		if err != nil {

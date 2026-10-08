@@ -41,12 +41,8 @@ func TestTheTimelineTellsEveryMovement(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	first, err := paymentSvc.RefundCollection(ctx, placed.PaymentCollectionID, 1_000, "first part", "")
-	require.NoError(t, err)
-	second, err := paymentSvc.RefundCollection(ctx, placed.PaymentCollectionID, 500, "second part", "")
-	require.NoError(t, err)
-	require.Len(t, first, 1)
-	require.Len(t, second, 1)
+	first := operatorRefund(t, placed.PaymentCollectionID, 1_000, "first part")
+	second := operatorRefund(t, placed.PaymentCollectionID, 500, "second part")
 
 	detail, err := orderSvc.GetOrder(ctx, placed.OrderID)
 	require.NoError(t, err)
@@ -75,7 +71,7 @@ func TestTheTimelineTellsEveryMovement(t *testing.T) {
 		byRef[refunds[i].RefID] = refunds[i].Amount
 		assert.Equal(t, ordersvc.ClockDatabase, refunds[i].Clock)
 	}
-	assert.Equal(t, map[string]int64{first[0].ID: 1_000, second[0].ID: 500}, byRef,
+	assert.Equal(t, map[string]int64{first.ID: 1_000, second.ID: 500}, byRef,
 		"each refund carries what it moved, under its own record")
 
 	cancellations := entriesOfKind(entries, ordersvc.KindOrderLineCanceled)

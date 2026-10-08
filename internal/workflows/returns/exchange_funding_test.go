@@ -153,8 +153,28 @@ func TestTheExitSendsTheMoneyBackBeforeItWithdraws(t *testing.T) {
 	assert.Equal(t, int64(1000), h.payments.refundCalls[0].amount)
 	assert.Equal(t, "exch_1", h.payments.refundCalls[0].reference,
 		"the refund names the exchange that caused it (ADR 0187)")
+	assert.Equal(t, int64(1000), h.payments.refundCalls[0].ceiling,
+		"held to its difference (ADR 0433)")
 	assert.Equal(t, 1, h.orders.withdrawCalls)
 	assert.Equal(t, "exch_1", h.orders.withdrawnExchange)
+}
+
+// TestTheExitIsHeldToTheDifference sends back what the collection still holds
+// under the exchange's difference, which bounds the refunds naming it
+// (ADR 0433): an operator's refund through the payment route took part.
+func TestTheExitIsHeldToTheDifference(t *testing.T) {
+	h := newHarness(t)
+	h.orders.funding = fundingOf(1000, "TRY", "paycol_1")
+	h.payments.amount = 1000
+	h.payments.captured = 1000
+	h.payments.totalRefund = 300
+
+	err := h.wf.RefundExchangeDifference(context.Background(), "exch_1", "out of stock")
+
+	require.NoError(t, err)
+	require.Len(t, h.payments.refundCalls, 1)
+	assert.Equal(t, int64(700), h.payments.refundCalls[0].amount, "what is held")
+	assert.Equal(t, int64(1000), h.payments.refundCalls[0].ceiling, "the difference")
 }
 
 // TestAFailedRefundLeavesTheExchangeFunded keeps the failure honest.

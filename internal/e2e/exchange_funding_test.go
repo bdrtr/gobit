@@ -180,7 +180,8 @@ func TestAnExchangeCollectsItsDifferenceAndCanSendItBack(t *testing.T) {
 	// tell the two readings apart: measured, both the held rule and the
 	// subtraction survive every other case here untouched.
 	emptied := collectDifference(t, placed.OrderID, exchangeDifference, exchangeDifference)
-	_, err = paymentSvc.RefundCollection(t.Context(), emptied, exchangeDifference, "sent back again", "")
+	_, err = paymentSvc.RefundCollection(t.Context(), emptied, exchangeDifference, exchangeDifference,
+		"sent back again", "e2e_emptied_"+emptied)
 	require.NoError(t, err, "the difference could not be sent back")
 
 	drained, err := adminRequestWithBody(http.MethodPost, fundingPath,

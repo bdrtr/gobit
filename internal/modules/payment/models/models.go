@@ -254,7 +254,8 @@ type Refund struct {
 	Reason string
 	// Reference is the caller's id for the record that caused the refund — a
 	// return, a claim, an exchange — or "" for a refund nobody attributed
-	// (ADR 0187). This module writes it and never reads it.
+	// (ADR 0187). This module writes it and sums by it to hold a cause to its
+	// caller's ceiling (ADR 0433); what it names is the caller's.
 	Reference string
 	// CreatedAt and UpdatedAt are UTC.
 	//

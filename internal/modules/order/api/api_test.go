@@ -41,6 +41,10 @@ type fakeOrders struct {
 	// handler converts every row it was handed.
 	exchanges []models.Exchange
 	claims    []models.Claim
+	// soldFor is what ReturnsWithLines says each return's units were sold
+	// for (ADR 0433); linesErr makes that read fail.
+	soldFor  int64
+	linesErr error
 
 	// err, when set, makes every method return this error; it is used to
 	// exercise the error mapping.
@@ -288,11 +292,16 @@ func (f *fakeOrders) ArchiveOrder(_ context.Context, orderID string) (models.Ord
 	return f.order, f.err
 }
 
-// CreateReturn opens a return record.
-func (f *fakeOrders) CreateReturn(_ context.Context, in service.CreateReturnInput) (models.Return, error) {
-	f.record("CreateReturn")
+// CreateReturnRecord opens a return record and answers it with soldFor.
+func (f *fakeOrders) CreateReturnRecord(
+	_ context.Context, in service.CreateReturnInput,
+) (service.ReturnRecord, error) {
+	f.record("CreateReturnRecord")
 	f.returnInput = in
-	return f.ret, f.err
+	if f.err != nil {
+		return service.ReturnRecord{}, f.err
+	}
+	return service.ReturnRecord{Return: f.ret, SoldFor: f.soldFor}, nil
 }
 
 // GetReturn returns the return record.
@@ -315,6 +324,22 @@ func (f *fakeOrders) CancelReturn(_ context.Context, returnID string) (models.Re
 	f.record("CancelReturn")
 	f.gotChildID = returnID
 	return f.ret, f.err
+}
+
+// ReturnsWithLines answers the returns with their Items and soldFor each; it
+// is not recorded among the calls, being the answer's read rather than an act.
+func (f *fakeOrders) ReturnsWithLines(_ context.Context, returns []models.Return) ([]service.ReturnRecord, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.linesErr != nil {
+		return nil, f.linesErr
+	}
+	out := make([]service.ReturnRecord, 0, len(returns))
+	for i := range returns {
+		out = append(out, service.ReturnRecord{Return: returns[i], SoldFor: f.soldFor})
+	}
+	return out, nil
 }
 
 // CreateExchange opens an exchange record.
@@ -1038,6 +1063,86 @@ func TestAdminAfterSalesSingleRead(t *testing.T) {
 			assert.Equal(t, tc.value, data[tc.field])
 		})
 	}
+}
+
+// TestAReturnRecordPublishesItsLinesAndWhatTheySoldFor is ADR 0433: the
+// record names the lines coming back and the figure its refunds are held to,
+// on a single read and on the listing, and a return naming no line publishes
+// an empty list rather than none.
+func TestAReturnRecordPublishesItsLinesAndWhatTheySoldFor(t *testing.T) {
+	ret := models.Return{
+		ID: "ret_1", OrderID: "order_1", Status: models.ReturnReceived,
+		Items: []models.ReturnItem{{OrderLineItemID: "oli_1", Quantity: 2, RefundAmount: 300}},
+	}
+	svc := &fakeOrders{ret: ret, returns: []models.Return{ret, {ID: "ret_2", OrderID: "order_1"}},
+		count: 2, soldFor: 7_200}
+	r := newRouter(svc)
+
+	rec := doRequest(t, r, http.MethodGet, "/admin/v1/orders/order_1/returns/ret_1", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	data, ok := decodeResponse(t, rec)["data"].(map[string]any)
+	require.True(t, ok)
+	assert.InDelta(t, 7_200, data["sold_for"], 0)
+	assert.Equal(t, []any{map[string]any{
+		"order_line_item_id": "oli_1", "quantity": float64(2), "refund_amount": float64(300),
+	}}, data["lines"])
+
+	rec = doRequest(t, r, http.MethodGet, "/admin/v1/orders/order_1/returns", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	page, ok := decodeResponse(t, rec)["data"].([]any)
+	require.True(t, ok)
+	require.Len(t, page, 2)
+	second, ok := page[1].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, []any{}, second["lines"])
+	assert.InDelta(t, 7_200, second["sold_for"], 0)
+}
+
+// TestAReturnWrittenIsAnsweredEvenWhenItsLinesCannotBeReadAfter: an answer to
+// a committed write is not a 500 that invites a retry opening a second return.
+// An opening answers from what its write holds and reads nothing after it; a
+// withdrawal whose lines cannot be read after it answers the record without
+// them, and says so.
+func TestAReturnWrittenIsAnsweredEvenWhenItsLinesCannotBeReadAfter(t *testing.T) {
+	ret := models.Return{
+		ID: "ret_1", OrderID: "order_1", Status: models.ReturnRequested,
+		Items: []models.ReturnItem{{OrderLineItemID: "oli_1", Quantity: 1}},
+	}
+	down := errors.Internal("order_query_failed", "the lines could not be read")
+
+	for name, open := range map[string]func(r chi.Router) *httptest.ResponseRecorder{
+		"admin": func(r chi.Router) *httptest.ResponseRecorder {
+			return doRequest(t, r, http.MethodPost, "/admin/v1/orders/order_1/returns",
+				`{"lines":[{"order_line_item_id":"oli_1","quantity":1}]}`)
+		},
+		"storefront": func(r chi.Router) *httptest.ResponseRecorder {
+			return doRequestAs(t, r, http.MethodPost, "/store/v1/orders/order_1/returns",
+				`{"lines":[{"order_line_item_id":"oli_1","quantity":1}]}`, corehttp.Principal{})
+		},
+	} {
+		svc := &fakeOrders{ret: ret, soldFor: 3_600, linesErr: down}
+		rec := open(newRouter(svc))
+
+		require.Equal(t, http.StatusCreated, rec.Code, "%s: %s", name, rec.Body.String())
+		data, ok := decodeResponse(t, rec)["data"].(map[string]any)
+		require.True(t, ok, name)
+		assert.Equal(t, "ret_1", data["id"], name)
+		assert.InDelta(t, 3_600, data["sold_for"], 0, "%s: the opening's own figure", name)
+		assert.Len(t, data["lines"], 1, name)
+		assert.Nil(t, data["warnings"], name)
+	}
+
+	svc := &fakeOrders{ret: models.Return{ID: "ret_1", OrderID: "order_1", Status: models.ReturnCanceled},
+		linesErr: down}
+	rec := doRequest(t, newRouter(svc), http.MethodPost, "/admin/v1/orders/order_1/returns/ret_1/cancel", "")
+
+	require.Equal(t, http.StatusOK, rec.Code, "the withdrawal was written: %s", rec.Body.String())
+	data, ok := decodeResponse(t, rec)["data"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "canceled", data["status"])
+	assert.NotContains(t, data, "lines", "lines not read are not published as none")
+	assert.NotContains(t, data, "sold_for")
+	assert.NotEmpty(t, data["warnings"], "the answer says what it could not read")
 }
 
 // TestAdminAfterSalesSingleReadNotFound verifies that a missing record returns

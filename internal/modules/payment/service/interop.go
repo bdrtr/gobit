@@ -240,24 +240,28 @@ func (i *Interop) Refund(ctx context.Context, paymentID string, amount int64, re
 	return refund.ID, nil
 }
 
-// RefundCollection refunds an amount against a collection and returns the total
-// that actually went back.
+// RefundCollection refunds an amount against a collection for a cause, up to a
+// ceiling, and returns the total that actually went back.
 //
 // The caller names a COLLECTION rather than a capture because how a collected
 // amount is split across captures is this module's bookkeeping; the rationale
-// is on [Service.RefundCollection]. A zero amount refunds everything left.
+// is on [Service.RefundCollection].
+//
+// The reference is the caller's id for the record that caused the refund, and
+// every refund row carries it (ADR 0187). The ceiling is the most the refunds
+// naming that record may give back between them: a refund that would pass it
+// is refused with [CodeRefundExceedsCause] and moves nothing, and a zero
+// amount asks for what the record has left under it, as far as the collection
+// holds (ADR 0433).
 //
 // The returned total is what the caller has to record on its own side — the
 // order module writes it into the order's summary — and it is returned rather
 // than assumed, because a refund can legitimately be capped by what the
 // collection still holds.
-//
-// The reference is the caller's id for the record that caused the refund, and
-// every refund row carries it (ADR 0187; [Service.RefundCollection]).
 func (i *Interop) RefundCollection(
-	ctx context.Context, collectionID string, amount int64, reason, reference string,
+	ctx context.Context, collectionID string, amount, ceiling int64, reason, reference string,
 ) (int64, error) {
-	refunds, err := i.svc.RefundCollection(ctx, collectionID, amount, reason, reference)
+	refunds, err := i.svc.RefundCollection(ctx, collectionID, amount, ceiling, reason, reference)
 
 	var total int64
 	for idx := range refunds {

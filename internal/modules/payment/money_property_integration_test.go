@@ -210,7 +210,10 @@ func TestACollectionNeverMovesMoreThanItWasFor(t *testing.T) {
 			"refund the collection": func(rt *rapid.T) {
 				ceiling := captured - refunded
 				asked := rapid.Int64Range(0, ceiling+2).Draw(rt, "refunded from the collection")
-				_, err := svc.RefundCollection(ctx, collection.ID, asked, "property", "")
+				// The cause's ceiling is set above anything the collection can
+				// hold, so the property is the plan's (ADR 0433).
+				_, err := svc.RefundCollection(ctx, collection.ID, asked, models.MaxAmount, "property",
+					"ret_property_"+collection.ID)
 				if ceiling <= 0 || asked > ceiling {
 					refused(rt, err, service.CodeCollectionNothingToRefund)
 					return

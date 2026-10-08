@@ -159,8 +159,8 @@ func (s *AfterSalesSurface) ReceiveReturn(
 	return s.flow.ReceiveReturn(ctx, returnID, locationID)
 }
 
-// RefundReturn sends money back for a received return; zero is everything the
-// collection has left.
+// RefundReturn sends money back for a received return; zero is what is left of
+// what its units were sold for (ADR 0433).
 func (s *AfterSalesSurface) RefundReturn(
 	ctx context.Context, returnID string, amount int64, reason string,
 ) (refunded int64, summaryRecorded bool, warnings []string, err error) {

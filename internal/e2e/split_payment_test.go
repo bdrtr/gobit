@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	paymentmodels "github.com/bdrtr/gobit/internal/modules/payment/models"
 )
 
 // payWithCardAndManual completes the cart with the card first and the manual
@@ -65,10 +67,14 @@ func TestACardAndAProviderPayOneOrder(t *testing.T) {
 	var collectionID string
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
 		`SELECT id FROM payment_collections WHERE reference = $1`, cartID).Scan(&collectionID))
-	_, err := paymentSvc.RefundCollection(ctx, collectionID, 1_000, "an end-to-end test", "")
+	// The refund names a cause the order does not know, held to no figure:
+	// what is tested is how a collection's refund draws its captures.
+	_, err := paymentSvc.RefundCollection(ctx, collectionID, 1_000, paymentmodels.MaxAmount,
+		"an end-to-end test", "e2e_split_"+collectionID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1_000), giftCardBalance(t, cardID), "the card's capture is the newer and is drawn first")
-	_, err = paymentSvc.RefundCollection(ctx, collectionID, 0, "an end-to-end test", "")
+	_, err = paymentSvc.RefundCollection(ctx, collectionID, 0, paymentmodels.MaxAmount,
+		"an end-to-end test", "e2e_split_"+collectionID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(3_000), giftCardBalance(t, cardID), "a whole refund puts the card back")
 

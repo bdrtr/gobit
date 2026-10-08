@@ -688,6 +688,17 @@ func (r *Repository) ListRefundsByPayment(ctx context.Context, paymentID string)
 	return out, nil
 }
 
+// RefundedForReference sums what the refunds naming one cause gave back, in
+// every collection (ADR 0433); inside a transaction it reads what that
+// transaction sees.
+func (r *Repository) RefundedForReference(ctx context.Context, reference string) (int64, error) {
+	refunded, err := r.queries(ctx).RefundedForReference(ctx, reference)
+	if err != nil {
+		return 0, classify(err, codeQueryFailed, "the refunds of cause %s could not be summed", reference)
+	}
+	return refunded, nil
+}
+
 // --- the manual provider's ledger --------------------------------------------
 
 // InsertManualSessionIfAbsent writes the session only if the idempotency key

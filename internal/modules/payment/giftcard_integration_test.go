@@ -794,7 +794,7 @@ func TestAClosedCardStopsTheCollectionRefundAtItsShare(t *testing.T) {
 	_, err = svc.DisableGiftCard(ctx, issued.Card.ID, "closed by a test")
 	require.NoError(t, err)
 
-	made, err := svc.RefundCollection(ctx, col.ID, 0, "a test", "")
+	made, err := svc.RefundCollection(ctx, col.ID, 0, models.MaxAmount, "a test", "ret_giftcard_"+col.ID)
 	require.Error(t, err)
 	assert.Equal(t, giftcard.CodeDisabled, errors.CodeOf(err))
 	assert.Empty(t, made, "the card's capture is the newest and nothing moved")

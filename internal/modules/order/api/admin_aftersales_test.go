@@ -55,7 +55,7 @@ func TestSettlingAClaimSendsTheCLAIMsIdAndTheMoneyThroughTheFlow(t *testing.T) {
 		"the flow has to be given the CLAIM id from the path, not the order id it hangs off")
 	assert.Equal(t, int64(1200), flow.gotAmount,
 		"the amount the operator typed is what leaves the shop; a dropped amount means "+
-			"zero, which the flow reads as \"refund everything left on the collection\"")
+			"zero, which the flow reads as the claim's own figure")
 	assert.Equal(t, "two units arrived broken", flow.gotReason)
 	assert.Empty(t, svc.calls,
 		"the settlement does not touch the service directly; going around the flow would "+
@@ -96,12 +96,12 @@ func TestAClaimIsNotSettledWhenTheFlowIsNotBound(t *testing.T) {
 // unchanged.
 //
 // The flow refuses a claim that is not "requested" and one whose type is
-// "replacement" — shipping goods against an existing order is not something
-// this framework can do. Both are CONFLICTS, not server faults, and the client
-// has to see the flow's own code: an operator told "internal error" retries,
-// and an operator told the claim wants a replacement goes and does the thing
-// the software cannot. A 200 here would be the worst of the three — a
-// settlement recorded in the operator's mind that never happened anywhere else.
+// "replacement", whose goods are sent by dispatching its replacement. Both are
+// CONFLICTS, not server faults, and the client has to see the flow's own code:
+// an operator told "internal error" retries, and an operator told the claim
+// wants a replacement goes and dispatches one. A 200 here would be the worst
+// of the three — a settlement recorded in the operator's mind that never
+// happened anywhere else.
 func TestAClaimTheFlowRefusesIsNotReportedAsSettled(t *testing.T) {
 	flow := &fakeReceiving{refundErr: errors.Conflict(
 		"returns_claim_not_refundable", "a replacement claim cannot be settled with money")}

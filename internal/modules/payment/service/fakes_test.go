@@ -776,6 +776,21 @@ func (f *fakeStore) ListRefundsByPayment(_ context.Context, paymentID string) ([
 	return out, nil
 }
 
+// RefundedForReference sums the refunds naming the cause; one naming none is
+// nobody's.
+func (f *fakeStore) RefundedForReference(_ context.Context, reference string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var refunded int64
+	for _, refund := range f.refunds {
+		if reference != "" && refund.Reference == reference {
+			refunded += refund.Amount
+		}
+	}
+	return refunded, nil
+}
+
 // --- fake provider -----------------------------------------------------------
 
 // fakeProvider is a payment provider whose answers a test sets as a scenario.

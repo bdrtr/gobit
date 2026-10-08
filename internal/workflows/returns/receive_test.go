@@ -389,7 +389,9 @@ func (s *stubLinks) ListMany(
 type refundCall struct {
 	collectionID string
 	amount       int64
-	reason       string
+	// ceiling is what the refunds naming the cause may add up to (ADR 0433).
+	ceiling int64
+	reason  string
 	// reference is the cause the flow named on the refund (ADR 0187).
 	reference string
 }
@@ -412,14 +414,32 @@ type stubPayments struct {
 	reference string
 
 	refundCalls []refundCall
+	// given, when set, makes RefundCollection hold each cause to its ceiling
+	// as the payment module does (ADR 0433): it is what the refunds naming
+	// each cause gave back, and a refund past the ceiling moves nothing.
+	given map[string]int64
 }
 
 // RefundCollection records the call and returns the scripted outcome.
 func (s *stubPayments) RefundCollection(
-	_ context.Context, collectionID string, amount int64, reason, reference string,
+	_ context.Context, collectionID string, amount, ceiling int64, reason, reference string,
 ) (int64, error) {
-	s.refundCalls = append(s.refundCalls,
-		refundCall{collectionID: collectionID, amount: amount, reason: reason, reference: reference})
+	s.refundCalls = append(s.refundCalls, refundCall{
+		collectionID: collectionID, amount: amount, ceiling: ceiling, reason: reason, reference: reference,
+	})
+	if s.given != nil {
+		left := ceiling - s.given[reference]
+		if amount == 0 {
+			amount = left
+		}
+		if left <= 0 || amount > left {
+			return 0, coreerrors.Conflict(codeRefundExceedsCause,
+				"the refunds naming %s gave back %d of the %d it may give back", reference, s.given[reference], ceiling)
+		}
+		s.given[reference] += amount
+
+		return amount, nil
+	}
 
 	return s.refunded, s.refundErr
 }

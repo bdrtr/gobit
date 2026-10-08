@@ -12,6 +12,7 @@ import (
 
 	"github.com/bdrtr/gobit/internal/modules/payment/loyaltypoints"
 	"github.com/bdrtr/gobit/internal/modules/payment/manual"
+	paymentmodels "github.com/bdrtr/gobit/internal/modules/payment/models"
 	paymentsvc "github.com/bdrtr/gobit/internal/modules/payment/service"
 	"github.com/bdrtr/gobit/internal/modules/payment/storecredit"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
@@ -83,7 +84,8 @@ func TestPointsAndCreditPayPartOfAnOrder(t *testing.T) {
 	var collectionID string
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
 		`SELECT id FROM payment_collections WHERE reference = $1`, cartID).Scan(&collectionID))
-	_, err = paymentSvc.RefundCollection(ctx, collectionID, 0, "an end-to-end test", "")
+	_, err = paymentSvc.RefundCollection(ctx, collectionID, 0, paymentmodels.MaxAmount,
+		"an end-to-end test", "e2e_balance_"+collectionID)
 	require.NoError(t, err)
 	credit, err = paymentSvc.StoreCreditBalance(ctx, customerID, taxedCurrency)
 	require.NoError(t, err)

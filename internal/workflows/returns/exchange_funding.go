@@ -259,8 +259,11 @@ func (w *Workflows) RefundExchangeDifference(ctx context.Context, exchangeID, re
 			exchangeID, detail.PaymentCollectionID)
 	}
 
+	// The difference is the ceiling of the exchange's refunds (ADR 0433); its
+	// collection was opened for exactly that figure, so it holds no more.
 	if held := captured - refunded; held > 0 {
-		if _, err := w.payments.RefundCollection(ctx, detail.PaymentCollectionID, held, reason, exchangeID); err != nil {
+		if _, err := w.payments.RefundCollection(ctx, detail.PaymentCollectionID, held,
+			detail.DifferenceDue, reason, exchangeID); err != nil {
 			return errors.Wrap(err, errors.KindOf(err), CodeRefundFailed,
 				"the difference of exchange %s could not be sent back", exchangeID)
 		}

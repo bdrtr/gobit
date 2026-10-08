@@ -1162,8 +1162,9 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, VariantBundlePath): {"parts": {""}, "version": {"1"}},
 	// The walk withdraws a return; every act reaches the same surface.
 	routeKey(http.MethodPost, OrderAfterSalePath): {},
-	// And opens one (ADR 0272).
-	routeKey(http.MethodPost, OrderAfterSaleOpenPath): {},
+	// And opens one (ADR 0272), naming a line, which a return has to
+	// (ADR 0433).
+	routeKey(http.MethodPost, OrderAfterSaleOpenPath): {"line_id": {"oli_walk"}, "quantity": {"1"}},
 	// And records an offline payment (ADR 0287).
 	routeKey(http.MethodPost, OrderPaymentReceivedPath): {},
 	// The telephone order opens a cart and adds a line (ADR 0290).
