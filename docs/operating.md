@@ -260,7 +260,7 @@ make rename-module MODULE=github.com/user/repo
 
 ## Version
 
-Current version: **v0.9.0**. For the changes, see
+Current version: **v0.10.0**. For the changes, see
 [`CHANGELOG.md`](../CHANGELOG.md). Which roadmap phase covers what is in the
 README's phase-status table.
 
@@ -359,6 +359,31 @@ README's phase-status table.
   shipping method body, a bound identity for the address book, READ COMMITTED
   required of the pool, metrics by scrape, and migrations that refuse data
   v0.8.0 allowed. Drain checkouts before upgrading.
+- **v0.10.0** — what happens after the sale: a parcel holds the units it ships
+  ([ADR 0409](adr/0409-an-orders-parcel-holds-the-units-it-ships.md)), a
+  return gives back at most what its units were sold for
+  ([ADR 0433](adr/0433-a-return-gives-back-at-most-what-its-units-sold-for.md)),
+  an exchange names its return and is documented as a refund and a sale, an
+  amount moved after the sale is a document amending the invoice
+  ([ADR 0406](adr/0406-an-amount-moved-after-the-sale-is-a-document.md)), and
+  the payment and order modules keep derived books
+  ([ADR 0186](adr/0186-the-payment-module-keeps-derived-books.md)). Around
+  that, 250 decisions: gift cards, wishlists with price and stock alerts,
+  customer segments, typed product attributes and facets, add-ons and
+  bundles, product revisions written at the version they read, catalog import
+  and export, supplier receipts and backorders, an order that adds to another
+  or is corrected before it ships, offline payment methods, and a second
+  factor an installation can require. **There are breaking changes**, and the
+  CHANGELOG lists them by audience: a return's refund held to what its units
+  were sold for, a parcel open naming its units, `cart.` rules that no longer
+  price or discount a cart, the second-factor endpoints, a storefront profile
+  that no longer takes `email`, a generated client's renamed order types, and
+  the cross-module surfaces an installation registers itself. Stop every
+  v0.9.0 instance before the first v0.10.0 instance starts: invoice migration
+  000007 breaks the old code's invoice reject and cancel, fulfillment
+  migration 000009 its open of a parcel that names items, and nine tables are
+  rewritten under an exclusive lock. Refunds made before the upgrade name no
+  cause, so a return's ceiling does not count them.
 
 Throughout `0.x`, **breaking changes may arrive in minor versions**: the API
 surface is not frozen yet. It freezes with `1.0.0`.

@@ -9,306 +9,366 @@ design. It is fixed with `1.0.0`.
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-10-09
+
 ### Breaking changes
 
-- **A return gives back at most what its units were sold for** (ADR 0433,
-  D269). **For API consumers:**
-  `POST /admin/v1/orders/{id}/returns/{returnId}/refund` at `amount` 0
-  refunds what the return's units were sold for less what refunds naming it
-  gave back, as far as the collection holds, where it used to refund
-  everything the collection held. An amount above that, or any refund once it
-  is spent, answers 409 `returns_workflow_refund_exceeds_return` and moves
-  nothing; a return that names no line answers 409
+Legitimate in a minor version throughout `0.x` (see the head of this file).
+Collected on the day of the cut by diffing v0.9.0 against this tree: the
+OpenAPI documents of the server, of the server with the plugins that serve
+routes and of the starter; `gorelease` and `apidiff` over the importable
+packages and the two `contrib/` modules; the `env:` tags; the privilege each
+route's guard demands; the event topics and payloads; and the migrations. The
+importable packages changed only by addition. Each item names its audience and
+what a v0.9.0 user has to change. A surface added since v0.9.0 is named as new,
+and how it changed between unreleased commits is not repeated. A cross-module
+surface resolved by name is not a contract (ADR 0001); the notes for plugin
+authors concern an installation that registers its own.
+
+**Upgrading from v0.9.0.** For operators:
+
+- **Run no v0.9.0 instance beside a v0.10.0 one.** The migrations run when the
+  first v0.10.0 instance starts, and three of them break writes of the old
+  code. After invoice migration 000007 (ADR 0419) a v0.9.0 instance's
+  `POST /admin/v1/invoices/{id}/status` to `rejected` or `canceled` fails on
+  the check `invoices_voided_when_final`; after fulfillment migration 000009
+  (ADR 0428) its open of a parcel that names items fails, since
+  `fulfillment_items.reference` is required; after fulfillment migration
+  000008 (ADR 0423) a parcel it marks come back is left not held whole. Stop
+  every v0.9.0 instance, then start v0.10.0.
+- **Nine tables are rewritten under an exclusive lock at startup.** Cart
+  migration 000006, fulfillment 000005, order 000032 and 000035 and pricing
+  000005 add an identity column, which rewrites `cart_line_items`,
+  `fulfillment_items`, `order_line_items`, `order_return_items`,
+  `order_replacement_items`, `order_line_cancellations`,
+  `order_shipping_methods`, `price` and `price_rule`; every read and write of
+  a table waits for its rewrite. Size the window by those tables.
+- **Before upgrading,** list the `cart.` price and promotion rules (ADR 0403,
+  ADR 0407), the stacked rates made a default (D248) and the price and
+  promotion rules naming `sales_channel_id` (ADR 0397); each item below gives
+  its query or its review.
+- **Refunds made before v0.10.0 name no cause** (ADR 0187). Payment migration
+  000008 adds `refunds.reference` empty on every existing row, so ADR 0433's
+  ceiling counts none of them: a return refunded under v0.9.0 can be refunded
+  again, up to what its units were sold for, by its refund endpoint at
+  `amount` 0 or by the order page's empty form. Read the order's payments
+  before refunding a return opened before the upgrade.
+- **Some migrations refuse to roll back** while data depends on them: order
+  000026 and 000043, invoice 000008, cart 000004, and payment 000009 to
+  000012. Do not roll fulfillment 000008 or 000009 back and apply them again
+  on a live database.
+
+- **A generated client's admin order types and storefront profile body are
+  renamed** (ADR 0193, ADR 0401, ADR 0376). **For integrators with a client
+  generated from `/openapi.json`:** `GET /admin/v1/orders` answers items of
+  `OrderAdminOrderRow` where v0.9.0 answered `Order`;
+  `GET /admin/v1/orders/{id}` and the archive, cancel and complete answers carry
+  `OrderAdminOrderDetail` and `OrderAdminLineItem` where they carried
+  `OrderDetail` and `OrderLineItem`; `PUT /store/v1/customers/{id}` takes
+  `CustomerStoreUpdateCustomerRequest` where it took
+  `CustomerUpdateCustomerRequest`. The responses keep every field they had and
+  add some, and the storefront body drops `email` (ADR 0376, below). Regenerate
+  the client and rename the types your code names; the old names stay in the
+  document for the operations that still use them.
+
+- **A return gives back at most what its units were sold for** (ADR 0433, D269).
+  **For API consumers:** `POST /admin/v1/orders/{id}/returns/{returnId}/refund`
+  at `amount` 0 refunds what the return's units were sold for less what refunds
+  naming it gave back, as far as the collection holds, where it used to refund
+  everything the collection held. An amount above that, or any refund once it is
+  spent, answers 409 `returns_workflow_refund_exceeds_return` and moves nothing;
+  a return that names no line answers 409
   `returns_workflow_return_names_no_line`.
   `POST /admin/v1/orders/{id}/claims/{claimId}/settle` still answers a claim
   already settled with 409 `returns_workflow_invalid_input`; a claim still
-  requested that a refund already names (its stamp failed, or two settles
-  met) now moves nothing and is recorded settled with a warning, where it was
-  refunded again, and answers `returns_workflow_claim_refunded` only when
-  that record cannot be written. The return record carries `lines`, each
+  requested that a refund already names (its stamp failed, or two settles met)
+  now moves nothing and is recorded settled with a warning, where it was
+  refunded again, and answers `returns_workflow_claim_refunded` only when that
+  record cannot be written. The return record carries `lines`, each
   `order_line_item_id`, `quantity` and `refund_amount`, and `sold_for`, what
   those units were sold for, on `GET /admin/v1/orders/{id}/returns`,
   `GET /admin/v1/orders/{id}/returns/{returnId}`, the opening and withdrawal
   answers and `POST /store/v1/orders/{id}/returns`; a withdrawal whose lines
   cannot be read after it was written answers without the two and with
   `warnings`. The payment module's code for the refusal is
-  `payment_refund_exceeds_cause`. **For operators:** the
-  order page's refund of a return, left empty, gives back what is left of the
-  returned units' worth, and the same form again refuses; shipping, and a
-  return opened without lines, go back as a credit on the order page and a
-  refund through `POST /admin/v1/payments/{id}/refunds`; the return form
-  refuses one naming no line. A return already refunded past its worth
-  refunds nothing more and keeps what it paid; measurements/0433 shows how to
-  find one. **For plugin authors:** the returns flow resolves
-  `payment.interop` with
-  `RefundCollection(ctx, collectionID, amount, ceiling, reason, reference)`,
-  and an installation that registers its own without it fails at startup; the
-  payment service's `RefundCollection` takes the ceiling and requires the
-  reference, `service.Store` gains `RefundedForReference`, and the order API's
-  `Orders` interface gains `ReturnsWithLines` and takes `CreateReturnRecord`
-  in place of `CreateReturn`.
+  `payment_refund_exceeds_cause`. **For operators:** the order page's refund of
+  a return, left empty, gives back what is left of the returned units' worth,
+  and the same form again refuses; shipping, and a return opened without lines,
+  go back as a credit on the order page and a refund through
+  `POST /admin/v1/payments/{id}/refunds`; the return form refuses one naming no
+  line. Refunds made before this release name no cause and are not counted (see
+  Upgrading from v0.9.0 above); a return refunded past its worth by refunds that
+  name it refunds nothing more and keeps what it paid, and measurements/0433
+  shows how to find one. **For plugin authors:** the returns flow resolves
+  `payment.interop` with `RefundCollection(ctx, collectionID, amount, ceiling,
+  reason, reference)` where v0.9.0 asked `RefundCollection(ctx, collectionID,
+  amount, reason)`, and an installation that registers its own `payment.interop`
+  with the v0.9.0 signature fails at startup; the payment service's
+  `RefundCollection` takes the ceiling and requires the reference,
+  `service.Store` gains `RefundedForReference`, and the order API's `Orders`
+  interface gains `ReturnsWithLines` and takes `CreateReturnRecord` in place of
+  `CreateReturn`.
 
-- **An exchange is documented as a return and a sale** (ADR 0432, D247).
-  **For API consumers:** `GET /admin/v1/orders/{id}/invoice/amendments` lists
-  each exchange that names its return as one act of kind `exchange`, its id
-  the exchange's and its `amount` what it sends, `documentable` once its return
-  has been received and every replacement it sends has left; every act carries
-  `documents`, each live document of it in the order issued, and an exchange's
-  `document` is its sale once both of its documents stand. A withdrawn
-  exchange is listed, `withdrawn` and not documentable, only while documents
-  issued before it was withdrawn stand. `POST` with that act issues two
-  documents amending the order's invoice in one call: a `refund` with reason
-  `returned` under key `exchange_returned:<id>`, giving back the units the
-  exchange's return takes back on their invoice rows at what they were sold
-  for, and a `sale` with the new reason `exchanged` under `exchange_sent:<id>`,
-  adding a row for each item sent at the price and tax recorded when it was
-  written. A stacked row's rates give back their share of the units' tax by
-  what each charged, a rate short of its share giving the rest to the rates
-  with room, and the part that takes what a row has left in amount takes what
-  each rate has left. Every answer of the endpoint now carries `documents`, the act's
-  documents with `issued` saying whether this call issued each, and is 201
-  when it issued one and 200 with `already_issued` when it issued none; a
-  request after a failure between an exchange's two issues the sale alone. It
-  answers 409 `invoicing_act_not_documented` before the return has come back
-  or the goods have left and for a withdrawn exchange whose two documents do
-  not both stand (with both standing it answers 200 `already_issued`), 409
-  `invoicing_act_does_not_fit` when a returned row has less left than its units
-  were sold for, naming the documents that gave back on the row first, which
-  the exchange cannot be documented beside, and 422
+- **An exchange is documented as a return and a sale** (ADR 0432, D247). **For
+  API consumers:** `GET /admin/v1/orders/{id}/invoice/amendments`, new since
+  v0.9.0 (ADR 0406), lists each exchange that names its return as one act of
+  kind `exchange`, its id the exchange's and its `amount` what it sends,
+  `documentable` once its return has been received and every replacement it
+  sends has left; every act carries `documents`, each live document of it in the
+  order issued, and an exchange's `document` is its sale once both of its
+  documents stand. A withdrawn exchange is listed, `withdrawn` and not
+  documentable, only while documents issued before it was withdrawn stand.
+  `POST` with that act issues two documents amending the order's invoice in one
+  call: a `refund` with reason `returned` under key `exchange_returned:<id>`,
+  giving back the units the exchange's return takes back on their invoice rows
+  at what they were sold for, and a `sale` with the new reason `exchanged` under
+  `exchange_sent:<id>`, adding a row for each item sent at the price and tax
+  recorded when it was written. A stacked row's rates give back their share of
+  the units' tax by what each charged, a rate short of its share giving the rest
+  to the rates with room, and the part that takes what a row has left in amount
+  takes what each rate has left. Every answer of the endpoint carries
+  `documents`, the act's documents with `issued` saying whether this call issued
+  each, and is 201 when it issued one and 200 with `already_issued` when it
+  issued none; a request after a failure between an exchange's two issues the
+  sale alone. It answers 409 `invoicing_act_not_documented` before the return
+  has come back or the goods have left and for a withdrawn exchange whose two
+  documents do not both stand (with both standing it answers 200
+  `already_issued`), 409 `invoicing_act_does_not_fit` when a returned row has
+  less left than its units were sold for, naming the documents that gave back on
+  the row first, which the exchange cannot be documented beside, and 422
   `invoicing_invalid_input` for named `rows`. An exchange's funding and refund
-  are still refused 409 `invoicing_act_not_documented`, with a message naming
-  the exchange act. **For integrators reading the documents:** an invoice's
+  are refused 409 `invoicing_act_not_documented`, with a message naming the
+  exchange act. **For integrators reading the documents:** an invoice's
   `amendment_reason` may be `exchanged`, which is a sale's, and an amendment's
   key may name `exchange_returned` on a refund or `exchange_sent` on a sale;
   invoice migration 000008 holds `price_raised` and `exchanged` to a sale and
   `returned` and `price_lowered` to a refund, and rolling it back is refused
   while a document of an exchange stands. **For accountants:** the order
   journal's `tax_corrected` entries include an exchange's two documents, each
-  moving its tax between `tax_payable` and `sales`, so sales hold the goods
-  kept and sent net of their tax and `tax_payable` moves by the sent goods'
-  tax less the returned goods'; an even swap on a row nothing else gave back
-  from moves neither, and one on a row an earlier refund gave back part of can
-  move `tax_payable` by a rounding unit. **For plugin
-  authors:** `workflows.invoicing.interop`'s `IssueAmendment`, and so the
-  order API's `Invoicing`, answers a JSON object of `{invoice_id, number,
-  already_issued, documents}` instead of three values, and its act list
-  carries `documents` and `withdrawn`; `invoice.interop`'s amendable read
-  names, per row, the live refunds that gave back on it (`given_back_by`);
-  `order.interop`'s `AfterSaleActsJSON` and `AfterSaleActJSON` carry each act's
-  `sent` items and `withdrawn`, and the latter names an exchange's variants
-  from the catalog; the invoice models gain `ReasonExchanged` and the two act
-  kinds, and the order models `JournalExchange`, `JournalExchangeReturned` and
-  `JournalExchangeSent`. **For operators:** the order page lists such an
-  exchange with both of its documents and issues them in one press, says when
-  one not yet documentable will be, offers the rest of one documented half,
-  and shows a withdrawn one's documents to be canceled. An exchange whose
-  return never comes back is never documented.
+  moving its tax between `tax_payable` and `sales`, so sales hold the goods kept
+  and sent net of their tax and `tax_payable` moves by the sent goods' tax less
+  the returned goods'; an even swap on a row nothing else gave back from moves
+  neither, and one on a row an earlier refund gave back part of can move
+  `tax_payable` by a rounding unit. **For plugin authors:** the methods named
+  here are new since v0.9.0, and an installation that registers its own
+  `workflows.invoicing.interop`, `invoice.interop` or `order.interop` implements
+  them as follows: `IssueAmendment` answers a JSON object of `{invoice_id,
+  number, already_issued, documents}`, and the act list carries `documents` and
+  `withdrawn`; `invoice.interop`'s amendable read names, per row, the live
+  refunds that gave back on it (`given_back_by`); `order.interop`'s
+  `AfterSaleActsJSON` and `AfterSaleActJSON` carry each act's `sent` items and
+  `withdrawn`, and the latter names an exchange's variants from the catalog; the
+  invoice models gain `ReasonExchanged` and the two act kinds, and the order
+  models `JournalExchange`, `JournalExchangeReturned` and `JournalExchangeSent`.
+  **For operators:** the order page lists such an exchange with both of its
+  documents and issues them in one press, says when one not yet documentable
+  will be, offers the rest of one documented half, and shows a withdrawn one's
+  documents to be canceled. An exchange whose return never comes back is never
+  documented.
 
 - **An addition's units travel as its parcel's items** (ADR 0428, D264). **For
-  API consumers:** `PUT /admin/v1/orders/{id}/fulfillments/{fulfillmentId}`
-  takes an optional body, `{"items":[{"line_item_id","quantity"}]}` in the
-  open's shape, and puts those units of the addition into the parent's parcel
-  as items, so `GET /admin/v1/fulfillments/{id}` lists the addition's lines
-  beside the parent's. With no items it puts in every unit the addition still
-  owes, and only on an addition sold exactly one delivery on a shipping
-  option; any other addition, one sold no delivery of its own among them,
-  answers 422 `fulfilling_items_required` where it used to be bound. A line
-  named past what it still owes answers 409
+  API consumers:** `PUT /admin/v1/orders/{id}/fulfillments/{fulfillmentId}`, new
+  since v0.9.0 (ADR 0197), joins an addition to its parent's parcel and takes an
+  optional body, `{"items":[{"line_item_id","quantity"}]}` in the open's shape,
+  and puts those units of the addition into the parent's parcel as items, so
+  `GET /admin/v1/fulfillments/{id}` lists the addition's lines beside the
+  parent's. With no items it puts in every unit the addition still owes, and
+  only on an addition sold exactly one delivery on a shipping option; any other
+  addition, one sold no delivery of its own among them, answers 422
+  `fulfilling_items_required`. A line named past what it still owes answers 409
   `fulfillment_line_not_dispatchable`, the default finding nothing owed 409
   `fulfillment_nothing_owed`, and a parcel leaving pending while the addition
   joins 409 `fulfillment_invalid_transition`. A unit not named stays owed. A
   join of an addition already in the parcel naming no items, or exactly those
   the parcel holds for it, adds no unit and binds it again in any state of the
   parcel, so a binding that answered `fulfilling_link_failed` is written by
-  asking again while both orders are pending; it re-runs no recount, so a
-  cancel or a come-back of the parcel recounted before then leaves the
-  addition's written-off units off the shelf until the line's next act. One
-  naming other units answers 409 `fulfillment_join_items_differ`. **For operators:** once
-  an addition has joined, its page offers none of the units in the box, a
-  second parcel for them answers 409 `fulfillment_line_not_dispatchable`, a
-  write-off of its line puts none of them back on the shelf, and canceling
-  the parcel puts each written-off unit back against the order whose line it
-  is. A second join cannot add units to the parcel: cancel it to change what
-  it holds. A join made before the upgrade rode itemless: asking it again
-  while the parcel is pending puts its units in. Fulfillment migration 000009
-  adds `fulfillment_items.reference` and gives every item its parcel's
-  reference. During the upgrade an instance on the old code fails an open,
-  joins without items and misses a join's items in a write-off restock, so
-  upgrade with nobody opening parcels, joining them or writing lines off. Do
-  not roll 000009 back and apply it again once a join has written items: the
-  backfill gives the addition's items the parent's reference, and a later
-  join of the pair fails on `fulfillment_items_line_uniq`. **For plugin
-  authors:** the fulfilling flow resolves `fulfillment.interop` with
-  `JoinParcel(ctx, fulfillmentID, parentReference, additionReference, items,
-  itemsOwed)`, and an installation that registers its own without it fails at
-  startup; the order module's `Fulfilling` interface takes the join's body in
-  `ShipInParcel`; `models.FulfillmentItem` carries `Reference`, which
+  asking again while both orders are pending; it re-runs no recount, so a cancel
+  or a come-back of the parcel recounted before then leaves the addition's
+  written-off units off the shelf until the line's next act. One naming other
+  units answers 409 `fulfillment_join_items_differ`. **For operators:** once an
+  addition has joined, its page offers none of the units in the box, a second
+  parcel for them answers 409 `fulfillment_line_not_dispatchable`, a write-off
+  of its line puts none of them back on the shelf, and canceling the parcel puts
+  each written-off unit back against the order whose line it is. A second join
+  cannot add units to the parcel: cancel it to change what it holds. Fulfillment
+  migration 000009 adds `fulfillment_items.reference` and gives every item its
+  parcel's reference. Once it has run, a v0.9.0 instance fails an open that
+  names items and misses a join's items in a write-off restock, so run none
+  beside v0.10.0 (see Upgrading from v0.9.0). Do not roll 000009 back and apply
+  it again once a join has written items: the backfill gives the addition's
+  items the parent's reference, and a later join of the pair fails on
+  `fulfillment_items_line_uniq`. **For plugin authors:** the fulfilling flow
+  resolves `fulfillment.interop` with `JoinParcel(ctx, fulfillmentID,
+  parentReference, additionReference, items, itemsOwed)`, and an installation
+  that registers its own without it fails at startup; one that registers its own
+  `workflows.fulfilling.interop` answers the order module `ShipInParcel` with
+  the join's body; `models.FulfillmentItem` carries `Reference`, which
   `service.Store`'s `CreateFulfillmentItem` writes and its
   `HeldQuantitiesForReference` sums by.
 
 - **An exchange names its return and prices what it sends** (ADR 0432, D247).
   **For API consumers:** `POST /admin/v1/orders/{id}/exchanges` takes
   `return_id`, the return whose goods the exchange takes back, and the record
-  publishes it. With it, `difference_due` is derived and a typed one other
-  than zero answers 422 `order_exchange_difference_derived`: the exchange
-  opens at minus what the return's units were sold for, and each replacement
-  written or withdrawn while it is requested moves the figure by what it
-  sends. The return has to be the order's (422
-  `order_exchange_return_other_order`), still requested (409
-  `order_exchange_return_not_open`), name its lines (422
+  publishes it. With it, `difference_due` is derived and a typed one other than
+  zero answers 422 `order_exchange_difference_derived`: the exchange opens at
+  minus what the return's units were sold for, and each replacement written or
+  withdrawn while it is requested moves the figure by what it sends. The return
+  has to be the order's (422 `order_exchange_return_other_order`), still
+  requested (409 `order_exchange_return_not_open`), name its lines (422
   `order_exchange_return_empty`) and be taken back by no other live exchange
   (409 `order_exchange_return_named`). Each item of such an exchange's
   replacement carries `price` (`unit_price`, `total`, `tax_total`,
-  `tax_rate_bps`, `tax_components`, `priced_by`): a line at what the order
-  line charged for those units (`line`), a variant at what a cart of the
-  order's customer in its region and sales channel would charge with no
-  promotion (`quote`), or at the line's `unit_price` taxed the same way
-  (`operator`); a line's units are priced as the next units of it the
-  exchange sends, and while the exchange is requested a withdrawal, or its
-  reopening when a parcel is canceled, prices its line items again from each
-  line's first unit, so an even swap nets to nothing after any writes and
-  withdrawals. Once it is settled or withdrawn its figures stay as they
-  stood: a replacement withdrawn then leaves the buyer owed its share. A
-  piece of a line worth under one minor unit a unit whose tax would come out
-  above its total answers 409 `order_replacement_tax_above_total`. A `unit_price` on a line, or on a replacement of a claim or of an
-  exchange that names no return, answers 422
-  `order_replacement_price_refused`; a region whose currency or tax
-  convention is no longer the order's answers 409
-  `order_exchange_region_moved`, an installation without the cart flows 500
-  `order_exchange_quote_unavailable`, and a quote outside its contract 500
-  `order_exchange_quote_invalid`. A replacement of such an exchange while it
-  is funded answers 409 `order_exchange_difference_held` to a withdrawal,
-  before any unit is released: the exchange's refund sends the money back and
-  withdraws it, and the replacement is withdrawn after; one of a withdrawn or
-  settled exchange is withdrawn and leaves the difference as it stood. A
-  funding checked against a figure the exchange no longer owes answers 409
+  `tax_rate_bps`, `tax_components`, `priced_by`): a line at what the order line
+  charged for those units (`line`), a variant at what a cart of the order's
+  customer in its region and sales channel would charge with no promotion
+  (`quote`), or at the line's `unit_price` taxed the same way (`operator`); a
+  line's units are priced as the next units of it the exchange sends, and while
+  the exchange is requested a withdrawal, or its reopening when a parcel is
+  canceled, prices its line items again from each line's first unit, so an even
+  swap nets to nothing after any writes and withdrawals. Once it is settled or
+  withdrawn its figures stay as they stood: a replacement withdrawn then leaves
+  the buyer owed its share. A piece of a line worth under one minor unit a unit
+  whose tax would come out above its total answers 409
+  `order_replacement_tax_above_total`. A `unit_price` on a line, or on a
+  replacement of a claim or of an exchange that names no return, answers 422
+  `order_replacement_price_refused`; a region whose currency or tax convention
+  is no longer the order's answers 409 `order_exchange_region_moved`, an
+  installation without the cart flows 500 `order_exchange_quote_unavailable`,
+  and a quote outside its contract 500 `order_exchange_quote_invalid`. A
+  replacement of such an exchange while it is funded answers 409
+  `order_exchange_difference_held` to a withdrawal, before any unit is released:
+  the exchange's refund sends the money back and withdraws it, and the
+  replacement is withdrawn after; one of a withdrawn or settled exchange is
+  withdrawn and leaves the difference as it stood. A funding checked against a
+  figure the exchange no longer owes answers 409
   `order_exchange_difference_moved`, a refund of the return it takes back 409
-  `returns_workflow_return_settled_by_exchange`, and a withdrawal of that
-  return 409 `order_return_named_by_exchange`. A replacement written against
-  an exchange funded after it was read answers 409 `order_not_pending`. A
-  repeated replacement request writes a second replacement and raises the
-  difference by it. What a line's returns and replacements speak for, which
-  a parcel that came back holds its units to (ADR 0423), counts an exchange
-  that names its return once per line, the more of what it takes back and
-  what it sends. An exchange that names no return is unchanged. **For operators:** the order
-  page's exchange form offers the order's requested returns no live exchange
-  takes back, and its difference is typed only without one; an exchange names
-  the return it takes back. Rolling the order schema back past migration
-  000043 is refused while a live exchange names a return. **For plugin
-  authors:** `order.interop`'s `FundExchange` takes the difference the
-  collection was checked against, `(ctx, exchangeID, collectionID, owed)`, and
-  the return flow's `Orders` requires it; the return detail carries
-  `settled_by_exchange`, and the replacement detail MUST carry
-  `withdrawable`: the return flow refuses a withdrawal whose detail leaves it
-  out (500 `returns_workflow_replacement_unreadable`), before any unit goes
-  back.
-  `workflows.cart.interop` gains
-  `QuoteExchangeLinesJSON`, which the order module resolves on first use: an
-  installation registering its own cart flows without it refuses a variant
-  sent by an exchange that names its return. The order service's `Store`
-  gains `SetExchangeDifference`, `LiveExchangeOfReturn`, `ExchangeLineUnits`,
-  `LiveExchangeLineItems`, `RepriceReplacementItem` and `ExchangeSent`,
-  its `Options` gain `Quotes`, and the panel's after-sales surface's
-  `OpenExchange` takes the return.
+  `returns_workflow_return_settled_by_exchange`, and a withdrawal of that return
+  409 `order_return_named_by_exchange`. A replacement written against an
+  exchange funded after it was read answers 409 `order_not_pending`. A repeated
+  replacement request writes a second replacement and raises the difference by
+  it. What a line's returns and replacements speak for, which a parcel that came
+  back holds its units to (ADR 0423), counts an exchange that names its return
+  once per line, the more of what it takes back and what it sends. An exchange
+  that names no return is unchanged. **For operators:** the order page's
+  exchange form offers the order's requested returns no live exchange takes
+  back, and its difference is typed only without one; an exchange names the
+  return it takes back. Rolling the order schema back past migration 000043 is
+  refused while a live exchange names a return. **For plugin authors:**
+  `order.interop`'s `FundExchange` takes the difference the collection was
+  checked against, `(ctx, exchangeID, collectionID, owed)` where v0.9.0 took
+  `(ctx, exchangeID, collectionID)`, and the return flow's `Orders` requires it;
+  the return detail carries `settled_by_exchange`, and the replacement detail
+  MUST carry `withdrawable`: the return flow refuses a withdrawal whose detail
+  leaves it out (500 `returns_workflow_replacement_unreadable`), before any unit
+  goes back. `workflows.cart.interop` gains `QuoteExchangeLinesJSON`, which the
+  order module resolves on first use: an installation registering its own cart
+  flows without it refuses a variant sent by an exchange that names its return.
+  The order service's `Store` gains `SetExchangeDifference`,
+  `LiveExchangeOfReturn`, `ExchangeLineUnits`, `LiveExchangeLineItems`,
+  `RepriceReplacementItem` and `ExchangeSent`, its `Options` gain `Quotes`, and
+  the panel's after-sales surface's `OpenExchange` takes the return.
 
 - **A parcel that came back holds only what a return or a replacement speaks
   for** (ADR 0423, D268). **For operators:** a parcel marked come back
   undelivered no longer keeps its units: unless the order's live returns ask
-  them back or its live replacements send them again, the order owes them
-  again, so the order page's open form offers them, a new parcel takes them,
-  and a write-off of the line puts them back on the shelf; the page says so
-  under the parcel when the order owes them. A line written off while its
-  parcel was on the way gets its units back when the parcel is marked come
-  back, as far as nothing speaks for them then; withdrawing a return or a
-  replacement after the line was written off recounts nothing, and a stock
-  adjustment repairs it. Parcels already come back when you upgrade are held
-  whole, as before (fulfillment migration 000008), and an order return and
-  its receipt put their units back on the shelf. Run the upgrade while nobody
-  marks parcels come back: an instance on the old code that does so after the
-  migration leaves the parcel not held whole and announces nothing. Do not
-  roll 000008 back and apply it again on a live database: the re-applied
-  backfill marks every parcel then come back as held whole. A claim refunded
-  in money names no line, so read the order's claims before sending the units
-  of a parcel that came back; and do not adjust stock by hand for a parcel
-  marked come back after the upgrade, since a write-off now puts its units
-  back. **For integrators:**
+  them back or its live replacements send them again, the order owes them again,
+  so the order page's open form offers them, a new parcel takes them, and a
+  write-off of the line puts them back on the shelf; the page says so under the
+  parcel when the order owes them. A line written off while its parcel was on
+  the way gets its units back when the parcel is marked come back, as far as
+  nothing speaks for them then; withdrawing a return or a replacement after the
+  line was written off recounts nothing, and a stock adjustment repairs it.
+  Parcels already come back when you upgrade are held whole, as before
+  (fulfillment migration 000008), and an order return and its receipt put their
+  units back on the shelf. Run the upgrade while nobody marks parcels come back:
+  an instance on the old code that does so after the migration leaves the parcel
+  not held whole and announces nothing. Do not roll 000008 back and apply it
+  again on a live database: the re-applied backfill marks every parcel then come
+  back as held whole. A claim refunded in money names no line, so read the
+  order's claims before sending the units of a parcel that came back; and do not
+  adjust stock by hand for a parcel marked come back after the upgrade, since a
+  write-off now puts its units back. **For integrators:**
   `POST /admin/v1/orders/{id}/fulfillments` and `POST /admin/v1/fulfillments`
   open a parcel for such units where they answered 409
   `fulfillment_line_not_dispatchable` or `fulfillment_nothing_owed`. Marking a
   parcel come back publishes `fulfillment.returned` (`fulfillment_id`,
-  `reference`, `return_id`, `returned_at`), through the outbox, and the
-  webhook plugin forwards it. The `fulfillment` read-layer entity offers
-  `held_whole`. **For plugin authors:** `fulfillment.interop`'s
-  `HeldForReferenceLocked` and `CommittedQuantitiesForReference` take a third
-  argument, per line what returns and replacements speak for, and the order
-  cancellation flow and the fulfilling flow resolve them with it; an
-  installation that registers its own `fulfillment.interop` without it fails
-  at startup. The fulfilling flow's `Interop.DispatchCeilings` and the
-  fulfillment module's `service.DispatchBound` answer a second map, that
-  figure per line; `service.Store` replaces `CommittedQuantitiesForReference`
-  with `HeldQuantitiesForReference`, which answers `models.HeldUnits` per line;
-  the lines `DispatchableLinesJSON` answers carry `spoken_for`; the order
-  cancellation flow subscribes to `fulfillment.returned`.
+  `reference`, `return_id`, `returned_at`), through the outbox, and the webhook
+  plugin forwards it. The `fulfillment` read-layer entity offers `held_whole`.
+  **For plugin authors:** an installation that registers its own
+  `fulfillment.interop` answers the order cancellation flow
+  `HeldForReferenceLocked(ctx, reference, spoken)` and the fulfilling flow
+  `CommittedQuantitiesForReference(ctx, reference, spoken)`, both in place of
+  v0.9.0's `CommittedQuantities(ctx, fulfillmentIDs)`, where `spoken` is, per
+  line, what the order's live returns and replacements speak for; one registered
+  without them fails at startup. One that registers its own
+  `workflows.fulfilling.interop` answers the fulfillment module
+  `DispatchCeilings(ctx, orderID, lineItemIDs)` with two maps, the ceilings and
+  that figure, and `ReturnLines` (ADR 0384), where v0.9.0 asked
+  `DispatchableQuantities` with one map. The lines `DispatchableLinesJSON`
+  answers carry `spoken_for`; the order cancellation flow subscribes to
+  `fulfillment.returned`.
 
 - **Every parcel waits for its order's lock** (ADR 0420, D264, D265). **For
   plugin authors:** the order cancellation flow resolves `fulfillment.interop`
-  as an interface that now requires `HeldForReferenceLocked(ctx, reference)`
-  and no longer `CommittedQuantities`; an installation that registers its own
-  `fulfillment.interop` without the new method fails at startup. The method
-  answers, per order line, the units the order's live outgoing parcels hold,
-  counted by reference under the order's dispatch lock, and answers an
-  unavailable fault, `fulfillment_dispatch_busy`, at once while a parcel of
-  the order is being opened. `core/eventbus.HandlerRetryDelays()` answers the
-  bus's waits between a failing handler's calls, for a handler that bounds
-  its own waits by them. On the Redis bus a handler that still fails with a
-  fault that may pass once the bus's shutdown has begun leaves its message
-  pending, and the next process takes it over and delivers it again, where
-  it was acknowledged and dropped as processed; an invalid event and a panic
-  are acknowledged as before, and the in-memory bus is unchanged. **For
-  integrators:** the `fulfillment.canceled`
-  event, and its webhook, carry `return_id`, the return a parcel was bringing
-  back, empty for a parcel that went out. **For operators:** two parcels
-  opened at once to bring one return back can no longer together carry more
-  than the return names; the second answers 409
-  `fulfillment_line_not_dispatchable`. A line write-off or a box cancel no
-  longer puts back units that a parcel being opened is about to hold: its
-  restock, which runs on the event bus after the request has returned, asks
+  as an interface that requires `HeldForReferenceLocked(ctx, reference, spoken)`
+  in place of v0.9.0's `CommittedQuantities` (`spoken` is ADR 0423's); an
+  installation that registers its own `fulfillment.interop` without it fails at
+  startup. The method answers, per order line, the units the order's live
+  outgoing parcels hold, counted by reference under the order's dispatch lock,
+  and answers an unavailable fault, `fulfillment_dispatch_busy`, at once while a
+  parcel of the order is being opened. `core/eventbus.HandlerRetryDelays()`
+  answers the bus's waits between a failing handler's calls, for a handler that
+  bounds its own waits by them. On the Redis bus a handler that still fails with
+  a fault that may pass once the bus's shutdown has begun leaves its message
+  pending, and the next process takes it over and delivers it again, where it
+  was acknowledged and dropped as processed; an invalid event and a panic are
+  acknowledged as before, and the in-memory bus is unchanged. **For
+  integrators:** the `fulfillment.canceled` event, and its webhook, carry
+  `return_id`, the return a parcel was bringing back, empty for a parcel that
+  went out. **For operators:** two parcels opened at once to bring one return
+  back can no longer together carry more than the return names; the second
+  answers 409 `fulfillment_line_not_dispatchable`. A line write-off or a box
+  cancel no longer puts back units that a parcel being opened is about to hold:
+  its restock, which runs on the event bus after the request has returned, asks
   again while the parcel is opened, about 45 seconds a delivery at most; a
-  delivery that still meets it is logged as failed, the outbox relay
-  delivers the event once more within about a minute, and the line's next
-  act restores the shelf. A parcel whose link to its order was not written
-  is counted by a write-off, and its cancel puts its units back; a return
-  parcel's cancel puts nothing back. A write-off committing while an open
-  waits for the order's lock is still seen by neither (D265).
+  delivery that still meets it is logged as failed, the outbox relay delivers
+  the event once more within about a minute, and the line's next act restores
+  the shelf. A parcel whose link to its order was not written is counted by a
+  write-off, and its cancel puts its units back; a return parcel's cancel puts
+  nothing back. A write-off committing while an open waits for the order's lock
+  is still seen by neither (D265).
 
 - **An order's parcel holds the units it ships** (ADR 0409, D264, D265). **For
   API consumers:** `POST /admin/v1/orders/{id}/fulfillments` takes `items`
   (`line_item_id`, `quantity`); without them an order sold exactly one delivery
   on a shipping option gets a parcel of every unit still owed, any other order
   answers 422 `fulfilling_items_required`, and one that owes nothing 409
-  `fulfillment_nothing_owed`. Its 409s now carry the fulfillment module's
-  codes, `fulfillment_line_not_dispatchable` and
-  `fulfillment_idempotency_key_mismatch` among them, where a key mismatch
-  answered `fulfilling_create_failed`; `fulfilling_shipment_canceled` is
-  unchanged. `POST /admin/v1/fulfillments` with no `items` for an outgoing
-  parcel answers 422 `fulfillment_items_required`. Every outgoing parcel may
-  hold, per line, what the order sold less what was written off less what its
-  live outgoing parcels hold: a second parcel for units a first one holds, and
-  one of two parcels opened at once that together exceed it, answer 409
-  `fulfillment_line_not_dispatchable`. A write-off puts back none of a
-  parcel's units, and canceling the parcel releases them. **For operators:**
-  the order page's open form names each line's units, prefilled with what the
-  line owes on an order sold one delivery and left at zero on several, and a
-  form naming no unit opens nothing. **For plugin authors:** the fulfilling
-  flow's `Interop.OpenForOrder` request takes `items`, an after-sale
-  replacement's parcel goes through `Interop.OpenForReplacement`, the flow
-  answers `Interop.DispatchCeilings`, the fulfillment module's
-  `service.DispatchBound` asks `DispatchCeilings` in place of
-  `DispatchableQuantities`, its interop gains `CreateFulfillmentHolding`, and
-  `service.Store` gains `CommittedQuantitiesForReference` and
-  `LockReferenceDispatch`, `CreateFulfillmentInput` gains `ItemsRequired`, and
-  the module's interop gains `CommittedQuantitiesForReference`, which the
-  fulfilling flow's `Fulfillments` asks in place of `CommittedQuantities`.
+  `fulfillment_nothing_owed`. Its 409s now carry the fulfillment module's codes,
+  `fulfillment_line_not_dispatchable` and `fulfillment_idempotency_key_mismatch`
+  among them, where a key mismatch answered `fulfilling_create_failed`;
+  `fulfilling_shipment_canceled` is unchanged. `POST /admin/v1/fulfillments`
+  with no `items` for an outgoing parcel answers 422
+  `fulfillment_items_required`. Every outgoing parcel may hold, per line, what
+  the order sold less what was written off less what its live outgoing parcels
+  hold: a second parcel for units a first one holds, and one of two parcels
+  opened at once that together exceed it, answer 409
+  `fulfillment_line_not_dispatchable`. A write-off puts back none of a parcel's
+  units, and canceling the parcel releases them. **For operators:** the order
+  page's open form names each line's units, prefilled with what the line owes on
+  an order sold one delivery and left at zero on several, and a form naming no
+  unit opens nothing. **For plugin authors:** the fulfilling flow's
+  `Interop.OpenForOrder` request takes `items`, and an after-sale replacement's
+  parcel goes through `Interop.OpenForReplacement`. An installation that
+  registers its own `fulfillment.interop` answers the fulfilling flow, where
+  v0.9.0 asked `CreateFulfillment(ctx, reference, optionID, idempotencyKey)`,
+  `FulfillmentStatus` and `CommittedQuantities`: `CreateFulfillment(ctx,
+  reference, optionID, idempotencyKey, destination)` (ADR 0194),
+  `CreateFulfillmentHolding(ctx, reference, optionID, idempotencyKey,
+  destination, items)`, `FulfillmentStatus`, `JoinParcel` (ADR 0428),
+  `CommittedQuantitiesForReference(ctx, reference, spoken)` (ADR 0423) and
+  `ListOptionsJSON(ctx, request)` (ADR 0199); one registered without them fails
+  at startup. Inside the module, `service.Store` gains `LockReferenceDispatch`
+  and `CreateFulfillmentInput` gains `ItemsRequired`.
 - **A refund document names the sale it amends** (ADR 0406, D247, D262). **For
   integrators:** `POST /admin/v1/invoices` with `"kind":"refund"` and no
   `amends_invoice_id`, with one of spaces alone, or with a row naming no
@@ -391,13 +451,16 @@ design. It is fixed with `1.0.0`.
   promotion round asks with it; a key bound to several records none.
   `POST /admin/v1/carts` takes an optional `sales_channel_id`. A merge prices
   the moved lines in the target cart's channel; the order records the channel
-  too (ADR 0410). **For operators:** a price or promotion rule
-  naming `sales_channel_id` matched nothing before this release and starts
-  matching carts opened through a single-channel key, so review such rules
-  before upgrading. Cart migration 000010 adds `carts.sales_channel_id`; the
-  telephone order form offers the channel and the cart page preselects it.
-  **For integrators:** `OpenCart` on `cart.interop` takes the channel after the
-  operator, so a registration with the old signature fails wiring.
+  too (ADR 0410). **For operators:** a price or promotion rule naming
+  `sales_channel_id` matched nothing before this release and starts matching
+  carts opened through a single-channel key, so review such rules before
+  upgrading. Cart migration 000010 adds `carts.sales_channel_id`; the telephone
+  order form offers the channel and the cart page preselects it. **For plugin
+  authors:** an installation that registers its own `cart.interop` answers
+  `OpenCart(ctx, regionID, currencyCode, customerID, email, addsToOrderID,
+  openedBy, salesChannelID, metadata)` where v0.9.0 asked `OpenCart(ctx,
+  regionID, currencyCode, customerID, email, metadata)`; one with the v0.9.0
+  signature fails wiring.
 - **A shipping rule's numeric threshold must be an integer** (ADR 0396, D252).
   **For integrators:** `POST /admin/v1/shipping-options/{id}/rules` with `gt`,
   `gte`, `lt` or `lte` and a value that is not a base-10 integer answers 422
@@ -437,24 +500,25 @@ design. It is fixed with `1.0.0`.
 - **A passkey whose counter does not advance is suspended** (ADR 0382, D232).
   **For integrators:** `identitypasskey.Credentials.Used(ctx, credentialID)` is
   replaced by `SignedIn(ctx, identitypasskey.Assertion)`, which compares the
-  assertion's signature counter with the stored one under a lock and records
-  the count, the backup state, the latched user verification and the moment; a
-  store bound through `Options.Credentials` implements it as its godoc says.
-  `identitypasskey.KeyNotices` gains `SendPasskeySuspended`, sent once by the
-  sign-in that suspends a key; a messenger bound through `Options.KeyNotices`
-  implements it. `POST /store/v1/auth/passkey/sign-in/finish` answers 403
+  assertion's signature counter with the stored one under a lock and records the
+  count, the backup state, the latched user verification and the moment; a store
+  bound through `Options.Credentials` implements it as its godoc says.
+  `Options.KeyNotices`, new since v0.9.0 (ADR 0381), takes a messenger
+  implementing `identitypasskey.KeyNotices`, whose `SendPasskeySuspended` is
+  sent once by the sign-in that suspends a key.
+  `POST /store/v1/auth/passkey/sign-in/finish` answers 403
   `identity_passkey_key_suspended` to a device-bound key whose counter did not
   advance and to every later sign-in with it, 401 `identity_passkey_refused` to
-  the same count again within four minutes, a finish sent twice among them,
-  and 500 `identity_passkey_unavailable` when the sign-in cannot be recorded;
-  it issued a session in all three cases. `GET /store/v1/auth/passkey/keys`
-  carries `suspended_at`, a suspended key is removable and is not counted as a
-  way in, and an account holding one is listed even when whether it has
-  another way in cannot be checked, its key that signs in not removable for
-  `identity_passkey_unavailable`. **For operators:** migration
-  000003 adds `passkey_credentials.suspended_at`, and a suspension is logged at
-  WARN as "identity-passkey: a key's signature counter did not advance, so the
-  key is suspended".
+  the same count again within four minutes, a finish sent twice among them, and
+  500 `identity_passkey_unavailable` when the sign-in cannot be recorded; it
+  issued a session in all three cases. `GET /store/v1/auth/passkey/keys` carries
+  `suspended_at`, a suspended key is removable and is not counted as a way in,
+  and an account holding one is listed even when whether it has another way in
+  cannot be checked, its key that signs in not removable for
+  `identity_passkey_unavailable`. **For operators:** migration 000003 adds
+  `passkey_credentials.suspended_at`, and a suspension is logged at WARN as
+  "identity-passkey: a key's signature counter did not advance, so the key is
+  suspended".
 
 - **A shopper does not change their address unproven** (ADR 0376, D224).
   **For integrators:** `PUT /store/v1/customers/{id}` no longer takes
@@ -463,24 +527,24 @@ design. It is fixed with `1.0.0`.
   address, which receives the account's mail. The operator's
   `PUT /admin/v1/customers/{id}` keeps the field.
 
-- **A request body requires no field** (ADR 0363, D211). **For
-  integrators:** the request bodies of `/openapi.json` list no required
-  field, so a client generated from it sends only the fields it sets; a
-  field the service needs is refused at run time with its reason, as
-  before. The request forms of `CustomerSegmentCondition`,
-  `CustomerSegmentRule`, `ErasureRequest`, `OrderAddress` and
-  `ProductBundleComponent` are published as `CustomerSegmentConditionInput`,
-  `CustomerSegmentRuleInput`, `ErasureRequestInput`, `OrderAddressInput` and
-  `ProductBundleComponentInput`; regenerate a client. Responses are
-  unchanged.
+- **A request body requires no field** (ADR 0363, D211). **For integrators:**
+  the request bodies of `/openapi.json` list no required field, so a client
+  generated from it sends only the fields it sets; a field the service needs is
+  refused at run time with its reason, as before. The personal-data disclosure
+  and erasure bodies are published as `ErasureRequestInput` where v0.9.0 named
+  them `ErasureRequest`, and the request forms of the segment, order address and
+  bundle types new since v0.9.0 carry `Input` too
+  (`CustomerSegmentConditionInput`, `CustomerSegmentRuleInput`,
+  `OrderAddressInput`, `ProductBundleComponentInput`); regenerate a client.
+  Responses are unchanged.
 
-- **An operator's writes reach only an operator's cart** (ADR 0299, D200).
-  **For integrators:** `POST /admin/v1/carts/{id}/line-items`, the two address
-  writes, the shipping method writes and `POST /admin/v1/carts/{id}/complete`
-  answer 409 `cart_opened_by_shopper` on a cart the storefront opened, and on
-  every cart opened before ADR 0296. **For operators:** the panel's cart page
-  offers no form on a shopper's cart; a telephone order in progress across the
-  upgrade is opened again.
+- **An operator's writes reach only an operator's cart** (ADR 0299, D200). **For
+  integrators:** `POST /admin/v1/carts/{id}/line-items`, the two address writes,
+  the shipping method writes and `POST /admin/v1/carts/{id}/complete` answer 409
+  `cart_opened_by_shopper` on a cart the storefront opened, and on every cart
+  opened before the upgrade, which records no operator. **For operators:** the
+  panel's cart page offers no form on a shopper's cart; a telephone order in
+  progress across the upgrade is opened again.
 
 - **Production registers no manual provider** (ADR 0283, D194). **For
   operators:** with `APP_ENV=production` the `manual` payment provider, which
@@ -498,6 +562,57 @@ design. It is fixed with `1.0.0`.
   counts toward the account's lock (`auth_mfa_locked`). **For operators:** the
   three endpoints on one's own factor no longer need `auth:read`, so every
   operator who can sign in can protect their account.
+
+- **A stacked rate is not made the default** (D248). **For API consumers:**
+  `PUT /admin/v1/tax-rates/{id}` with `is_default: true` on a rate standing on
+  another answers 409 `tax_stack_not_allowed` and writes nothing. Creating
+  such a rate was always refused, with 422 and the same code. Before, the
+  update wrote the flag, the calculation left the rate out of the choice, and
+  the rate held the region's one default slot without being chosen.
+  **For operators:** tax migration 000005 clears the flag on every rate
+  that stands on another and adds a CHECK refusing it. In such a region, a
+  line that matched no rule found no default. In a country it was taxed at
+  zero, and in a province it fell to the country's default. The base also
+  could not be made the default. The upgrade does not change the tax: the
+  region still has no default until one is set. To find these regions before
+  upgrading, run `SELECT tax_region_id FROM tax_rate WHERE is_default AND
+  stacks_on_id IS NOT NULL AND deleted_at IS NULL`. After upgrading, make each
+  one's base, or another rate, the default.
+
+- **A panel page shows another module's data only under that module's
+  privilege** (ADR 0260, D179). **For operators:** the product and variant pages
+  show a variant's prices only to an operator holding `pricing:read` and its
+  stock only to one holding `inventory:read`, and name the missing privilege
+  otherwise; an operator who held `product:read` alone saw both before and needs
+  `pricing:read` and `inventory:read` granted to see them again. A refused price
+  or stock form draws the variant page only for an operator holding
+  `product:read`.
+
+- **An empty text on an update clears the field** (ADR 0256, D177). **For
+  integrators:** on `PATCH /admin/v1/products/{id}`, `PATCH /admin/v1/variants/{id}`
+  and `PATCH /admin/v1/product-categories/{id}`, an empty `subtitle`,
+  `description`, `thumbnail`, `material`, `origin_country`, `sku`, `barcode`,
+  `ean` or `upc` now clears the field. It used to be ignored, or written as an
+  empty string, which made a second variant's emptied SKU a duplicate. A client
+  that sent an empty string to mean "no change" has to leave the field out.
+  Every other value is trimmed.
+
+- **An invoice filed a row that did not multiply, and could not say its prices
+  included their tax** (D171, ADR 0248). **For operators:** a tax-inclusive
+  order's invoice says `prices_include_tax`, and its rows keep the sticker as
+  the unit price and the net as the subtotal. **For integrators:**
+  `POST /admin/v1/invoices` takes `prices_include_tax` and now refuses a row
+  whose subtotal is not its unit price times its quantity (less its tax where
+  the flag is set), which it filed before: send each row's subtotal as that
+  product. Migration: invoice `000005`.
+
+- **An exchange could be funded with anybody's money** (D142). The funding
+  accepted any payment collection holding the difference, including one opened
+  for another order or the checkout's own. **For API consumers:** the collection
+  named in `POST /admin/v1/orders/{id}/exchanges/{exchangeId}/funding` must now
+  be opened with the order's id as its `reference`, and one that paid for a
+  delivery change is refused with `order_payment_collection_taken`: open the
+  funding collection with that reference.
 
 ### Fixes
 
@@ -699,21 +814,6 @@ design. It is fixed with `1.0.0`.
   `TrialPromotionJSON`, `TrialPriceListJSON` and `TrialTaxRateJSON`, so a
   registration under one of those names without the method fails the panel's
   wiring.
-- **A stacked rate is not made the default** (D248). **For API consumers:**
-  `PUT /admin/v1/tax-rates/{id}` with `is_default: true` on a rate standing on
-  another answers 409 `tax_stack_not_allowed` and writes nothing. Creating
-  such a rate was always refused, with 422 and the same code. Before, the
-  update wrote the flag, the calculation left the rate out of the choice, and
-  the rate held the region's one default slot without being chosen.
-  **For operators:** tax migration 000005 clears the flag on every rate
-  that stands on another and adds a CHECK refusing it. In such a region, a
-  line that matched no rule found no default. In a country it was taxed at
-  zero, and in a province it fell to the country's default. The base also
-  could not be made the default. The upgrade does not change the tax: the
-  region still has no default until one is set. To find these regions before
-  upgrading, run `SELECT tax_region_id FROM tax_rate WHERE is_default AND
-  stacks_on_id IS NOT NULL AND deleted_at IS NULL`. After upgrading, make each
-  one's base, or another rate, the default.
 - **The cart flows' wiring warning names its surface under `service`** (D250).
   **For operators:** the warning logged when the promotion or tax surface is
   not registered carries the missing name under `service`, as every module's
@@ -1658,14 +1758,6 @@ design. It is fixed with `1.0.0`.
   `categoryTreeId`: a category's products and those of every category below
   it, each once. `category_id` still lists what is filed directly.
 
-- **A panel page shows another module's data only under that module's
-  privilege** (ADR 0260, D179). **For operators:** the product and variant pages
-  show a variant's prices only to an operator holding `pricing:read` and its
-  stock only to one holding `inventory:read`, and name the missing privilege
-  otherwise; an operator who held `product:read` alone saw both before and needs
-  the two grants to see them again. A refused price or stock form draws the
-  variant page only for an operator holding `product:read`.
-
 - **A category promotion can reach the subcategories** (ADR 0259). **For
   operators:** a target rule on `category_tree_ids` with `any_in` matches a
   product filed under any of the named categories or their subcategories; a
@@ -1691,15 +1783,6 @@ design. It is fixed with `1.0.0`.
   **For operators:** `PUT /admin/v1/orders/{id}/shipping-address` trims each
   field and refuses one over 512 bytes, so a change of whitespace alone no
   longer writes a correction; a cancellation's reason is trimmed too.
-
-- **An empty text on an update clears the field** (ADR 0256, D177). **For
-  integrators:** on `PATCH /admin/v1/products/{id}`, `PATCH /admin/v1/variants/{id}`
-  and `PATCH /admin/v1/product-categories/{id}`, an empty `subtitle`,
-  `description`, `thumbnail`, `material`, `origin_country`, `sku`, `barcode`,
-  `ean` or `upc` now clears the field. It used to be ignored, or written as an
-  empty string, which made a second variant's emptied SKU a duplicate. A client
-  that sent an empty string to mean "no change" has to leave the field out.
-  Every other value is trimmed.
 
 - **A panel route is its method and its path** (ADR 0255). **For contributors:**
   the panel's scope table names each route by method and path and lists the
@@ -1760,14 +1843,6 @@ design. It is fixed with `1.0.0`.
   multiplication accepting a zero price times a negative quantity, which no
   caller reached. **For embedders:** `pgregory.net/rapid` moves from v1.2.0,
   already in the module graph, to v1.3.0.
-
-- **An invoice filed a row that did not multiply, and could not say its prices
-  included their tax** (D171, ADR 0248). **For operators:** a tax-inclusive
-  order's invoice says `prices_include_tax`, and its rows keep the sticker as
-  the unit price and the net as the subtotal. **For integrators:** `POST
-  /admin/v1/invoices` takes `prices_include_tax` and now refuses a row whose
-  subtotal is not its unit price times its quantity (less its tax where the
-  flag is set), which it filed before. Migration: invoice `000005`.
 
 - **A gift card was taxed when it was sold, and the goods it bought were taxed
   again** (D170, ADR 0247). **For operators:** a gift card line carries no tax,
@@ -1952,13 +2027,6 @@ design. It is fixed with `1.0.0`.
   **For contributors:** a test that rolls a migration back takes its database
   from `internal/testdb`, and an architecture gate refuses a `MigrateDown`
   against a package's shared address.
-
-- **An exchange could be funded with anybody's money** (D142). The funding
-  accepted any payment collection holding the difference, including one opened
-  for another order or the checkout's own. **For API consumers:** the
-  collection named in `POST /admin/v1/orders/{id}/exchanges/{exchangeId}/funding`
-  must now be opened with the order's id as its `reference`, and one that paid
-  for a delivery change is refused with `order_payment_collection_taken`.
 
 - **The order module's migration test rewound other tests' rows** (D141). It
   dropped the shared schema believing it ran first, and seven files ran before
@@ -8159,7 +8227,8 @@ application, which running the tests alone did not reveal:
   startup.
 - The load test is in-process; it does not produce a capacity plan.
 
-[Unreleased]: https://github.com/bdrtr/gobit/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/bdrtr/gobit/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/bdrtr/gobit/releases/tag/v0.10.0
 [0.9.0]: https://github.com/bdrtr/gobit/releases/tag/v0.9.0
 [0.8.0]: https://github.com/bdrtr/gobit/releases/tag/v0.8.0
 [0.7.0]: https://github.com/bdrtr/gobit/releases/tag/v0.7.0
