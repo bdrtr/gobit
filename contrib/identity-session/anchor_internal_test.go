@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -454,18 +453,18 @@ func TestAnOperatorReplacingAPasswordEndsTheSessions(t *testing.T) {
 	before := signIn(t, r, "the old password")
 	clock.advance(time.Millisecond)
 
-	rec := sendTo(t, r, http.MethodPut, "/admin/v1/customer-credentials",
-		`{"customer_id":"`+testCustomerID+`","email":"known@example.test","password":"set by support"}`)
+	rec := putCredentialAs(t, r, credentialWriter, testCustomerID,
+		`{"email":"known@example.test","password":"set by support"}`)
 	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
 	assert.Equal(t, http.StatusUnauthorized, get(t, r, sessionPath, before).Code)
 
-	rec = sendTo(t, r, http.MethodPut, "/admin/v1/customer-credentials",
-		`{"customer_id":"cust_NEW","email":"new@example.test","password":"a first one"}`)
+	rec = putCredentialAs(t, r, credentialWriter, "cust_NEW",
+		`{"email":"new@example.test","password":"a first one"}`)
 	assert.Equal(t, http.StatusNoContent, rec.Code, "a new credential has no sessions to end: %s", rec.Body.String())
 
 	store.endErr = errors.New("the database is down")
-	rec = sendTo(t, r, http.MethodPut, "/admin/v1/customer-credentials",
-		`{"customer_id":"cust_NEW","email":"new@example.test","password":"a second one"}`)
+	rec = putCredentialAs(t, r, credentialWriter, "cust_NEW",
+		`{"email":"new@example.test","password":"a second one"}`)
 	assert.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
 }
 
@@ -494,16 +493,4 @@ func TestAnAnchoredVerifierPassesTheSuiteGobitPublishes(t *testing.T) {
 	sessions := newSessions(t, time.Now)
 	sessions.anchors = &anchoredStore{customerID: testCustomerID}
 	identitytest.Contract(t, sessions)
-}
-
-// sendTo sends a JSON body with a method.
-func sendTo(t *testing.T, r chi.Router, method, path, body string) *httptest.ResponseRecorder {
-	t.Helper()
-
-	req := httptest.NewRequestWithContext(context.Background(), method, path, strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
-
-	return rec
 }

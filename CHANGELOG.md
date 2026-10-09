@@ -9,6 +9,89 @@ design. It is fixed with `1.0.0`.
 
 ## [Unreleased]
 
+### Breaking changes
+
+- **An installation does not start while a route on the admin surfaces is
+  not held to a privilege, and gobit owns those surfaces** (ADR 0434, D270).
+  **For plugin and module authors:** a route bound under `/admin/v1` that is
+  not wrapped in `corehttp.RequireScope`, directly or through its group,
+  sub-router or mounted router, stops startup with `admin_route_unscoped`,
+  which names each such route and the function that serves it. A privilege
+  checked inside the handler, or behind a middleware that wraps
+  `RequireScope`, does not count. The routes exempt are the auth module's own,
+  and only while its handler serves them: signing in, accepting an
+  invitation, `GET /admin/v1/auth/me`, signing out, the caller's second factor
+  and the caller's sessions; a module that binds one of them over the auth
+  module's is refused. A route under `/admin/ui` that the panel did not bind
+  is refused whatever it demands. gobit binds `/admin/v1`, `/admin/ui` and
+  their catch-alls itself, answering a 404 with code `route_not_found` or a
+  405 carrying `Allow`, so a page router or a single-page app at the root
+  keeps its own paths and answers none there, and a router's not-found and
+  method-not-allowed handlers no longer answer them either. Refused at
+  startup: a route on a prefix's catch-all (`/admin/v1/*`), a router mounted
+  above a prefix that carries routes under it, a router of a module's own type
+  mounted under a prefix, and any pattern carrying a percent-encoded byte.
+  Every plugin in this tree passes.
+
+- **The credential route of `contrib/identity-session` moves and demands a
+  privilege of its own** (ADR 0434, D270). **For integrators and operators:**
+  `PUT /admin/v1/customer-credentials` answers 404; write a credential with
+  `PUT /admin/v1/customer-credentials/{customer_id}` and a body of `email` and
+  `password`, without `customer_id`. It demands `customer-credential:write`,
+  which `admin` covers: a key or user holding `customer:write` or any other
+  privilege gets 403 and nothing is written. No panel screen asks for the
+  privilege, so grant it over the API, for instance
+  `POST /admin/v1/api-keys` with `"scopes": ["customer-credential:write"]`,
+  and only to whoever replaces customers' passwords. Its holder can sign in
+  as any customer.
+
+### Security
+
+- **Any admin principal could set any customer's password through
+  `contrib/identity-session`, and sign in as that customer** (ADR 0434,
+  D270). The credential route was bound behind the admin ring with no
+  privilege, so a panel operator or an API key holding only `product:read`
+  could write any customer's e-mail and password, sign in as that customer,
+  read their orders and addresses and act as them, and the customer was told
+  nothing. A marketplace built on gobit found it with a service key that held
+  no customer privilege.
+
+  **Affected:** every gobit tree from `30cf4bb9` (2026-09-11) on, the tagged
+  v0.9.0 and v0.10.0 among them, in an installation that binds
+  `contrib/identity-session`, and every pseudo-version of
+  `contrib/identity-session` before this fix. v0.8.0 and earlier do not carry
+  the route.
+
+  **Remedy, smallest:** on v0.10.0, bump `contrib/identity-session` alone to
+  the pseudo-version of the commit that carries this entry
+  (`go get github.com/bdrtr/gobit/contrib/identity-session@<that commit>`;
+  the module has no tag of its own). It requires gobit `v0.0.0`, so your
+  v0.10.0 stays selected, and it builds against it; that closes the route.
+  The gate and the other hardening come with v0.11.0.
+
+  **Remedy, whole:** upgrade gobit to v0.11.0 and `contrib/identity-session`
+  to the pseudo-version of the commit v0.11.0 points at. Upgrade both
+  together: an older `contrib/identity-session` on v0.11.0 refuses to start
+  with `admin_route_unscoped` naming `PUT /admin/v1/customer-credentials`, and
+  that is intended. Either way, grant `customer-credential:write` to the
+  integration that writes credentials, and move it to the new path (Breaking
+  changes above).
+
+  **Looking for abuse:** with `audit:read`, list
+  `GET /admin/v1/audit-log?path=/admin/v1/customer-credentials`. Each row
+  names the actor, the status and the time of a credential write; the
+  customer was in the body and is not recorded. For each 204 by an actor that
+  should not have written credentials, find the credentials whose
+  `customer_credentials.updated_at` and `sessions_valid_from` moved at that
+  instant, compare each one's e-mail with the customer record's, and replace
+  the credential and tell the customer where they differ. Rotate any secret
+  key that left the operator's hands. From this fix a credential write's row
+  names its customer in the path, and the listing's `path` filter is exact,
+  so it finds one customer's; every credential write since is read from the
+  table: `SELECT created_at, actor_kind, actor_id, status, path FROM
+  audit_log WHERE method = 'PUT' AND path LIKE
+  '/admin/v1/customer-credentials/%' ORDER BY created_at`.
+
 ## [0.10.0] — 2026-10-09
 
 ### Breaking changes

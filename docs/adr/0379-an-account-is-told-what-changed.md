@@ -4,7 +4,7 @@
 password was replaced, by a reset link or by its owner, and tells the address
 an account left that it moved, through an optional `AccountNotices` seam.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0434](0434-an-admin-route-demands-a-privilege.md), which moved the operator's credential route to `PUT /admin/v1/customer-credentials/{customer_id}` under `customer-credential:write`; that replacement still sends nothing
 - **Date:** 2026-10-03
 
 ## Context

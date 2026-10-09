@@ -901,6 +901,11 @@ type routeClaimExemption struct {
 	file   string
 	claim  string
 	reason string
+	// amendedBy is the number of the record that moved the route, for an
+	// amended record's body (the fourth ending in
+	// [TestTheRouteAddressesInTheProseExist]). The file's Status line has to
+	// name it, or the entry is refused.
+	amendedBy string
 }
 
 // routeClaimExemptions are the addresses a text names deliberately.
@@ -910,6 +915,36 @@ type routeClaimExemption struct {
 // sentence goes away, the audit fails and asks for the entry to be removed. A
 // forgiveness that outlives its reason is what D16 records.
 var routeClaimExemptions = []routeClaimExemption{
+	// The credential route of contrib/identity-session moved to name its customer
+	// in the path (ADR 0434). The four entries below name the address it had, each
+	// on purpose: the fault it was, a probe transcript of it, and the record that
+	// decided its notices, which ADR 0434 amends in its Status line.
+	{
+		file:  "docs/adr/0434-an-admin-route-demands-a-privilege.md",
+		claim: "PUT /admin/v1/customer-credentials",
+		reason: "The record's Context names the address the fault was found at; the " +
+			"Decision names the one it moved to.",
+	},
+	{
+		file:  "docs/gaps.md",
+		claim: "PUT /admin/v1/customer-credentials",
+		reason: "D270's finding is the fault as it was found, at the address it was found " +
+			"at; its status names the address the route moved to.",
+	},
+	{
+		file:  "docs/measurements/0434-who-may-write-a-password.md",
+		claim: "PUT /admin/v1/customer-credentials",
+		reason: "A probe transcript: the consumer's reproduction, the starter refusing the " +
+			"v0.10.0 module, and the old address answering 404 after the move.",
+	},
+	{
+		file:  "docs/adr/0379-an-account-is-told-what-changed.md",
+		claim: "PUT /admin/v1/customer-credentials",
+		reason: "An amended record: ADR 0434 moved the route to name its customer in the " +
+			"path, and this record's Status line names that amendment; the replacement " +
+			"through it still sends nothing.",
+		amendedBy: "0434",
+	},
 	{
 		file:  "internal/modules/cart/api/store.go",
 		claim: "POST /store/v1/orders",
@@ -942,6 +977,17 @@ var routeClaimExemptions = []routeClaimExemption{
 // records that may not be edited are not in scope at all (see [routeDatedRecord]),
 // and for a record written after [routeFrozenADR] — which IS in scope — the honest
 // endings are the amending record CLAUDE.md asks for, or the sentence going away.
+//
+// The amending record is the fourth ending, and it is the one exemption that
+// rests on another document rather than on its own reason:
+//
+//  4. a later record moved the route, and the record that decided something
+//     about it keeps the old address in its body, because a record is amended
+//     by adding (CLAUDE.md). Its Status line says "amended by" and links the
+//     amending record, and the entry carries that record's number in
+//     amendedBy. The audit reads the file's Status line and refuses the entry
+//     when it does not name that record, or when no such record exists, so the
+//     entry cannot outlive or misstate its basis ([namesAmendment]).
 func TestTheRouteAddressesInTheProseExist(t *testing.T) {
 	t.Parallel()
 
@@ -972,12 +1018,57 @@ func TestTheRouteAddressesInTheProseExist(t *testing.T) {
 	}
 
 	for _, exemption := range routeClaimExemptions {
+		if exemption.amendedBy != "" {
+			body, err := os.ReadFile(filepath.Join(repoRoot, exemption.file))
+			require.NoError(t, err, "%s could not be read", exemption.file)
+			assert.True(t, namesAmendment(string(body), exemption.amendedBy),
+				"the exemption for %q in %s rests on ADR %s amending it, and the file's Status "+
+					"line does not say \"amended by [%s]\". An amended record may keep an old "+
+					"address only while it says which record moved it.",
+				exemption.claim, exemption.file, exemption.amendedBy, exemption.amendedBy)
+			amending, _ := filepath.Glob(filepath.Join(repoRoot, "docs", "adr", exemption.amendedBy+"-*.md"))
+			assert.Len(t, amending, 1, "the exemption for %q in %s names ADR %s, which does not exist",
+				exemption.claim, exemption.file, exemption.amendedBy)
+		}
 		assert.True(t, used[exemption.file+"\x00"+exemption.claim],
 			"the exemption for %q in %s is not needed any more: the route now exists, or "+
 				"the sentence naming it is gone. Take the entry out — a forgiveness that "+
 				"outlives its reason forgives the next defect silently.",
 			exemption.claim, exemption.file)
 	}
+}
+
+// namesAmendment reports whether a record's Status line names the record that
+// amended it: "amended by" followed by a link whose text is the record's
+// number, in the line that starts "- **Status:**", in the header above the
+// record's first section. A mention anywhere else in the record is not its
+// status.
+func namesAmendment(record, number string) bool {
+	header, _, _ := strings.Cut(record, "\n## ")
+	for _, line := range strings.Split(header, "\n") {
+		if strings.HasPrefix(line, "- **Status:**") {
+			return strings.Contains(line, "amended by ["+number+"]")
+		}
+	}
+
+	return false
+}
+
+// TestTheAmendedRecordEndingReadsTheStatusLine holds [namesAmendment] to the
+// line it is meant to read.
+func TestTheAmendedRecordEndingReadsTheStatusLine(t *testing.T) {
+	t.Parallel()
+
+	const amended = "# ADR 0001 — x\n\n- **Status:** Accepted; amended by [0434](0434-x.md), " +
+		"which moved the route\n- **Date:** 2026-10-03\n\n## Context\n\nThe route.\n"
+	assert.True(t, namesAmendment(amended, "0434"))
+	assert.False(t, namesAmendment(amended, "0433"), "a different record is not the amendment")
+
+	const unamended = "# ADR 0001 — x\n\n- **Status:** Accepted\n- **Date:** 2026-10-03\n\n" +
+		"## Context\n\nADR 0434 amended by [0434] says so here, not in the status.\n"
+	assert.False(t, namesAmendment(unamended, "0434"),
+		"an amendment named in the body is not the record's status")
+	assert.False(t, namesAmendment("# ADR 0001 — x\n\nNo header at all.\n", "0434"))
 }
 
 // routeClaimHint says what is wrong with an address, when the tree can tell.

@@ -507,8 +507,25 @@ func assemble(
 	// personal data in the system is the last one that should be undocumented.
 	doc := describeInstallation(cfg.ServiceName+" API", opts.version(), registry.Modules())
 	app.schema = doc
-	router.Get(openAPIPath, doc.Handler(router))
+	router.Get(openAPIPath, doc.Handler(endpointRoutes{router}))
 	checkSchema(ctx, doc, router, log)
+
+	// Every route is bound by now, a plugin's and this root's own included, so
+	// this is where the admin surfaces' privileges are held: a route bound
+	// under the admin prefix that demands none, or one under the panel's
+	// address the panel did not bind, stops the installation, whoever bound it
+	// (ADR 0434). The ring before it proves who is calling and not what they
+	// may do, which is how one operator endpoint let any API key write any
+	// customer's password (D270).
+	if err := refuseUnscopedAdminRoutes(router, panel); err != nil {
+		return nil, err
+	}
+	// And a path there that no route of the surface's takes is gobit's to
+	// answer: neither a pattern bound at the root nor a fallback a module set
+	// on the router, which the walk cannot see, reaches it.
+	if err := ownAdminSurfaces(router); err != nil {
+		return nil, err
+	}
 
 	return app.router, nil
 }

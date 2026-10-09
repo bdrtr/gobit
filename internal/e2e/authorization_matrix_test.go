@@ -15,6 +15,7 @@ import (
 
 	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/internal/adminui"
+	"github.com/bdrtr/gobit/internal/app"
 )
 
 // This file audits the whole authorization matrix rather than one row of it.
@@ -141,8 +142,14 @@ func matrixRoutes(t *testing.T) []matrixRoute {
 	var routes []matrixRoute
 
 	err := chi.Walk(testRouter, func(
-		method, pattern string, _ http.Handler, _ ...func(http.Handler) http.Handler,
+		method, pattern string, handler http.Handler, _ ...func(http.Handler) http.Handler,
 	) error {
+		// gobit's own answer where no route of an admin surface takes a path is
+		// not an endpoint: it answers 404 or 405 to everybody, behind the same
+		// rings (ADR 0434).
+		if app.IsOwnedAnswer(handler) {
+			return nil
+		}
 		pattern = strings.TrimSuffix(pattern, "/*")
 		if pattern != "/" {
 			pattern = strings.TrimSuffix(pattern, "/")
@@ -272,7 +279,7 @@ func TestTheAuthorizationMatrixHoldsForEveryEndpoint(t *testing.T) {
 func assertAdminRow(t *testing.T, route matrixRoute) {
 	t.Helper()
 
-	if _, exempt := unauthorizedExemptPaths[route.pattern]; exempt {
+	if isOwnAdminRoute(route.method, route.pattern) {
 		// Signing in and reading back one's own identity do not ask for a
 		// scope; the identity row below still applies to the second, and the
 		// first is exempt from identity too. Both are argued where the list is.

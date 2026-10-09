@@ -4,7 +4,7 @@
 requirement, the privileges the route's own guards demand, read off the router
 rather than written in a describe block; the model client's tools say them.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0434](0434-an-admin-route-demands-a-privilege.md), whose installation reads the same guard at startup and does not start with an admin route that demands none
 - **Date:** 2026-09-30
 
 ## Context

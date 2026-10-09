@@ -210,3 +210,4 @@ truth: a report says what was true on the day it was taken.
 | [A parcel that came back — measured 2026-10-07](0423-a-parcel-that-came-back.md) | 116 |
 | [What an exchange prices — measured 2026-10-07](0432-what-an-exchange-prices.md) | 667 |
 | [What a return gives back — measured 2026-10-09](0433-what-a-return-gives-back.md) | 105 |
+| [Who may write a password — measured 2026-10-09](0434-who-may-write-a-password.md) | 178 |

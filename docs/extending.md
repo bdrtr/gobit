@@ -70,6 +70,32 @@ The plugins show four different ways of extending:
 | `error-otlp` | **real feature** — reports the same faults to an OpenTelemetry collector as a LOG RECORD | the same slot, a SECOND implementation |
 | `ai-anthropic` | **real feature** — answers a closed question about a piece of text with Anthropic's Messages API | a core-owned slot whose CONSUMER is optional too: installing the plugin is what turns the feature on |
 
+A plugin or a module that binds a route under `/admin/v1` wraps it in
+`corehttp.RequireScope` with the privilege its power needs, on the route or on
+the group, sub-router or mounted router it is bound in
+([ADR 0434](adr/0434-an-admin-route-demands-a-privilege.md)):
+
+```go
+h.AddRoutes(func(r chi.Router) {
+	r.With(corehttp.RequireScope("loyalty:write")).Post("/admin/v1/loyalty/adjust", adjust)
+})
+```
+
+The admin ring proves who is calling and nothing more, so an installation does
+not start while a route bound under `/admin/v1` demands no privilege; the
+refusal, `admin_route_unscoped`, names each such route and the function serving
+it. A privilege checked inside the handler does not count. Name it
+`<resource>:read` or `<resource>:write`; `admin` covers every one. Nothing
+binds under `/admin/ui` but the panel: a screen goes through
+`RegisterAdminPage`.
+
+gobit binds `/admin/v1`, `/admin/ui` and their catch-alls itself, so routes at
+the root, a page router like `/{category}/{product}` or a single-page app on
+`/*`, keep their own paths and answer none under those prefixes; neither does
+a router's not-found handler. Mount a router at its own path, not on a prefix
+or above one with routes under it, and spell a pattern without
+percent-encoding: the installation refuses those.
+
 There is no slot for an outside analytics product (ADR 0390): no module or core
 function would call one. A plugin reaches such a product by subscribing to the
 topics it reports, with a record keyed on the event id, or an operator registers

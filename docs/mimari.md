@@ -468,7 +468,9 @@ what compile-time registration already provides, with fragility added on top.
 The module's `api` package publishes the constants
 `ScopeRead = "<module>:read"` and `ScopeWrite = "<module>:write"`; inside
 `Routes`, the read and write sub-routers are built with
-`corehttp.RequireScope`. Forgetting is not silent:
+`corehttp.RequireScope`. Forgetting is not silent: an installation does not
+start while a route bound under `/admin/v1` demands no privilege, and gobit
+owns the prefix so that nothing bound elsewhere answers there (ADR 0434), and
 `internal/e2e/authorization_test.go` walks the router tree and goes to every
 `/admin/v1` endpoint with an unauthorized token.
 

@@ -177,18 +177,22 @@ func (m *Module) Describe(d *openapi.Doc) {
 		m.describeAddressChange(d)
 	}
 
-	d.Describe(http.MethodPut, "/admin/v1/customer-credentials", openapi.Operation{
+	d.Describe(http.MethodPut, CredentialPath, openapi.Operation{
 		Summary:     "Writes or replaces a customer's credential.",
 		RequestBody: d.RequestBody(credentialRequest{}),
-		Description: "Takes customer_id, email and password, and stores the password " +
+		Description: "Takes the customer in the path and an email and a password in the body, " +
+			"and stores the password " +
 			"as an argon2id hash. It REPLACES whatever that customer had, so it is both " +
 			"the way an account is created and the way a password is reset. Replacing " +
 			"one ends every session of that customer issued before it, where the store " +
 			"keeps the moment sessions count from (ADR 0374): an operator replaces a " +
 			"password because somebody else may know it.\n\n" +
-			"It is on the admin prefix and behind the operator authentication: it writes " +
-			"a credential for ANY customer the caller names, which is an operator's " +
-			"power and not a shopper's.\n\n" +
+			"It is on the admin prefix, behind the operator authentication, and demands " +
+			"customer-credential:write, a privilege of its own: it writes a credential for " +
+			"ANY customer the path names, and whoever writes one can sign in as that " +
+			"customer, read what they read and act as them, while the customer is told " +
+			"nothing (ADR 0434). The customer is in the path so that the audit log's row " +
+			"names them.\n\n" +
 			"Storefront self-registration is a DIFFERENT pair of endpoints and is mounted " +
 			"only when the installation binds somebody to open an account and somebody to " +
 			"carry a verification message (ADR 0133). Where this endpoint takes an " +
@@ -201,7 +205,7 @@ func (m *Module) Describe(d *openapi.Doc) {
 		Responses: map[string]any{
 			"204": openapi.Response("The credential was written", nil),
 			"422": openapi.ErrorResponse(
-				"customer_id or email is missing, the password is empty, or the body " +
+				"The email is missing, the password is empty, or the body " +
 					"could not be parsed. Code \"identity_session_invalid\"."),
 			"409": openapi.ErrorResponse(
 				"The e-mail address already belongs to ANOTHER customer. Code " +

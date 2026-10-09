@@ -385,5 +385,23 @@ README's phase-status table.
   rewritten under an exclusive lock. Refunds made before the upgrade name no
   cause, so a return's ceiling does not count them.
 
+**`contrib/identity-session` before this fix let any admin principal set any
+customer's password** ([ADR 0434](adr/0434-an-admin-route-demands-a-privilege.md),
+D270). Every tree from `30cf4bb9` on carries it, v0.9.0 and v0.10.0 among
+them. On v0.10.0, bumping `contrib/identity-session` alone to the fix's
+pseudo-version closes the route; v0.11.0 brings the gate and the rest. Upgrade
+gobit to v0.11.0 and `contrib/identity-session` together, the latter to the
+pseudo-version of the commit v0.11.0 points at: an older
+`contrib/identity-session` on v0.11.0 refuses to start with
+`admin_route_unscoped`, as intended. Grant `customer-credential:write` over the
+API to whatever writes credentials, which now go to
+`PUT /admin/v1/customer-credentials/{customer_id}`. To look for abuse, list
+`GET /admin/v1/audit-log?path=/admin/v1/customer-credentials` for the actor,
+status and time of each write before the fix, and match each 204 to the
+credentials whose `updated_at` and `sessions_valid_from` moved then; after it,
+the listing's filter is exact and each path names its customer, so query the
+table with `path LIKE '/admin/v1/customer-credentials/%'`. The
+[CHANGELOG](../CHANGELOG.md) says what to do with one.
+
 Throughout `0.x`, **breaking changes may arrive in minor versions**: the API
 surface is not frozen yet. It freezes with `1.0.0`.

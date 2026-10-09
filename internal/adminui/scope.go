@@ -64,6 +64,19 @@ const (
 // routeKey is how the scope table names a route: its method and its path.
 func routeKey(method, path string) string { return method + " " + path }
 
+// Binds reports whether the panel's scope table lists a route by its method and
+// its path, which is how the panel binds every route it serves (ADR 0255).
+//
+// The composition root asks it of every route under the panel's address once
+// the installation is assembled, and refuses one the panel did not bind: the
+// panel's ring proves who is calling and the privilege is the table's, so a
+// route bound there by anybody else would answer every operator (ADR 0434).
+func (u *UI) Binds(method, path string) bool {
+	_, listed := u.scopes[routeKey(method, path)]
+
+	return listed
+}
+
 // builtInScopes is the privilege each route the panel SHIPS requires.
 //
 // # One table, read twice

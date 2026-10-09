@@ -48,7 +48,7 @@ func TestAUsersPrivilegesAreChangedOnTheirPage(t *testing.T) {
 	t.Parallel()
 
 	accounts := &fakeUserAccounts{user: `{"id":"usr_ada","email":"ada@example.test","first_name":"Ada",
-		"last_name":"Lovelace","scopes":["order:read","b2b:approve"],"second_factor":false,
+		"last_name":"Lovelace","scopes":["order:read","b2b:approve","customer-credential:write"],"second_factor":false,
 		"created_at":"2026-05-02T08:00:00Z"}`}
 	panel := usersPanel(t, accounts)
 	page := UsersPath + "/usr_ada"
@@ -58,7 +58,7 @@ func TestAUsersPrivilegesAreChangedOnTheirPage(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"<h1>ada@example.test</h1>", "Ada Lovelace", "since 2026-05-02", `<span class="pill">missing</span>`,
-		"<p>order:read, b2b:approve</p>",
+		"<p>order:read, b2b:approve, customer-credential:write</p>",
 	} {
 		assert.Contains(t, body, want)
 	}
@@ -71,6 +71,9 @@ func TestAUsersPrivilegesAreChangedOnTheirPage(t *testing.T) {
 	for _, want := range []string{
 		`name="read_scope" value="order:read"`, `name="read_scope" value="b2b:approve"`,
 		`value="order:read" checked> order:read`, `value="b2b:approve" checked> b2b:approve`,
+		// A privilege no screen asks for, granted over the API (ADR 0434), is
+		// offered to the user who holds it, so revising their screens keeps it.
+		`value="customer-credential:write" checked> customer-credential:write`,
 		`value="admin"> admin`, `value="invoice:read"> invoice:read`, `value="customer:write"> customer:write`,
 	} {
 		assert.Contains(t, form, want)

@@ -216,6 +216,23 @@ The vocabulary derives from a single rule:
 `order:write`, `promotion:write` … `admin` is the **super-scope** and covers them
 all.
 
+Since [ADR 0434](adr/0434-an-admin-route-demands-a-privilege.md) the rule is
+held when an installation starts: one in which a route bound under `/admin/v1`
+demands no privilege does not start, whoever bound the route, and the person's
+own auth routes, the table's first two rows among them, are the only ones it
+exempts, and only while the auth module serves them. A route under `/admin/ui`
+has to be one the panel binds. gobit binds both prefixes and their catch-alls
+itself, so a path on either surface that no route of the surface's takes is
+gobit's 404 or 405, never a pattern or a fallback bound elsewhere.
+
+`contrib/identity-session`'s `PUT /admin/v1/customer-credentials/{customer_id}`
+demands `customer-credential:write`, a privilege of its own and not
+`customer:write`: whoever holds it can sign in as any customer, read what that
+customer reads, act as them and choose where their password reset goes, and
+the customer is told nothing (ADR 0379). No panel screen asks for it, so it
+is granted over the API, in a key's or a user's scopes, as `personal-data:*`
+is, and only to whoever replaces customers' passwords; `admin` covers it.
+
 **A publishable key carries no scope, and since
 [ADR 0043](adr/0043-gobit-requires-an-identity-it-still-does-not-issue.md) that is
 no longer the same sentence as "the storefront is unauthorized".** Fifteen routes

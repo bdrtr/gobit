@@ -3,7 +3,6 @@
 package identitysession_test
 
 import (
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -44,9 +43,8 @@ func TestChangingAPasswordAgainstTheRealStore(t *testing.T) {
 	r := chi.NewRouter()
 	m.Routes(r)
 
-	written := send(t, r, http.MethodPut, "/admin/v1/customer-credentials",
-		fmt.Sprintf(`{"customer_id":%q,"email":"change@example.test","password":"the old one"}`,
-			"cust_06G8CHANGEROUTE00000000"))
+	written := sendAsOperator(t, r, http.MethodPut, "/admin/v1/customer-credentials/cust_06G8CHANGEROUTE00000000",
+		`{"email":"change@example.test","password":"the old one"}`)
 	require.Equal(t, http.StatusNoContent, written.Code, written.Body.String())
 	signIn := func(password string) *httptest.ResponseRecorder {
 		return send(t, r, http.MethodPost, "/store/v1/auth/sign-in",

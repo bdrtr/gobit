@@ -64,7 +64,7 @@ func TestTheDescriptionsAreOnTheRealPaths(t *testing.T) {
 	}{
 		{http.MethodPost, "/store/v1/auth/sign-in"},
 		{http.MethodPost, "/store/v1/auth/sign-out"},
-		{http.MethodPut, "/admin/v1/customer-credentials"},
+		{http.MethodPut, "/admin/v1/customer-credentials/cust_1"},
 	} {
 		rctx := chi.NewRouteContext()
 		assert.True(t, r.Match(rctx, want.method, want.path),

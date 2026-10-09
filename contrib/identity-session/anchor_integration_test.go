@@ -3,7 +3,6 @@
 package identitysession_test
 
 import (
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -71,9 +70,8 @@ func TestEndingTheOtherSessionsAgainstTheRealStore(t *testing.T) {
 	m.Routes(r)
 
 	customerID := "cust_06G8ANCHORROUTE00000000"
-	written := send(t, r, http.MethodPut, "/admin/v1/customer-credentials",
-		fmt.Sprintf(`{"customer_id":%q,"email":"anchor-route@example.test","password":"a real password"}`,
-			customerID))
+	written := sendAsOperator(t, r, http.MethodPut, "/admin/v1/customer-credentials/"+customerID,
+		`{"email":"anchor-route@example.test","password":"a real password"}`)
 	require.Equal(t, http.StatusNoContent, written.Code, written.Body.String())
 
 	signIn := func() *http.Cookie {

@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	authapi "github.com/bdrtr/gobit/internal/modules/auth/api"
+	"github.com/bdrtr/gobit/internal/app"
 	authsvc "github.com/bdrtr/gobit/internal/modules/auth/service"
 )
 
@@ -44,38 +44,31 @@ import (
 // non-nil slice ... produces an unauthorized user — it can log in but cannot
 // reach any protected endpoint." This test is the audit of that sentence.
 
-// unauthorizedExemptPaths are the admin endpoints that DO NOT ASK for
-// authorization.
+// ownAdminRoutes are the admin endpoints that DO NOT ASK for authorization:
+// signing in, reading back and protecting one's own identity, and closing
+// one's own sessions.
 //
-// Each is deliberate, and the list staying short is the test's real claim: the
-// login endpoint is only about to establish the identity, while the identity
-// endpoint reads back the established identity itself. An unauthorized caller not
-// even being able to learn who it is would make debugging impossible without
-// protecting anything.
+// The list is the installation's own (ADR 0434), read from the composition
+// root rather than written here: the assembly refuses to start with any other
+// admin route that demands no privilege, and each entry's reason is written
+// once, beside that refusal. This walk holds every other admin route to a 403,
+// which is what the assembly's gate cannot see — that the guard it read
+// refuses.
 //
-// Accepting an invitation is the fourth and the only one that is exempt from
-// IDENTITY rather than from authorization: the person calling it has no account to
-// authenticate with yet, which is what they are calling it to get (ADR 0137). It is
-// the composition root's AdminExempt entry, so unlike the three above it never
-// reaches RequireAdmin at all — and it is still inside the audit ring and the rate
-// limit, which is what keeps "unauthenticated" from meaning "unwatched".
-//
-// The three on the caller's own second factor ask for identity and nothing
-// else (ADR 0264): a person who can sign in may protect their own account, and
-// a privilege there left an operator granted the catalog alone unable to.
-var unauthorizedExemptPaths = map[string]struct{}{
-	authapi.LoginPath:            {},
-	authapi.AcceptInvitationPath: {},
-	"/admin/v1/auth/me":          {},
-	"/admin/v1/auth/logout":      {},
-	authapi.MFAEnrolPath:         {},
-	authapi.MFAConfirmPath:       {},
-	authapi.MFARemovePath:        {},
-	// The caller's own sessions ask for identity alone, as the sign-out does
-	// (ADR 0267).
-	authapi.SessionsPath:             {},
-	authapi.SessionRevokePath:        {},
-	authapi.SessionsRevokeOthersPath: {},
+// Accepting an invitation is the one exempt from IDENTITY rather than from
+// authorization: the person calling it has no account to authenticate with
+// yet, which is what they are calling it to get (ADR 0137). It is the
+// composition root's AdminExempt entry, so it never reaches RequireAdmin at
+// all — and it is still inside the audit ring and the rate limit, which is
+// what keeps "unauthenticated" from meaning "unwatched".
+var ownAdminRoutes = app.OwnAdminRoutes()
+
+// isOwnAdminRoute reports whether a walked route is one of [ownAdminRoutes],
+// by its method and its pattern as the router binds it.
+func isOwnAdminRoute(method, pattern string) bool {
+	_, own := ownAdminRoutes[app.AdminRoute{Method: method, Path: pattern}]
+
+	return own
 }
 
 // pathParamRe captures the {param} and {param:regex} pieces of a chi route
@@ -96,8 +89,13 @@ func adminRoutes(t *testing.T) []adminRoute {
 	var routes []adminRoute
 
 	err := chi.Walk(testRouter, func(
-		method, pattern string, _ http.Handler, _ ...func(http.Handler) http.Handler,
+		method, pattern string, handler http.Handler, _ ...func(http.Handler) http.Handler,
 	) error {
+		// gobit's own answer on the prefix and below it, where no route of the
+		// admin surface's takes a path, is not an endpoint (ADR 0434).
+		if app.IsOwnedAnswer(handler) {
+			return nil
+		}
 		// chi appends "/" to the pattern in Mount-ed subtrees; that does not
 		// happen for routes registered with a full path, but normalizing
 		// prevents the test from silently trying the wrong path if a module
@@ -110,7 +108,7 @@ func adminRoutes(t *testing.T) []adminRoute {
 		if !strings.HasPrefix(pattern, "/admin/v1") {
 			return nil
 		}
-		if _, exempt := unauthorizedExemptPaths[pattern]; exempt {
+		if isOwnAdminRoute(method, pattern) {
 			return nil
 		}
 

@@ -32,6 +32,9 @@ func TestTheAdminScopeCoversEveryModuleScope(t *testing.T) {
 	// at all rather than about a list somebody keeps here.
 	for _, scope := range []string{
 		"review:read", "review:write", "product:write", "order:read",
+		// A privilege no module of gobit's own demands: contrib/identity-session's
+		// credential route (ADR 0434), granted over the API like personal-data:*.
+		"customer-credential:write",
 		"a-scope-nobody-has-invented-yet",
 	} {
 		assert.True(t, operator.HasScope(scope),

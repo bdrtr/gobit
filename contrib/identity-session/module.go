@@ -299,6 +299,21 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 // dbServiceName is the core pool's container name.
 const dbServiceName = "core.db"
 
+// ScopeCredentialWrite is the privilege the credential route demands (ADR 0434).
+//
+// It is a privilege of its own because its power is not a customer record's:
+// whoever writes a customer's credential can sign in as that customer, read
+// what they read and act as them, and the customer is told nothing (ADR 0379).
+// customer:write corrects an address; this becomes the person. `admin` covers
+// it, as it covers every privilege, and an installation grants it over the API
+// as it grants personal-data:*; the panel offers it on the page of a user who
+// already holds it.
+const ScopeCredentialWrite = "customer-credential:write"
+
+// CredentialPath is the operator's credential route. The customer is in the
+// path, where the audit log records every admin write's subject (ADR 0434).
+const CredentialPath = "/admin/v1/customer-credentials/{customer_id}"
+
 // minSecretLen is the shortest signing secret this module accepts.
 //
 // Thirty-two bytes is the output width of the hash the MAC is built on, so a
@@ -336,7 +351,7 @@ func (m *Module) Routes(r chi.Router) {
 	r.Post("/store/v1/auth/sign-in", m.signIn)
 	r.Post("/store/v1/auth/sign-out", m.signOut)
 	r.Get("/store/v1/auth/session", m.session)
-	r.Put("/admin/v1/customer-credentials", m.putCredential)
+	r.With(corehttp.RequireScope(ScopeCredentialWrite)).Put(CredentialPath, m.putCredential)
 	if m.sessionAnchors() != nil {
 		r.Post("/store/v1/auth/sessions/revoke-others", m.revokeOtherSessions)
 	}
@@ -438,11 +453,10 @@ type signInRequest struct {
 	Password string `json:"password"`
 }
 
-// credentialRequest is the body of PUT /admin/v1/customer-credentials.
+// credentialRequest is the body of PUT /admin/v1/customer-credentials/{customer_id}.
 type credentialRequest struct {
-	CustomerID string `json:"customer_id"`
-	Email      string `json:"email"`
-	Password   string `json:"password"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
 }
 
 // signIn checks the password and issues the cookie.
@@ -535,8 +549,12 @@ func (m *Module) signOut(w http.ResponseWriter, r *http.Request) {
 //
 // It is on the ADMIN prefix, so it is behind gobit's own operator
 // authentication, and that is what the endpoint IS rather than where it ended up:
-// it writes a credential for any customer the caller names, which is an
-// operator's power.
+// it writes a credential for any customer the path names, which is an
+// operator's power. Which operator is [ScopeCredentialWrite]'s to say: the ring
+// proves who is calling and nothing more, so without the guard any admin
+// principal, an API key holding product:read among them, could set a
+// customer's password and sign in as them (ADR 0434, D270). The customer is
+// in the path so that the audit log's row names them.
 //
 // Storefront self-registration is [Module.register] and [Module.verifyRegistration]
 // — a different pair, mounted only when the installation binds [Accounts] and
@@ -548,13 +566,14 @@ func (m *Module) signOut(w http.ResponseWriter, r *http.Request) {
 // anchor moves BEFORE the password, so a failure between the two has signed
 // people out rather than left a stranger signed in.
 func (m *Module) putCredential(w http.ResponseWriter, r *http.Request) {
+	customerID := chi.URLParam(r, "customer_id")
 	var body credentialRequest
 	if !decode(w, r, &body) {
 		return
 	}
-	if body.CustomerID == "" || body.Email == "" {
+	if customerID == "" || body.Email == "" {
 		corehttp.WriteError(r.Context(), w, coreerrors.Invalid(CodeInvalid,
-			"customer_id and email are required"))
+			"the customer in the path and the email are required"))
 
 		return
 	}
@@ -566,12 +585,12 @@ func (m *Module) putCredential(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A customer with no credential yet has no session this could end.
-	if err := m.endSessions(r.Context(), body.CustomerID); err != nil && !errors.Is(err, ErrNoCredential) {
+	if err := m.endSessions(r.Context(), customerID); err != nil && !errors.Is(err, ErrNoCredential) {
 		m.unavailable(w, r, "the customer's sessions could not be ended", err)
 
 		return
 	}
-	if err := m.store.Put(r.Context(), body.CustomerID, body.Email, hash); err != nil {
+	if err := m.store.Put(r.Context(), customerID, body.Email, hash); err != nil {
 		m.log.ErrorContext(r.Context(), "identity-session: a credential could not be written",
 			"error", err)
 		corehttp.WriteError(r.Context(), w, coreerrors.Conflict(CodeNotWritten,

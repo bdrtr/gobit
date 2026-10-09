@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	identitysession "github.com/bdrtr/gobit/contrib/identity-session"
+	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/openapi"
 )
 
@@ -55,11 +56,12 @@ func TestEveryDocumentedRefusalIsTheOneTheRouteAnswers(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, tc := range []struct {
-		name   string
-		path   string
-		body   string
-		status int
-		code   string
+		name    string
+		path    string
+		pattern string
+		body    string
+		status  int
+		code    string
 	}{
 		{
 			name: "a body this endpoint cannot read",
@@ -72,9 +74,10 @@ func TestEveryDocumentedRefusalIsTheOneTheRouteAnswers(t *testing.T) {
 			status: http.StatusUnauthorized, code: identitysession.CodeRejected,
 		},
 		{
-			name: "a credential with no customer",
-			path: "/admin/v1/customer-credentials", body: `{"email":"a@b.test","password":"x"}`,
-			status: http.StatusUnprocessableEntity, code: identitysession.CodeInvalid,
+			name: "a credential with no e-mail",
+			path: "/admin/v1/customer-credentials/cust_1", body: `{"password":"x"}`,
+			pattern: "/admin/v1/customer-credentials/{customer_id}",
+			status:  http.StatusUnprocessableEntity, code: identitysession.CodeInvalid,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -84,8 +87,12 @@ func TestEveryDocumentedRefusalIsTheOneTheRouteAnswers(t *testing.T) {
 				"%s answered %d; body: %s", tc.path, rec.Code, rec.Body.String())
 			assert.Contains(t, rec.Body.String(), tc.code)
 
+			pattern := tc.path
+			if tc.pattern != "" {
+				pattern = tc.pattern
+			}
 			assert.Equal(t, strconv.Itoa(tc.status),
-				documentedStatusForCode(t, built, tc.path, tc.code),
+				documentedStatusForCode(t, built, pattern, tc.code),
 				"%s answers %d with code %q and the published document puts that code "+
 					"under a DIFFERENT status.\n"+
 					"A description is a promise (ADR 0026): an integrator reading it codes "+
@@ -99,10 +106,16 @@ func sendJSON(t *testing.T, r chi.Router, path, body string) *httptest.ResponseR
 	t.Helper()
 
 	method := http.MethodPost
+	ctx := t.Context()
 	if strings.HasPrefix(path, "/admin/") {
 		method = http.MethodPut
+		// The operator the admin ring would have resolved, holding what the
+		// route demands: the refusal under test is the body's.
+		ctx = corehttp.WithPrincipal(ctx, corehttp.Principal{
+			ID: "usr_support", Kind: "user", Scopes: []string{"customer-credential:write"},
+		})
 	}
-	req := httptest.NewRequestWithContext(t.Context(), method, path, strings.NewReader(body))
+	req := httptest.NewRequestWithContext(ctx, method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)

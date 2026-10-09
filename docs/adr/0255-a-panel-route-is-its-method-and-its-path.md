@@ -4,7 +4,7 @@
 lists its open routes with no privilege; a route the table does not list stops
 the panel from being built.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0434](0434-an-admin-route-demands-a-privilege.md), whose installation does not start with a route under the panel's address that the panel's table does not list or the panel does not serve
 - **Date:** 2026-09-30
 
 ## Context

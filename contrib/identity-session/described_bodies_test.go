@@ -50,7 +50,7 @@ func TestEveryBodyARouteDecodesIsDescribed(t *testing.T) {
 		fields       []string
 	}{
 		{"post", "/store/v1/auth/sign-in", []string{"email", "password"}},
-		{"put", "/admin/v1/customer-credentials", []string{"customer_id", "email", "password"}},
+		{"put", "/admin/v1/customer-credentials/{customer_id}", []string{"email", "password"}},
 		{"post", "/store/v1/auth/register", []string{"email", "password"}},
 		{"post", "/store/v1/auth/register/verify", []string{"token"}},
 	} {

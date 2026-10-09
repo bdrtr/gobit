@@ -131,6 +131,11 @@ past and is not corrected retroactively.
       ([ADR 0132](adr/0132-the-contrib-identity-modules-answer-a-data-subject.md),
       ADR 0133) — which is true, and is what a controller needs to hear instead of a
       deletion that did not happen.
+    - **An operator who replaces a customer's credential tells the customer
+      nothing.** The holder of `customer-credential:write`
+      ([ADR 0434](adr/0434-an-admin-route-demands-a-privilege.md)) can set any
+      customer's e-mail and password and sign in as them, and the old address
+      hears of it only if ADR 0379 is changed to tell it.
 - **A shopper can always decline to name a customer, and that is not closable.**
   A cart without a `customer_id` belongs to a guest, and on a guest order the
   b2b spending rule is not even asked. Requiring the field would not help:
@@ -171,6 +176,25 @@ past and is not corrected retroactively.
   declares the privilege. A plugin's screen is the plugin's own code and is
   walked by nothing, and a path a screen takes only for a particular value in a
   record is walked only as far as a record holding every asked-for field goes.
+- **An admin route is held to demanding a privilege, not to demanding the
+  right one.** Since
+  [ADR 0434](adr/0434-an-admin-route-demands-a-privilege.md) an installation
+  does not start while a route bound under `/admin/v1` demands none, the
+  person's own auth routes aside, whoever bound it. Which privilege it demands
+  is its author's: a module or plugin that guards a write with a read
+  privilege, or with another module's, starts. Neither is the guard's position
+  read: a middleware its author lists before the guard runs for every admin
+  principal, refused or not. A route bound after the installation is
+  assembled, through a type assertion on the handler `App.InProcess` returns
+  or a router a plugin kept from `AddRoutes`, is never walked; neither is the
+  documented way to bind one.
+- **The audit log's path filter is exact, and a credential write's path
+  carries its customer.** `GET /admin/v1/audit-log?path=…` matches one path,
+  so since ADR 0434 it lists one customer's credential writes; every
+  credential write is read from the table, `SELECT created_at, actor_kind,
+  actor_id, status, path FROM audit_log WHERE method = 'PUT' AND path LIKE
+  '/admin/v1/customer-credentials/%' ORDER BY created_at`, or per actor with
+  the listing's `actor_id` filter.
 - **gobit has no agent surface.** A shopping agent is a storefront client
   ([ADR 0400](adr/0400-a-shopping-agent-is-a-storefront-client.md)): it reads
   `/openapi.json` without a key and shops through `/store/v1` with the shop's

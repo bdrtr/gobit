@@ -23,6 +23,7 @@ import (
 	identitysession "github.com/bdrtr/gobit/contrib/identity-session"
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/db"
+	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/personaldata"
 )
 
@@ -274,9 +275,8 @@ func TestSigningInAgainstTheRealStore(t *testing.T) {
 	m.Routes(r)
 
 	customerID := "cust_" + t.Name()
-	written := send(t, r, http.MethodPut, "/admin/v1/customer-credentials",
-		fmt.Sprintf(`{"customer_id":%q,"email":"chain@example.test","password":"a real password"}`,
-			customerID))
+	written := sendAsOperator(t, r, http.MethodPut, "/admin/v1/customer-credentials/"+customerID,
+		`{"email":"chain@example.test","password":"a real password"}`)
 	require.Equal(t, http.StatusNoContent, written.Code, "body: %s", written.Body.String())
 
 	wrong := send(t, r, http.MethodPost, "/store/v1/auth/sign-in",
@@ -305,7 +305,27 @@ func TestSigningInAgainstTheRealStore(t *testing.T) {
 func send(t *testing.T, r chi.Router, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	req := httptest.NewRequestWithContext(t.Context(), method, path, strings.NewReader(body))
+	return sendWith(t.Context(), t, r, method, path, body)
+}
+
+// sendAsOperator runs a JSON request carrying the operator gobit's admin ring
+// would have resolved, holding the privilege the credential route demands
+// (ADR 0434).
+func sendAsOperator(t *testing.T, r chi.Router, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	return sendWith(corehttp.WithPrincipal(t.Context(), corehttp.Principal{
+		ID: "usr_support", Kind: "user", Scopes: []string{"customer-credential:write"},
+	}), t, r, method, path, body)
+}
+
+// sendWith runs a JSON request under a context.
+func sendWith(
+	ctx context.Context, t *testing.T, r chi.Router, method, path, body string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+
+	req := httptest.NewRequestWithContext(ctx, method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
