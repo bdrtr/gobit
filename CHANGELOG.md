@@ -9,6 +9,8 @@ design. It is fixed with `1.0.0`.
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-10-09
+
 ### Breaking changes
 
 - **An installation does not start while a route on the admin surfaces is
@@ -63,14 +65,14 @@ design. It is fixed with `1.0.0`.
   the route.
 
   **Remedy, smallest:** on v0.10.0, bump `contrib/identity-session` alone to
-  the pseudo-version of the commit that carries this entry
-  (`go get github.com/bdrtr/gobit/contrib/identity-session@<that commit>`;
-  the module has no tag of its own). It requires gobit `v0.0.0`, so your
+  the pseudo-version of the fix,
+  `go get github.com/bdrtr/gobit/contrib/identity-session@v0.0.0-20261009040226-53aa11ff4288`
+  (the module has no tag of its own). It requires gobit `v0.0.0`, so your
   v0.10.0 stays selected, and it builds against it; that closes the route.
   The gate and the other hardening come with v0.11.0.
 
   **Remedy, whole:** upgrade gobit to v0.11.0 and `contrib/identity-session`
-  to the pseudo-version of the commit v0.11.0 points at. Upgrade both
+  to `v0.0.0-20261009040226-53aa11ff4288` or later. Upgrade both
   together: an older `contrib/identity-session` on v0.11.0 refuses to start
   with `admin_route_unscoped` naming `PUT /admin/v1/customer-credentials`, and
   that is intended. Either way, grant `customer-credential:write` to the
@@ -8328,7 +8330,8 @@ application, which running the tests alone did not reveal:
   startup.
 - The load test is in-process; it does not produce a capacity plan.
 
-[Unreleased]: https://github.com/bdrtr/gobit/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/bdrtr/gobit/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/bdrtr/gobit/releases/tag/v0.11.0
 [0.10.0]: https://github.com/bdrtr/gobit/releases/tag/v0.10.0
 [0.9.0]: https://github.com/bdrtr/gobit/releases/tag/v0.9.0
 [0.8.0]: https://github.com/bdrtr/gobit/releases/tag/v0.8.0

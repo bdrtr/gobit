@@ -39,9 +39,9 @@ shop.
 make up      # Postgres 16 + Redis 7 (waits until they are healthy)
 make run     # starts the server on :9000
 curl -s localhost:9000/health
-# {"status":"ok","version":"v0.10.0"}
+# {"status":"ok","version":"v0.11.0"}
 curl -s localhost:9000/ready
-# {"status":"ok","version":"v0.10.0","checks":{"postgres":{"status":"ok"}}}
+# {"status":"ok","version":"v0.11.0","checks":{"postgres":{"status":"ok"}}}
 ```
 
 `/health` reports only that the process is alive; `/ready` tests the
@@ -269,6 +269,6 @@ on a list; it is that.
 
 **All ten phases** of the roadmap are complete, from the project skeleton to the
 GraphQL storefront surface and B2B; what was found after the roadmap ended is
-tracked in the releases. The current version is **v0.10.0**, and throughout
+tracked in the releases. The current version is **v0.11.0**, and throughout
 `0.x` **breaking changes may arrive in minor versions** — the surface freezes
 with `1.0.0`.

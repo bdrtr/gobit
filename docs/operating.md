@@ -260,7 +260,7 @@ make rename-module MODULE=github.com/user/repo
 
 ## Version
 
-Current version: **v0.10.0**. For the changes, see
+Current version: **v0.11.0**. For the changes, see
 [`CHANGELOG.md`](../CHANGELOG.md). Which roadmap phase covers what is in the
 README's phase-status table.
 
@@ -384,14 +384,23 @@ README's phase-status table.
   migration 000009 its open of a parcel that names items, and nine tables are
   rewritten under an exclusive lock. Refunds made before the upgrade name no
   cause, so a return's ceiling does not count them.
+- **v0.11.0** — a security release: an admin route demands a privilege
+  ([ADR 0434](adr/0434-an-admin-route-demands-a-privilege.md), D270). The
+  customer credential route of `contrib/identity-session` moves to
+  `PUT /admin/v1/customer-credentials/{customer_id}` under
+  `customer-credential:write`, an installation does not start while a route
+  under `/admin/v1` or `/admin/ui` is not held to a privilege, and gobit
+  answers every unmatched path under both. **There are breaking changes** for
+  plugin and module authors and for whatever writes credentials; the paragraph
+  below says what to do.
 
 **`contrib/identity-session` before this fix let any admin principal set any
 customer's password** ([ADR 0434](adr/0434-an-admin-route-demands-a-privilege.md),
 D270). Every tree from `30cf4bb9` on carries it, v0.9.0 and v0.10.0 among
 them. On v0.10.0, bumping `contrib/identity-session` alone to the fix's
-pseudo-version closes the route; v0.11.0 brings the gate and the rest. Upgrade
-gobit to v0.11.0 and `contrib/identity-session` together, the latter to the
-pseudo-version of the commit v0.11.0 points at: an older
+pseudo-version, `v0.0.0-20261009040226-53aa11ff4288`, closes the route; v0.11.0 brings the gate and
+the rest. Upgrade gobit to v0.11.0 and `contrib/identity-session` together,
+the latter to that pseudo-version or later: an older
 `contrib/identity-session` on v0.11.0 refuses to start with
 `admin_route_unscoped`, as intended. Grant `customer-credential:write` over the
 API to whatever writes credentials, which now go to
