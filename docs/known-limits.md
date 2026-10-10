@@ -1085,6 +1085,19 @@ past and is not corrected retroactively.
   price: gobit does not guard it as an experiment or tell the shopper it is
   personalized.
 
+- **gobit records no confirmation of a distance contract.** The pre-contract
+  information, the contract and the shopper's confirmation of them before an
+  order are the embedder's to record, against the cart id the completion
+  response and the order read carry, from a module of its own that answers
+  disclosure and erasure through `core/personaldata` and mails the contract
+  from its `order.placed` subscriber: `POST /store/v1/carts/{id}/complete`
+  takes no confirmation, a cart's metadata is written only when the cart is
+  opened and does not reach its order, the order confirmation mail carries
+  only the order's number, currency, total and item count, and no hook refuses
+  a completion that arrives without a confirmation
+  ([ADR 0385](adr/0385-a-workflow-step-has-no-observer.md),
+  [ADR 0400](adr/0400-a-shopping-agent-is-a-storefront-client.md)).
+
 - **An order's archiving and its after-sales transitions publish nothing.**
   Placing, canceling and completing an order publish `order.placed`,
   `order.canceled` and `order.completed`; archiving one and moving a return, a
