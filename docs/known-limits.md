@@ -1060,6 +1060,12 @@ past and is not corrected retroactively.
   the pass runs once a minute
   ([ADR 0275](adr/0275-a-webhook-receiver-sets-its-rate.md)).
 
+- **The served document names a status field and not the values it takes.** A
+  client compares `delivered`, `authorized` or `captured` from the owning
+  module's prose; a parcel's `delivered_at`, set exactly when it is delivered,
+  is the published way to ask the first
+  ([ADR 0435](adr/0435-a-webhook-receiver-builds-against-a-published-contract.md)).
+
 - **No analytics contract: an outside analytics product hears gobit through the
   bus.** `core/provider` holds no analytics slot
   ([ADR 0390](adr/0390-an-analytics-product-hears-gobit-through-the-bus.md)). An

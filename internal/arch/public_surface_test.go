@@ -49,6 +49,7 @@ var publishedPackages = []string{
 	"core/providertest",
 	"core/query",
 	"core/version",
+	"core/webhook",
 }
 
 // publishedTree is the directory the published packages live in.

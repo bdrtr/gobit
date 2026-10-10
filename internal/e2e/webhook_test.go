@@ -67,16 +67,19 @@ type webhookDelivery struct {
 	event    string
 	attempt  string
 	verified bool
+	headers  http.Header
 	body     map[string]any
 }
 
 // newWebhookReceiver starts a receiver that verifies every signature.
 //
-// The verification is written out with the standard library, from the rule in
-// the plugin's signature.go documentation. Calling the plugin's own
-// VerifySignature would make this agree with any change to the scheme — the
-// documented rule is the contract a customer implements against, and this is
-// the thing standing in for that customer.
+// The verification is written out with the standard library, from the rule
+// core/webhook documents (ADR 0435), and the header names are literals, as they
+// are in a receiver written in another language. Calling core/webhook's
+// VerifySignature, or reading its header constants, would make this agree with
+// any change to the scheme or to a name — the documented rule is the contract a
+// customer implements against, and this is the thing standing in for that
+// customer.
 func newWebhookReceiver(t *testing.T) *webhookReceiver {
 	t.Helper()
 
@@ -91,10 +94,10 @@ func newWebhookReceiver(t *testing.T) *webhookReceiver {
 		var signed strings.Builder
 		for _, part := range []string{
 			"v1",
-			req.Header.Get(webhookout.HeaderTimestamp),
-			req.Header.Get(webhookout.HeaderDelivery),
-			req.Header.Get(webhookout.HeaderEvent),
-			req.Header.Get(webhookout.HeaderAttempt),
+			req.Header.Get("X-Gobit-Timestamp"),
+			req.Header.Get("X-Gobit-Delivery"),
+			req.Header.Get("X-Gobit-Event"),
+			req.Header.Get("X-Gobit-Attempt"),
 			string(payload),
 		} {
 			signed.WriteString(strconv.Itoa(len(part)) + ":" + part)
@@ -104,9 +107,10 @@ func newWebhookReceiver(t *testing.T) *webhookReceiver {
 		want := "v1=" + base64.StdEncoding.EncodeToString(mac.Sum(nil))
 
 		r.requests = append(r.requests, webhookDelivery{
-			event:    req.Header.Get(webhookout.HeaderEvent),
-			attempt:  req.Header.Get(webhookout.HeaderAttempt),
-			verified: hmac.Equal([]byte(want), []byte(req.Header.Get(webhookout.HeaderSignature))),
+			event:    req.Header.Get("X-Gobit-Event"),
+			attempt:  req.Header.Get("X-Gobit-Attempt"),
+			verified: hmac.Equal([]byte(want), []byte(req.Header.Get("X-Gobit-Signature"))),
+			headers:  req.Header.Clone(),
 			body:     parsed,
 		})
 		r.mu.Unlock()
@@ -262,6 +266,91 @@ func TestARealOrderReachesARealWebhookReceiver(t *testing.T) {
 	assert.Contains(t, redacted, "customer_id",
 		"the withholding has to be visible; a receiver that simply sees no customer_id "+
 			"cannot tell a guest order from a withheld field")
+}
+
+// TestTheServedWebhooksAreWhatIsSent compares the promise with the wire on the
+// real server: what /openapi.json serves under "webhooks", against a delivery
+// a real order produced (ADR 0435).
+//
+// The plugin's own test holds the section to the values its sender uses; this
+// one holds it to what arrived, through the real composition root, the real
+// order module and the real sender. Every header the section names arrived;
+// the body's keys are the envelope component's properties, and every one of
+// them is required, so a field the document names and the sender writes under
+// another name fails twice; the data's keys are among the fields the section
+// lists for the topic, each a string on the wire and in the document. The document is read without a key, as a receiver
+// starting up would read it.
+func TestTheServedWebhooksAreWhatIsSent(t *testing.T) {
+	ctx := t.Context()
+
+	_, doc := schemaDocument(t)
+	webhooks := objectField(t, doc, "webhooks", "document")
+	post := objectField(t, objectField(t, webhooks, "order.placed", "webhooks"), "post", "order.placed")
+
+	receiver := newWebhookReceiver(t)
+	_, secret := registerWebhook(t, receiver.server.URL, "order.placed")
+	receiver.withSecret(secret)
+
+	orderID, _, _ := notificationOrder(ctx, t, "E2E Webhook Contract Product")
+
+	var got webhookDelivery
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		if !assert.NoError(c, runWebhookJob(t)) {
+			return
+		}
+		for _, delivery := range receiver.deliveries() {
+			if data, ok := delivery.body["data"].(map[string]any); ok && data["order_id"] == orderID {
+				got = delivery
+			}
+		}
+		assert.NotNil(c, got.body)
+	}, 15*time.Second, 200*time.Millisecond, "no delivery arrived for order %s", orderID)
+	require.True(t, got.verified, "the delivery has to verify before its shape means anything")
+
+	parameters, ok := post["parameters"].([]any)
+	require.True(t, ok, "the webhook has to describe its headers")
+	var headers []string
+	for _, value := range parameters {
+		parameter, isObject := value.(map[string]any)
+		require.True(t, isObject, "a parameter is an object, found %T", value)
+		name, isString := parameter["name"].(string)
+		require.True(t, isString, "a parameter has a name")
+		headers = append(headers, name)
+		assert.NotEmpty(t, got.headers.Get(name),
+			"the document names the header %q and the delivery did not carry it", name)
+	}
+	assert.Len(t, headers, 5, "a delivery carries five headers of its own: %v", headers)
+
+	body := requestSchema(t, objectField(t, post, "requestBody", "order.placed"), "order.placed requestBody")
+	parts, ok := body["allOf"].([]any)
+	require.True(t, ok, "the body is the envelope and the topic's narrowing of it, found %v", body)
+	require.Len(t, parts, 2)
+	envelopeRef, ok := parts[0].(map[string]any)
+	require.True(t, ok)
+	envelope := resolvedSchema(t, doc, envelopeRef)
+
+	assert.Equal(t, keysOf(objectField(t, envelope, "properties", "envelope")), keysOf(got.body),
+		"the delivery's keys are not the envelope the document describes")
+	assert.Equal(t, keysOf(got.body), stringSlice(t, envelope["required"]),
+		"the document does not require every key gobit writes, or requires one it does not")
+
+	narrowing, ok := parts[1].(map[string]any)
+	require.True(t, ok)
+	properties := objectField(t, narrowing, "properties", "narrowing")
+	assert.Equal(t, got.event, objectField(t, properties, "event", "narrowing")["const"])
+	listed := keysOf(objectField(t, objectField(t, properties, "data", "narrowing"), "properties", "data"))
+	data, ok := got.body["data"].(map[string]any)
+	require.True(t, ok)
+	require.NotEmpty(t, data)
+	mustBeSubset(t, keysOf(data), listed,
+		"the delivery's data carries a field the document does not list for order.placed")
+	dataFields := objectField(t, objectField(t, properties, "data", "narrowing"), "properties", "data")
+	for field, value := range data {
+		_, isString := value.(string)
+		assert.True(t, isString, "the delivery's %q is %T, and the document says string", field, value)
+		assert.Equal(t, "string", objectField(t, dataFields, field, "data.properties")["type"],
+			"the document's type for %q is not the string the delivery carries", field)
+	}
 }
 
 // TestAWebhookReceiverIsNotSentATopicItDidNotAskFor is the filter, on the real

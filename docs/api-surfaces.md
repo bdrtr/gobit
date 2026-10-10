@@ -1,7 +1,8 @@
 # The API surfaces: the generated document and the GraphQL storefront read
 
 What the two machine-facing surfaces of this repository are, and what they
-refuse to do. The first is the OpenAPI document generated from the router tree;
+refuse to do. The first is the OpenAPI document, whose paths are generated from
+the router tree and whose webhooks are described from what the sender sends;
 the second is the GraphQL storefront read endpoint, together with the limits
 that make it safe to expose.
 
@@ -33,14 +34,15 @@ Three facts live in the README and are needed here:
 
 ## OpenAPI
 
-The schema is **generated** from the router tree, not hand-written:
+The paths are **generated** from the router tree, not hand-written:
 
 ```bash
 curl -s localhost:9000/openapi.json | jq '.paths | keys'
 ```
 
-The endpoint publishes only the route patterns, not data. A hand-written schema
-would start lying silently at the first route change.
+The endpoint publishes the surface — the route patterns, the bodies' shapes and
+the webhooks gobit sends — and no data. A hand-written schema would start lying
+silently at the first route change.
 
 Body schemas are **not hand-written either; they are derived from the Go types**
 — for the same reason: a hand-written field list falls short the day a field is
@@ -88,6 +90,41 @@ the failure was not proportional: a name clash makes the WHOLE document
 unbuildable, so four modules left twenty-five endpoints bodiless rather than
 take `/openapi.json` down for everyone. The prefix is dropped when the type name
 already begins with it, so `Product` stays `Product`.
+
+### Webhooks
+
+A webhook is a request gobit SENDS, so no route carries it; the document's
+`webhooks` section (OpenAPI 3.1) describes it instead, and only where the
+`webhook-out` plugin is installed. Each forwarded topic is an entry there —
+its five `X-Gobit-*` headers, the envelope and the fields its `data` may
+carry — and the plugin derives every part from what it sends with: the topics
+it forwards, the fields its census reads out of the publishers, the header
+names and the envelope type `core/webhook` publishes
+([ADR 0435](adr/0435-a-webhook-receiver-builds-against-a-published-contract.md)).
+A receiver reads it without a key and can check at startup that the topics and
+fields it acts on are there:
+
+```bash
+curl -s localhost:9000/openapi.json | jq '.webhooks | keys'
+```
+
+The envelope's seven fields are required, since gobit writes every one; `data`
+lists its fields and requires none, since a receiver's field list narrows it,
+and stays open to a field added later. A receiver in Go verifies a delivery
+with `webhook.VerifySignature` and decodes it into `webhook.Delivery`; the
+package's documentation is the signing rule for a receiver in any other
+language.
+
+Every entry is marked `x-internal`. openapi-generator, which the commands below
+run, reads a 3.1 webhook as a path and gave every generated client a method
+that POSTs a topic's name to this server; it skips an operation so marked and
+still generates the envelope's model, which a receiver can decode into. Its
+validator accepts the section and calls that model unused, since it does not
+read `webhooks` for references. The mark keeps its server generators from
+producing anything for a webhook too, so a receiver written with one of them
+takes the shapes from the document, or from the generated model, by hand.
+openapi-typescript writes the section as a `webhooks` type beside `paths`
+([measurements/0435](measurements/0435-what-a-receiver-had-to-spell.md)).
 
 You can generate a client from the schema:
 

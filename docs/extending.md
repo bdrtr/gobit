@@ -317,8 +317,8 @@ flow** (`order.line_canceled`, `fulfillment.canceled`, `fulfillment.returned`,
 ADR 0134, 0139 and 0423), the
 **return flow** (`fulfillment.canceled`, ADR 0239), the analytics plugin
 `analytics` (`cart.created`, `cart.completed`, `order.placed`, ADR 0153) and the
-outbound webhook plugin `webhook-out` (all thirteen topics below; a receiver
-narrows them by topic, filter and field, ADR 0218).
+outbound webhook plugin `webhook-out` (every topic below; a receiver narrows
+them by topic, filter and field, ADR 0218).
 
 The order and payment modules subscribe to each other for the reason a plugin
 would not do. Money moved by the payment module's own routes has no flow on its
@@ -346,7 +346,17 @@ bus.
 
 `plugins/webhookout` lists the same fields, `customer_id` withheld, as
 `TopicFields`, and its census reads them out of the publishers, so a receiver's
-filter or field list can name only a field the topic carries.
+filter or field list can name only a field the topic carries. This table is
+held to the same census (`TestTheEventTableIsThePublishedPayloads`), so a field
+a publisher gains without a row saying so fails the build.
+
+**Receiving a webhook.** Where `webhook-out` is installed, the served
+`/openapi.json` describes each forwarded topic under `webhooks` — its five
+`X-Gobit-*` headers, the envelope and the fields its `data` may carry — and
+asks for no key. A receiver in Go verifies a delivery with
+`webhook.VerifySignature` and decodes it into `webhook.Delivery`, both in the
+published `core/webhook`, whose package documentation is the signing rule for a
+receiver written in any other language (ADR 0435).
 
 `placed_at` is a timestamp, but it too is a string: the moment the order was
 placed, converted to UTC and formatted with `time.RFC3339Nano`
@@ -370,7 +380,10 @@ Two rules are binding:
   `Data` as JSON; since JSON has a single number type, a field put in as an
   `int64` reaches the subscriber as a `float64` — the same subscriber would work
   in development and **fall over in production**, and money would travel over a
-  float on top of that.
+  float on top of that. The type is `string` itself, not one declared over it,
+  which the in-memory bus hands a subscriber's `.(string)` as it is.
+  `TestEveryPayloadValueIsAString` holds the publisher of every topic in the
+  table above to it, by type.
 
 The gift card sale flow issues the cards an order sold once its collection is
 fully captured, and mails each code through the notification module with the

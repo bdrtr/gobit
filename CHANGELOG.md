@@ -9,6 +9,49 @@ design. It is fixed with `1.0.0`.
 
 ## [Unreleased]
 
+### Breaking changes
+
+- **A webhook delivery follows a redirect only when it keeps the POST**
+  (ADR 0435, D272). **For operators:** the sender used to follow every
+  redirect. A receiver answering 301, 302 or 303 got a GET with no body, and
+  the delivery counted as delivered when that address answered 2xx; it now
+  sees failed attempts, retried and dead-lettered like any other, each
+  recording `redirect 302 to "<address>" not followed`. A receiver answering
+  307 or 308 keeps working when the address it points at passes the rule a
+  registration passes (https unless the host is loopback), up to three hops;
+  one pointing at plain http on another host, or further, now fails. Before
+  upgrading, ask each registered URL with `curl -s -o /dev/null -w '%{http_code}
+  %{redirect_url}\n' -X POST <url>`, and register any receiver that answers
+  301, 302 or 303 at its final address. A delivery already queued keeps the URL
+  it was queued with, and a redrive sends it there again.
+
+### Added
+
+- **A webhook receiver builds against a published contract** (ADR 0435,
+  D271). **For integrators:** `core/webhook` holds the signature scheme
+  (`SignatureVersion`, `HeaderEvent`, `HeaderDelivery`, `HeaderAttempt`,
+  `HeaderTimestamp`, `HeaderSignature`, `SignedFields`, `Sign`,
+  `VerifySignature`, which verifies nothing under an empty secret) and
+  `Delivery`, the body a delivery decodes into, and imports the standard
+  library alone; a receiver's `go.mod` then requires gobit's `go 1.26.9`. `/openapi.json` describes every
+  forwarded topic under `webhooks` — its headers, its envelope and the fields
+  its `data` carries — wherever `webhook-out` is installed, with no key. Each
+  entry is marked `x-internal`, so a client `make openapi-client` generates
+  gains the envelope's model and no method for a webhook. The request a
+  receiver gets, its headers and its bytes, does not change; which redirects
+  the sender follows does (D272, under Breaking changes). **For module and
+  plugin authors:**
+  `openapi.Doc.DescribeWebhook` records a request a module sends, its body in
+  the form gobit writes it.
+
+### Deprecated
+
+- **`plugins/webhookout`'s signature names are aliases of `core/webhook`'s**
+  (ADR 0435). `SignatureVersion`, the five `Header…` constants,
+  `SignedFields`, `Sign` and `VerifySignature` still compile and mean the
+  same, except that an empty secret now verifies nothing under either name; a
+  linter flags them, and removing them will be a breaking change of its own.
+
 ## [0.11.0] — 2026-10-09
 
 ### Breaking changes

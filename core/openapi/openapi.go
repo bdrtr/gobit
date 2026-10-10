@@ -20,6 +20,16 @@
 // the body schema FROM THE TYPE with [Doc.Item], [Doc.List] and
 // [Doc.RequestBody].
 //
+// # The one section that is not read from the router
+//
+// A webhook is a request gobit SENDS, so no route carries it and the walk
+// above cannot find it. [Doc.DescribeWebhook] records one under the
+// document's "webhooks" (OpenAPI 3.1), and the plugin that sends it describes
+// it from the values it sends with: the topics it forwards, the fields each
+// carries and the envelope type it marshals (ADR 0435). It is the router's
+// argument again, applied to the one source an outbound request has — a
+// description derived from what is sent cannot keep describing what was.
+//
 // # What it does not cover
 //
 // An endpoint that was not described carries only its path, method, security and
@@ -126,6 +136,13 @@ type Parameter struct {
 type Doc struct {
 	// enrichment maps the "METHOD PATH" key to the operation detail.
 	enrichment map[string]Operation
+	// webhooks maps a webhook's name to the request gobit sends under it (see
+	// [Doc.DescribeWebhook]).
+	webhooks map[string]Operation
+	// webhookOwners holds which module described each webhook name; it is the
+	// record that catches two modules describing one name, as schemaOwners is
+	// for component names.
+	webhookOwners map[string]string
 	// title is the API title.
 	title string
 	// version is the API version.
@@ -219,13 +236,15 @@ type cacheEntry struct {
 // New builds an empty document.
 func New(title, version string) *Doc {
 	return &Doc{
-		enrichment:   make(map[string]Operation),
-		title:        title,
-		version:      version,
-		schemas:      make(map[string]any),
-		schemaOwners: make(map[string]reflect.Type),
-		inputs:       make(map[string]any),
-		inputOwners:  make(map[string]reflect.Type),
+		enrichment:    make(map[string]Operation),
+		webhooks:      make(map[string]Operation),
+		webhookOwners: make(map[string]string),
+		title:         title,
+		version:       version,
+		schemas:       make(map[string]any),
+		schemaOwners:  make(map[string]reflect.Type),
+		inputs:        make(map[string]any),
+		inputOwners:   make(map[string]reflect.Type),
 	}
 }
 
@@ -308,6 +327,83 @@ func (d *Doc) Describe(method, pattern string, op Operation) {
 	d.describeVersion++
 }
 
+// DescribeWebhook records a request gobit SENDS, under the document's
+// "webhooks" (OpenAPI 3.1): the name is the key a receiver looks it up by, and
+// op is the POST it receives.
+//
+// # Why it is not [Doc.Describe]
+//
+// A webhook has no route, so there is nothing for a description to be matched
+// against and nothing [Doc.UnmatchedDescriptions] could report; it is in the
+// document because it was described, and only then. And the defaults a route
+// gets would be false here. The shared 401, 422, 429 and 500 are gobit's
+// answers, while a webhook's answers are the receiver's; the security schemes
+// are what gobit asks of its callers, while a webhook carries its own proof.
+// So op is written as given, with three gaps filled: an empty OperationID is
+// derived from the name, a nil Security is written as the explicit empty list
+// (a nil would write null, which is invalid, for the reason on
+// [Operation.Security]) and empty Responses as one "default" answer. OpenAPI
+// 3.1 requires a Responses object to name at least one, so an empty object
+// would make the whole document invalid for every strict validator.
+//
+// # It is written "x-internal"
+//
+// Every entry carries `"x-internal": true`, and the reason is a client
+// generator rather than the specification. openapi-generator v7.10.0, the one
+// `make openapi-client` runs, reads an OpenAPI 3.1 webhook as a PATH: it gave
+// every generated client a method per topic that POSTs to /order.placed on
+// this server, a call to a route that does not exist (measured, ADR 0435). The
+// same generator skips an operation marked x-internal and still generates the
+// envelope's model, which is what a receiver in another language wants from
+// it. A tool that removes x-internal operations from a published rendering
+// does so only when it is told to.
+//
+// # Its body is described as WRITTEN
+//
+// gobit writes a webhook's body, so its schema is the written form
+// ([Doc.SchemaOf]), where a field the encoder always writes is required. The
+// request form [Doc.RequestBody] derives, which requires nothing (ADR 0363), is
+// for the bodies gobit READS; a webhook described with it would tell a
+// receiver that a field gobit sends every time may be missing. So the build
+// does not rename a webhook body's references to a request form, as it does a
+// path's: a type gobit both reads and sends is named, in a webhook, by its
+// written form.
+//
+// # One module per name
+//
+// A name another module already described is a CLASH, recorded the way two
+// types wanting one component name are (ADR 0036): [Doc.Build] fails and the
+// document is not served, rather than describing whichever module came last
+// while the other module's requests go out undescribed. The module describing
+// a name again replaces its own description. Like [Doc.Describe], a record
+// invalidates a document already built.
+func (d *Doc) DescribeWebhook(name string, op Operation) {
+	if d.webhooks == nil {
+		d.webhooks = make(map[string]Operation)
+		d.webhookOwners = make(map[string]string)
+	}
+
+	if owner, described := d.webhookOwners[name]; described && owner != d.namespace {
+		d.reportClash("two modules describe the webhook " + name + ": " + describer(owner) +
+			" and " + describer(d.namespace))
+
+		return
+	}
+
+	d.webhookOwners[name] = d.namespace
+	d.webhooks[name] = op
+	d.describeVersion++
+}
+
+// describer names who described something, for a clash report.
+func describer(namespace string) string {
+	if namespace == "" {
+		return "the composition root"
+	}
+
+	return namespace
+}
+
 // Build walks the router and produces the OpenAPI document.
 //
 // The build is under the lock from start to end; the reason is on [Doc.mu].
@@ -362,10 +458,10 @@ func (d *Doc) build(r chi.Routes) (map[string]any, error) {
 	// has to be filled anyway so the operator can see both at once.
 	if clashes := append(slices.Clone(d.schemaClashes), inputClashes...); len(clashes) > 0 {
 		return nil, errors.Invalid(codeSchemaNameConflict,
-			"an OpenAPI component name clashed: %s", strings.Join(clashes, "; "))
+			"an OpenAPI component or webhook name clashed: %s", strings.Join(clashes, "; "))
 	}
 
-	return map[string]any{
+	doc := map[string]any{
 		"openapi": Version,
 		"info": map[string]any{
 			"title":   d.title,
@@ -373,7 +469,68 @@ func (d *Doc) build(r chi.Routes) (map[string]any, error) {
 		},
 		"paths":      paths,
 		"components": d.components(),
-	}, nil
+	}
+
+	// Written only when something was described: an installation without an
+	// outbound webhook sends nothing, and an empty section would read as a
+	// promise of requests that never come.
+	if len(d.webhooks) > 0 {
+		doc["webhooks"] = d.webhookItems()
+	}
+
+	return doc, nil
+}
+
+// webhookItems builds the document's "webhooks" from the recorded requests; it
+// ASSUMES the [Doc.mu] lock is HELD.
+//
+// The recorded operations are COPIED before a gap is filled, for the reason
+// [withScopes] copies: what a build writes must not change what the next one
+// starts from.
+func (d *Doc) webhookItems() map[string]any {
+	items := make(map[string]any, len(d.webhooks))
+
+	for name := range d.webhooks {
+		op := d.webhooks[name]
+
+		if op.OperationID == "" {
+			op.OperationID = webhookOperationID(name)
+		}
+
+		if op.Security == nil {
+			op.Security = []map[string][]string{}
+		}
+
+		if len(op.Responses) == 0 {
+			op.Responses = map[string]any{
+				"default": map[string]any{schemaDescription: webhookDefaultAnswer},
+			}
+		}
+
+		items[name] = map[string]any{"post": webhookOperation{Operation: op, Internal: true}}
+	}
+
+	return items
+}
+
+// webhookOperation is an [Operation] as a webhook is written: its fields, and
+// x-internal (see [Doc.DescribeWebhook]). It is unexported because the mark is
+// the document's decision about every webhook, not a describer's to leave out.
+type webhookOperation struct {
+	Operation
+
+	// Internal keeps a client generator from rendering the webhook as a call.
+	Internal bool `json:"x-internal"`
+}
+
+// webhookDefaultAnswer describes the answers of a webhook described with none.
+const webhookDefaultAnswer = "Any answer of the receiver's; the webhook's description names none."
+
+// webhookOperationID derives an operationId from a webhook's name.
+//
+// The prefix keeps it apart from every path's: those begin with their method.
+func webhookOperationID(name string) string {
+	return "webhook_" + strings.NewReplacer(".", "_", "-", "_", "/", "_").Replace(name)
 }
 
 // UnmatchedDescriptions returns the descriptions that matched no route during

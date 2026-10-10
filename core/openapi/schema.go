@@ -31,7 +31,16 @@ const (
 )
 
 // codeSchemaNameConflict reports that two DIFFERENT Go types want the same
-// component name.
+// component name, or that two modules describe the same webhook name
+// ([Doc.DescribeWebhook]).
+//
+// Either way the document is not built and /openapi.json answers 500 for every
+// path, not only the clashing one (ADR 0036). For a webhook that is a choice:
+// its name is the topic a receiver looks it up by, so it is not prefixed with
+// the module the way a component name is, and two senders of one topic would
+// otherwise be one entry describing whichever came last. The code keeps its
+// value: it is what the error an installation logs at startup carries, and an
+// operator's alert may match it.
 const codeSchemaNameConflict = "openapi_schema_name_conflict"
 
 // The types that have to be recognized through reflection.

@@ -20,6 +20,7 @@ import (
 	"github.com/bdrtr/gobit/core/db"
 	"github.com/bdrtr/gobit/core/eventbus"
 	corehttp "github.com/bdrtr/gobit/core/http"
+	"github.com/bdrtr/gobit/core/webhook"
 	"github.com/bdrtr/gobit/internal/testdb"
 )
 
@@ -117,7 +118,7 @@ func TestAFieldListNarrowsTheBodyThatIsQueued(t *testing.T) {
 
 	seen := rec.seen()
 	require.Len(t, seen, 2)
-	bodies := map[string]body{}
+	bodies := map[string]webhook.Delivery{}
 	for _, s := range seen {
 		assert.True(t, s.Verified, "the narrowed body is the signed body")
 		bodies[s.Envelope.Event] = s.Envelope

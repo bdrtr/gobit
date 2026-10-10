@@ -386,6 +386,7 @@ core/openapi Describer.Describe
 core/openapi Doc
 core/openapi Doc.Build
 core/openapi Doc.Describe
+core/openapi Doc.DescribeWebhook
 core/openapi Doc.ForModule
 core/openapi Doc.Handler
 core/openapi Doc.Item
@@ -563,3 +564,13 @@ core/query Record
 core/version Library
 core/version Module
 core/version Of
+core/webhook Delivery
+core/webhook HeaderAttempt
+core/webhook HeaderDelivery
+core/webhook HeaderEvent
+core/webhook HeaderSignature
+core/webhook HeaderTimestamp
+core/webhook Sign
+core/webhook SignatureVersion
+core/webhook SignedFields
+core/webhook VerifySignature

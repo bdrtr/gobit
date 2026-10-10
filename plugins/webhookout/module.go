@@ -77,13 +77,16 @@ var migrationsRoot = mustSub(migrationFiles, "migrations")
 // event that gobit now emits and is told, correctly, that it is not on the
 // list, with no hint that the list is stale.
 //
-// That is made visible in two places rather than left to a reader:
+// That is made visible in three places rather than left to a reader:
 //
 //   - TestTheForwardedTopicsAreEveryPublishedTopic scans the production trees
 //     the way internal/arch does and FAILS the day another topic appears here
 //     without being added to this list. It is the gate; the rest is comfort.
 //   - The startup log prints this list, so an operator comparing gobit's
 //     release notes against their own installation has somewhere to look.
+//   - The served /openapi.json describes each topic on it under "webhooks"
+//     (ADR 0435), so the developer of a receiver asks the server it talks to,
+//     with no key, rather than a document of some other release.
 //
 // # Why the names are constants and the subscriptions are written out
 //
@@ -729,6 +732,8 @@ func mustSub(files embed.FS, dir string) fs.FS {
 // TopicFields are the payload fields each forwarded topic carries to a
 // receiver, redacted fields left out (ADR 0218). A receiver's filter and field
 // list name only these, and fields_test.go reads them out of the publishers.
+// The served document lists them as each topic's "data" under "webhooks"
+// (ADR 0435), from this map, so it cannot name a field the census does not.
 //
 // A field is listed in alphabetical order. A publisher that adds one fails that
 // test until it is listed here, and a receiver can then filter on it.

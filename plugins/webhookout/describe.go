@@ -1,9 +1,11 @@
 package webhookout
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/bdrtr/gobit/core/openapi"
+	"github.com/bdrtr/gobit/core/webhook"
 )
 
 // The paths this module describes, spelled as chi binds them.
@@ -33,16 +35,21 @@ const (
 // endpoints simply had no description and nothing in the repository could say
 // so — see ADR 0035 and the ledger the audit there reads.
 //
-// # It is a package-level method on the module, and the bodies are unexported
+// # It is a package-level method on the module, and the admin bodies are unexported
 //
-// The types being described are this package's own ([createRequest],
+// The admin types being described are this package's own ([createRequest],
 // [deliveryListResponse] and the rest) and the schema is derived from them by
 // reflection. Exporting them so the description could live elsewhere would widen
 // the plugin's surface for the sake of documentation, and a plugin's types are
 // not a contract anybody outside it should be building against.
+//
+// The one body that IS a contract is the delivery a receiver gets, and it is
+// not this package's: it is [webhook.Delivery], published in core/ (ADR 0435),
+// and [webhookModule.describeWebhooks] describes it from that type.
 func (m *webhookModule) Describe(d *openapi.Doc) {
 	m.describeReceivers(d)
 	m.describeDeliveries(d)
+	m.describeWebhooks(d)
 }
 
 // narrowing describes a receiver's filters and fields (ADR 0218).
@@ -51,8 +58,9 @@ const narrowing = "\"filters\" names, per topic, payload fields and the values o
 	"queued for this receiver not at all. \"fields\" names, per topic, the payload fields the " +
 	"receiver is sent; a topic it leaves out is sent whole, and the envelope and its " +
 	"\"redacted\" list are always sent. Both name only topics the receiver takes and only " +
-	"fields those topics carry, and \"topic_fields\" on the listing lists them; a redacted " +
-	"field is none of them."
+	"fields those topics carry, which \"topic_fields\" on the listing lists, and so does " +
+	"each topic's \"data\" under this document's \"webhooks\"; a redacted field is none of " +
+	"them."
 
 // rate describes a receiver's cap (ADR 0275).
 const rate = "\"max_per_minute\" is how many deliveries a minute the receiver takes at most, " +
@@ -76,8 +84,8 @@ func (m *webhookModule) describeReceivers(d *openapi.Doc) {
 			"A topic gobit does not publish is REFUSED at registration rather than ignored " +
 			"at delivery. A receiver subscribed to a name nothing emits is a subscription " +
 			"that silently never fires, and this request is the only moment somebody is " +
-			"present to be told. Read \"forwarded_topics\" on the listing for the set that " +
-			"is accepted." +
+			"present to be told. The set that is accepted is \"forwarded_topics\" on the " +
+			"listing, and the names under this document's \"webhooks\", which ask for no key." +
 			"\n\n" + narrowing +
 			"\n\n" + rate +
 			"\n\n" +
@@ -163,7 +171,7 @@ func (m *webhookModule) describeDeliveries(d *openapi.Doc) {
 				Name: "state", In: "query",
 				Description: "\"dead\" for the pile a human has to look at, \"pending\" for " +
 					"what is still being retried. Any other value is refused.",
-				Schema: map[string]any{"type": "string", "enum": []string{stateDead, statePending}},
+				Schema: map[string]any{schemaType: "string", "enum": []string{stateDead, statePending}},
 			},
 		},
 		Responses: map[string]any{
@@ -212,5 +220,157 @@ func (m *webhookModule) describeDeliveries(d *openapi.Doc) {
 					d.Item(deliveryActionResponse{})),
 			},
 		})
+	}
+}
+
+// webhookTag groups the delivery descriptions apart from the admin surface.
+const webhookTag = "webhooks"
+
+// schemaType is JSON Schema's type keyword, spelled once: a typo in a map key
+// compiles and says nothing, which is why core/openapi spells its own keys as
+// constants too.
+const schemaType = "type"
+
+// describeWebhooks records what this plugin SENDS: one entry under the
+// document's "webhooks" per forwarded topic (ADR 0435).
+//
+// # Every part is derived from what the sender sends with
+//
+// The names are [ForwardedTopics], the list the subscriptions are held to; the
+// fields of each topic's data are [TopicFields], which the census reads out of
+// the publishers; the headers are core/webhook's constants, which the sender
+// sets; the envelope is [webhook.Delivery], which the sender marshals. Nothing
+// here is a second spelling of any of them, so the document cannot go on
+// describing a topic, a field or a header after the sender stops sending it.
+//
+// # Why the document and not Go constants
+//
+// A receiver runs beside a gobit of some release, often as another process
+// with its own go.mod. A topic constant compiled from the release in that
+// go.mod says nothing about the server the receiver talks to; the served
+// document does, it asks for no key, and a receiver can check at startup that
+// the topics and fields it acts on are there. It is also the promise HTTP
+// paths and response fields already have.
+func (m *webhookModule) describeWebhooks(d *openapi.Doc) {
+	for _, topic := range ForwardedTopics {
+		d.DescribeWebhook(topic, openapi.Operation{
+			Summary:     "Delivers " + topic + " to a receiver registered for it.",
+			Description: deliveryDescription,
+			Tags:        []string{webhookTag},
+			Parameters:  deliveryHeaders(topic),
+			RequestBody: deliveryBody(d, topic),
+			Responses:   deliveryAnswers(),
+		})
+	}
+}
+
+// deliveryDescription is what every delivery says about itself.
+//
+// The rule is spelled with core/webhook's names, so a renamed header renames
+// it too; the package's documentation is the long form, and its
+// VerifySignature is the check for a receiver written in Go.
+const deliveryDescription = "Signed with the receiver's secret, the one its registration " +
+	"returned. " + webhook.HeaderSignature + " is \"" + webhook.SignatureVersion + "=\" " +
+	"followed by the standard base64 of an HMAC-SHA256 over six parts, each written as its " +
+	"length in bytes, a colon and the part, with nothing between them: \"" +
+	webhook.SignatureVersion + "\", then " + webhook.HeaderTimestamp + ", " +
+	webhook.HeaderDelivery + ", " + webhook.HeaderEvent + " and " + webhook.HeaderAttempt +
+	" as they travel, then the raw body. Read the body's bytes before parsing them, compare " +
+	"the whole header in constant time, verify nothing under an empty secret (anybody can " +
+	"sign under the empty key, and a registration never returns one), refuse a timestamp " +
+	"more than a few minutes from now " +
+	"(it is the attempt's, so a retry is signed when it is sent) and drop a delivery id " +
+	"already handled. A receiver in Go imports core/webhook, whose VerifySignature is that " +
+	"check and whose Delivery is this body." +
+	"\n\n" +
+	"\"data\" carries the topic's payload as the event carried it, every value a string, " +
+	"and may carry fewer fields than are listed: a receiver's field list narrows it, and a " +
+	"withheld field is named in \"redacted\" instead. A field or a topic added later is " +
+	"not a breaking change, so a receiver ignores what it does not know."
+
+// deliveryHeaders are the headers every delivery carries, the topic's own
+// value pinned on the first.
+func deliveryHeaders(topic string) []openapi.Parameter {
+	header := func(name, description string) openapi.Parameter {
+		return openapi.Parameter{
+			Name: name, In: "header", Required: true,
+			Schema:      textSchema(),
+			Description: description,
+		}
+	}
+
+	event := header(webhook.HeaderEvent, "The topic; the body's \"event\" is the same.")
+	event.Schema["const"] = topic
+
+	return []openapi.Parameter{
+		event,
+		header(webhook.HeaderDelivery, "The delivery id, the same on every attempt: deduplicate "+
+			"on it. The body's \"id\" is the same."),
+		header(webhook.HeaderAttempt, "The attempt number as decimal text, 1 on the first try."),
+		header(webhook.HeaderTimestamp, "The unix seconds of this attempt as decimal text."),
+		header(webhook.HeaderSignature, "\""+webhook.SignatureVersion+"=\" and the MAC; the "+
+			"operation's description says what it is taken over."),
+	}
+}
+
+// deliveryBody is a topic's request body: the published envelope, with the
+// topic's name pinned on "event" and its fields listed under "data".
+//
+// The envelope is the WRITTEN form of [webhook.Delivery]
+// ([openapi.Doc.SchemaOf]), so its seven fields are required: gobit writes
+// every one on every delivery. The data's fields are listed, none is required
+// and the object is left open, for the two reasons [deliveryDescription] gives
+// a receiver. Each is a string, and that is a promise a gate keeps rather than
+// a habit: TestEveryPayloadValueIsAString holds every publisher's values to the
+// type string.
+//
+// The body is built on [openapi.Response] because a request body and a
+// response share their content shape; [openapi.Doc.RequestBody] would derive
+// the request form, which requires nothing (ADR 0363).
+func deliveryBody(d *openapi.Doc, topic string) map[string]any {
+	fields := map[string]any{}
+	for _, field := range TopicFields[topic] {
+		fields[field] = textSchema()
+	}
+
+	body := openapi.Response("The delivery; "+webhook.HeaderSignature+" signs these bytes.",
+		map[string]any{
+			"allOf": []any{
+				d.SchemaOf(webhook.Delivery{}),
+				map[string]any{
+					schemaType: "object",
+					"properties": map[string]any{
+						"event": map[string]any{"const": topic},
+						"data":  map[string]any{schemaType: "object", "properties": fields},
+					},
+				},
+			},
+		})
+	body["required"] = true
+
+	return body
+}
+
+// textSchema is the schema of a header and of a payload field: a string, the
+// bus's rule for every payload value. It is a fresh map on every call, because
+// the event header's copy is then pinned to its topic.
+func textSchema() map[string]any { return map[string]any{schemaType: "string"} }
+
+// deliveryAnswers is what a receiver's answer does, spelled from the constants
+// the sender and the dead-letter listing use.
+func deliveryAnswers() map[string]any {
+	return map[string]any{
+		"2XX": map[string]any{
+			"description": fmt.Sprintf("Delivered: any 2xx within %s closes the delivery, "+
+				"and it is not sent again.", perAttemptTimeout),
+		},
+		"default": map[string]any{
+			"description": fmt.Sprintf("A 307 or 308 is followed, at most %d times and only to "+
+				"an address a registration would accept, and the answer at its end decides. Any "+
+				"other answer, another redirect or a 4xx included, or none within %s, is a "+
+				"failed attempt, retried on a doubling ladder: %d attempts over %s, then "+
+				"the delivery is given up on and listed by GET %s?state=dead, to be redriven "+
+				"or discarded.", maxRedirects, perAttemptTimeout, maxAttempts, deliveryWindow(), pathDeliveries),
+		},
 	}
 }

@@ -12,8 +12,9 @@
 // canonicalization, whether a receiver's refusal is read as a refusal, and
 // whether a retry actually re-sends. Every test here runs against an
 // httptest.Server that verifies the signature the way a customer's receiver
-// would — with the standard library and the documented rule, not by calling
-// [Sign].
+// would — with the standard library and the rule core/webhook documents, not
+// by calling webhook.Sign — and decodes the body strictly into the published
+// webhook.Delivery.
 //
 // # And why a real database
 //
@@ -30,6 +31,7 @@
 package webhookout
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -37,9 +39,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -53,6 +57,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/db"
 	"github.com/bdrtr/gobit/core/eventbus"
+	"github.com/bdrtr/gobit/core/webhook"
 	"github.com/bdrtr/gobit/internal/testdb"
 )
 
@@ -138,10 +143,15 @@ func freshModule(t *testing.T) *webhookModule {
 
 // receiver is a test server standing in for a customer's endpoint.
 //
-// It verifies the signature the way the documentation tells a receiver to,
-// using only the standard library. Calling [VerifySignature] would have made
-// this agree with any change to the scheme, including one that stopped signing
-// a field.
+// It verifies the signature the way core/webhook's documentation tells a
+// receiver to, using only the standard library. Calling webhook.VerifySignature
+// would have made this agree with any change to the scheme, including one that
+// stopped signing a field.
+//
+// It decodes the body the way a receiver in Go is told to, into
+// webhook.Delivery, and STRICTLY: a field the sender writes that the published
+// type does not have is a decode failure here rather than a key a receiver
+// silently drops.
 type receiver struct {
 	server *httptest.Server
 
@@ -153,10 +163,15 @@ type receiver struct {
 
 // receivedRequest is one delivery as the receiver saw it.
 type receivedRequest struct {
-	Headers   http.Header
-	Body      []byte
-	Verified  bool
-	Envelope  body
+	Headers  http.Header
+	Body     []byte
+	Verified bool
+	Envelope webhook.Delivery
+	// DecodeErr is the strict decode's failure, nil when the body is exactly
+	// the published envelope.
+	DecodeErr error
+	// Keys are the body's top-level keys, sorted, read without the type.
+	Keys      []string
 	Delivered time.Time
 }
 
@@ -169,8 +184,13 @@ func newReceiver(t *testing.T, secret func() string) *receiver {
 		payload := make([]byte, req.ContentLength)
 		_, _ = req.Body.Read(payload)
 
-		var envelope body
-		_ = json.Unmarshal(payload, &envelope)
+		var envelope webhook.Delivery
+		strict := json.NewDecoder(bytes.NewReader(payload))
+		strict.DisallowUnknownFields()
+		decodeErr := strict.Decode(&envelope)
+
+		var raw map[string]json.RawMessage
+		_ = json.Unmarshal(payload, &raw)
 
 		r.mu.Lock()
 		status := r.status
@@ -179,6 +199,8 @@ func newReceiver(t *testing.T, secret func() string) *receiver {
 			Body:      payload,
 			Verified:  independentVerify(secret(), req.Header, payload),
 			Envelope:  envelope,
+			DecodeErr: decodeErr,
+			Keys:      slices.Sorted(maps.Keys(raw)),
 			Delivered: time.Now(),
 		})
 		r.mu.Unlock()
@@ -209,19 +231,21 @@ func (r *receiver) seen() []receivedRequest {
 
 // independentVerify is the receiver's own implementation of the check.
 //
-// It is written from the rule in signature.go's documentation — length-prefixed
+// It is written from the rule in core/webhook's documentation — length-prefixed
 // join of six parts, HMAC-SHA256, standard base64, "v1=" in front — with
-// nothing from this package. If the two ever disagree, the documented scheme
-// and the shipped one have parted company, and the documented one is the
-// contract.
+// nothing from gobit, the header names included: they are literals, as they are
+// in a receiver written in another language, so a header renamed in the
+// package fails here instead of being read under its new name on both sides.
+// If the two ever disagree, the documented scheme and the shipped one have
+// parted company, and the documented one is the contract.
 func independentVerify(secret string, headers http.Header, payload []byte) bool {
 	var signed strings.Builder
 	for _, part := range []string{
 		"v1",
-		headers.Get(HeaderTimestamp),
-		headers.Get(HeaderDelivery),
-		headers.Get(HeaderEvent),
-		headers.Get(HeaderAttempt),
+		headers.Get("X-Gobit-Timestamp"),
+		headers.Get("X-Gobit-Delivery"),
+		headers.Get("X-Gobit-Event"),
+		headers.Get("X-Gobit-Attempt"),
 		string(payload),
 	} {
 		signed.WriteString(strconv.Itoa(len(part)) + ":" + part)
@@ -231,7 +255,7 @@ func independentVerify(secret string, headers http.Header, payload []byte) bool 
 	mac.Write([]byte(signed.String()))
 	want := "v1=" + base64.StdEncoding.EncodeToString(mac.Sum(nil))
 
-	return hmac.Equal([]byte(want), []byte(headers.Get(HeaderSignature)))
+	return hmac.Equal([]byte(want), []byte(headers.Get("X-Gobit-Signature")))
 }
 
 // register creates a receiver row through the store, the way the admin endpoint
@@ -377,20 +401,64 @@ func TestASignedDeliveryReachesAReceiverThatCanVerifyIt(t *testing.T) {
 			"documentation is no longer the scheme in the code — and the documentation is "+
 			"the contract a customer implements against.")
 
-	assert.Equal(t, topicOrderPlaced, got.Headers.Get(HeaderEvent))
-	assert.Equal(t, "1", got.Headers.Get(HeaderAttempt))
-	assert.True(t, strings.HasPrefix(got.Headers.Get(HeaderDelivery), deliveryPrefix))
-	assert.NotEmpty(t, got.Headers.Get(HeaderTimestamp))
+	assert.Equal(t, topicOrderPlaced, got.Headers.Get(webhook.HeaderEvent))
+	assert.Equal(t, "1", got.Headers.Get(webhook.HeaderAttempt))
+	assert.True(t, strings.HasPrefix(got.Headers.Get(webhook.HeaderDelivery), deliveryPrefix))
+	assert.NotEmpty(t, got.Headers.Get(webhook.HeaderTimestamp))
 
 	assert.Equal(t, "order.placed:ord_1", got.Envelope.EventID)
 	assert.Equal(t, "ord_1", got.Envelope.Data["order_id"])
 	assert.Equal(t, "12300", got.Envelope.Data["total"])
-	assert.Equal(t, got.Headers.Get(HeaderDelivery), got.Envelope.ID,
+	assert.Equal(t, got.Headers.Get(webhook.HeaderDelivery), got.Envelope.ID,
 		"the delivery id in the body and in the header have to be the same value; a "+
 			"receiver told to deduplicate on one of them must not be able to pick wrong")
 
 	// The row is closed, so the next pass does not send it again.
 	assert.Equal(t, 0, pendingCount(t))
+}
+
+// TestADeliveryTravelsAsThePublishedEnvelope is ADR 0435 on the wire: what a
+// receiver gets is core/webhook's Delivery, and nothing beside it.
+//
+// The receiver decodes strictly, so a field the sender writes and the published
+// type lacks fails here, and the raw keys are compared with the seven names
+// written out, so a field the type gained without a decision fails too. The
+// topic is one with nothing to withhold, where "redacted" is the empty list a
+// receiver is promised rather than null: a receiver in a language that tells
+// the two apart would otherwise find a null in a field the document calls an
+// array.
+func TestADeliveryTravelsAsThePublishedEnvelope(t *testing.T) {
+	m := freshModule(t)
+
+	var secret string
+	rec := newReceiver(t, func() string { return secret })
+	e := register(t, m, rec.server.URL, topicProductCreated)
+	secret = e.Secret
+
+	require.NoError(t, m.onEvent(t.Context(), eventbus.Event{
+		ID: "product.created:prd_9", Name: topicProductCreated,
+		Data: map[string]any{"product_id": "prd_9", "status": "draft"},
+	}))
+	require.NoError(t, runPass(t, m))
+
+	seen := rec.seen()
+	require.Len(t, seen, 1)
+	got := seen[0]
+
+	require.True(t, got.Verified, "the delivery has to verify before its body means anything")
+	require.NoError(t, got.DecodeErr,
+		"the body does not decode strictly into webhook.Delivery: the sender writes something "+
+			"the published envelope does not have. Body: %s", got.Body)
+	assert.Equal(t,
+		[]string{"attempt", "data", "event", "event_id", "id", "occurred_at", "redacted"}, got.Keys,
+		"the body's keys are not the published envelope's seven")
+	assert.Contains(t, string(got.Body), `"redacted":[]`,
+		"a delivery with nothing withheld has to say so with an empty list, not null")
+	assert.Equal(t, topicProductCreated, got.Envelope.Event)
+	assert.Equal(t, "product.created:prd_9", got.Envelope.EventID)
+	assert.Equal(t, int64(1), got.Envelope.Attempt)
+	assert.Equal(t, got.Headers.Get(webhook.HeaderDelivery), got.Envelope.ID)
+	assert.Equal(t, map[string]any{"product_id": "prd_9", "status": "draft"}, got.Envelope.Data)
 }
 
 // TestTheCustomerIDIsNotOnTheWire is the payload boundary, proved where it
@@ -513,13 +581,13 @@ func TestAFailedDeliveryIsRetried(t *testing.T) {
 	seen := rec.seen()
 	require.Len(t, seen, 2, "the delivery had to be retried once the backoff elapsed")
 
-	assert.Equal(t, "2", seen[1].Headers.Get(HeaderAttempt))
-	assert.Equal(t, seen[0].Headers.Get(HeaderDelivery), seen[1].Headers.Get(HeaderDelivery),
+	assert.Equal(t, "2", seen[1].Headers.Get(webhook.HeaderAttempt))
+	assert.Equal(t, seen[0].Headers.Get(webhook.HeaderDelivery), seen[1].Headers.Get(webhook.HeaderDelivery),
 		"the delivery id changed between attempts. A receiver is told to deduplicate on "+
 			"it, so a changing id makes every retry look like a new event — which is the "+
 			"duplicate the id exists to prevent.")
 	assert.True(t, seen[1].Verified, "a retry has to be signed too, with its own timestamp")
-	assert.NotEqual(t, seen[0].Headers.Get(HeaderSignature), seen[1].Headers.Get(HeaderSignature),
+	assert.NotEqual(t, seen[0].Headers.Get(webhook.HeaderSignature), seen[1].Headers.Get(webhook.HeaderSignature),
 		"the two attempts carry the same signature, so the timestamp is not really "+
 			"per-attempt and a receiver's freshness window would reject legitimate retries")
 

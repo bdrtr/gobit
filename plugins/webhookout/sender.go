@@ -4,14 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"sync"
 	"time"
 
 	coreerrors "github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/webhook"
 )
 
 // perAttemptTimeout bounds one POST.
@@ -72,59 +75,113 @@ type sender struct {
 // The client is the plugin's own rather than a shared one, because the timeout
 // that belongs on it is this plugin's decision: a client shared with, say, a
 // payment provider would carry whichever deadline was set last.
+//
+// # It follows a redirect only when nothing is lost by it (D272)
+//
+// Go's client follows every redirect by default, and for a webhook most of
+// them are wrong. A 301, 302 or 303 turns the signed POST into a GET with no
+// body, and when the address it points at answers 2xx the delivery is counted
+// as delivered while the receiver saw nothing. A 307 or 308 keeps the method,
+// the body and the X-Gobit headers, so the signature still verifies where it
+// lands, and a receiver behind a framework that adds a trailing slash answers
+// one on every delivery; those are followed, but only to an address that
+// passes the rule a registered URL passes ([validateURL]: https unless the
+// host is loopback), so an answer cannot send the body somewhere registration
+// would have refused, and at most [maxRedirects] times. Anything else is
+// returned as it came, and [send] counts it as the failed attempt it is.
 func newSender() *sender {
 	return &sender{
-		client: &http.Client{Timeout: perAttemptTimeout},
-		now:    time.Now,
+		client: &http.Client{
+			Timeout:       perAttemptTimeout,
+			CheckRedirect: followRedirect,
+		},
+		now: time.Now,
 	}
 }
 
-// body is the JSON envelope a receiver parses.
+// maxRedirects is how many 307 and 308 answers one attempt follows.
 //
-// # What it carries, and what it deliberately does not
+// Three. A trailing slash is one hop and a host that moved is another; a chain
+// longer than that is a loop or a misconfiguration the operator should be
+// shown, and every hop spends the same ten seconds of [perAttemptTimeout].
+const maxRedirects = 3
+
+// followRedirect is the client's CheckRedirect: it follows a redirect when
+// [redirectRefusal] has nothing against it, and otherwise hands the answer
+// back to [send] as it came.
+func followRedirect(next *http.Request, via []*http.Request) error {
+	if redirectRefusal(next.Response.StatusCode, next.URL, len(via)) != "" {
+		return http.ErrUseLastResponse
+	}
+
+	return nil
+}
+
+// redirectRefusal says why a redirect is not followed, or "" when it is.
 //
-// Data is the event's payload as the bus carried it, MINUS the redacted fields
-// (see [redactedFields]). Nothing is added to it. The sender does not read the
-// order, the product or the customer, and it could not: a plugin may not import
-// a module (ADR 0001), so enriching the body would mean a new dependency for
-// this plugin and a second definition of "what an order looks like" that
-// nothing keeps in step with the first.
+// hop is the redirect's place in the attempt, 1 for the first, which is the
+// count of requests already made when the client asks.
+func redirectRefusal(status int, target *url.URL, hop int) string {
+	switch {
+	case status != http.StatusTemporaryRedirect && status != http.StatusPermanentRedirect:
+		return "only a 307 or a 308 keeps the POST and its body"
+	case target == nil:
+		return "it names no address"
+	case hop > maxRedirects:
+		return fmt.Sprintf("an attempt follows at most %d redirects", maxRedirects)
+	}
+
+	if _, err := validateURL(target.String()); err != nil {
+		return "the address fails the rule a registered URL passes, https unless the host is loopback"
+	}
+
+	return ""
+}
+
+// redirectsFollowed counts the redirects the client followed to reach an answer.
+func redirectsFollowed(resp *http.Response) int {
+	followed := 0
+	for req := resp.Request; req != nil && req.Response != nil; req = req.Response.Request {
+		followed++
+	}
+
+	return followed
+}
+
+// send makes one attempt and reports what happened.
+//
+// # The body is the published envelope, and nothing else
+//
+// The request is a [webhook.Delivery], marshaled, signed with [webhook.Sign]
+// and headed with the [webhook.HeaderEvent] family: the names a receiver
+// compiles against are the names this function writes, so the two cannot part
+// (ADR 0435).
+//
+// Its Data is the event's payload as the bus carried it, MINUS the redacted
+// fields (see [redactedFields]). Nothing is added to it. The sender does not
+// read the order, the product or the customer, and it could not: a plugin may
+// not import a module (ADR 0001), so enriching the body would mean a new
+// dependency for this plugin and a second definition of "what an order looks
+// like" that nothing keeps in step with the first.
 //
 // That constraint turns out to be the right policy anyway. The bus's payloads
 // were already chosen to carry no personal data because the bus is durable; a
 // webhook body is the same data one trust boundary further out, sitting in a
 // third party's logs. Widening it here would widen it there.
-type body struct {
-	// ID is the delivery id. It is the receiver's idempotency key and it does
-	// not change between retries.
-	ID string `json:"id"`
-	// Event is the topic.
-	Event string `json:"event"`
-	// EventID is the bus event's own id, for correlation with gobit's logs.
-	EventID string `json:"event_id"`
-	// OccurredAt is when the event happened, not when this attempt was made.
-	OccurredAt time.Time `json:"occurred_at"`
-	// Attempt is 1 on the first try.
-	Attempt int64 `json:"attempt"`
-	// Data is the event payload, redacted.
-	Data map[string]any `json:"data"`
-	// Redacted names the fields that were removed.
-	//
-	// It is in the body rather than omitted, and that is the whole point of
-	// having it: a receiver that sees no customer_id cannot tell "this order
-	// had no customer" from "we are not told". The list makes the difference
-	// visible, which is the same distinction `gobit deadletters` draws when it
-	// says a payload was WITHHELD rather than absent.
-	Redacted []string `json:"redacted"`
-}
-
-// send makes one attempt and reports what happened.
 //
 // # Which answers count as delivered
 //
 // Any 2xx. Nothing narrower, because a receiver answering 202 for "queued" is
 // the shape this sender wants to encourage, and one answering 204 is a receiver
 // that had nothing to say.
+//
+// A 307 or 308 to an address registration would accept is followed, at most
+// [maxRedirects] times, and the answer at its end decides (see [newSender]).
+// Any other 3xx is a failure like any other. Its error LEADS with the status
+// and the absolute address it pointed at, and does not repeat the delivery's
+// URL, which the listing already shows: last_error keeps two hundred bytes,
+// and the address is what the operator needs to register the receiver where
+// it moved.
 //
 // Everything else is a failure that will be retried, INCLUDING 4xx. That is the
 // deliberate half: a 404 usually means the URL is wrong and no number of
@@ -138,14 +195,27 @@ type body struct {
 func (s *sender) send(ctx context.Context, d delivery) attemptResult {
 	attempt := d.Attempts + 1
 
-	payload, err := json.Marshal(body{
+	// The published envelope promises "data" as an object and "redacted" as an
+	// array on every delivery. Both columns are NOT NULL and scan to an empty
+	// map and an empty list, so a nil here is a row this sender did not read
+	// from the table; it is still written as {} and [] rather than null,
+	// because the promise is the type's and not the table's.
+	data, redacted := d.Payload, d.Redacted
+	if data == nil {
+		data = map[string]any{}
+	}
+	if redacted == nil {
+		redacted = []string{}
+	}
+
+	payload, err := json.Marshal(webhook.Delivery{
 		ID:         d.ID,
 		Event:      d.EventName,
 		EventID:    d.EventID,
 		OccurredAt: d.OccurredAt.UTC(),
 		Attempt:    attempt,
-		Data:       d.Payload,
-		Redacted:   d.Redacted,
+		Data:       data,
+		Redacted:   redacted,
 	})
 	if err != nil {
 		// Not reachable with the values this struct holds; a payload that
@@ -167,7 +237,7 @@ func (s *sender) send(ctx context.Context, d delivery) attemptResult {
 
 	timestamp := strconv.FormatInt(s.now().UTC().Unix(), 10)
 	attemptText := strconv.FormatInt(attempt, 10)
-	signature := Sign(d.Secret, SignedFields{
+	signature := webhook.Sign(d.Secret, webhook.SignedFields{
 		Timestamp:  timestamp,
 		DeliveryID: d.ID,
 		Event:      d.EventName,
@@ -177,11 +247,11 @@ func (s *sender) send(ctx context.Context, d delivery) attemptResult {
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set(HeaderEvent, d.EventName)
-	req.Header.Set(HeaderDelivery, d.ID)
-	req.Header.Set(HeaderAttempt, attemptText)
-	req.Header.Set(HeaderTimestamp, timestamp)
-	req.Header.Set(HeaderSignature, signature)
+	req.Header.Set(webhook.HeaderEvent, d.EventName)
+	req.Header.Set(webhook.HeaderDelivery, d.ID)
+	req.Header.Set(webhook.HeaderAttempt, attemptText)
+	req.Header.Set(webhook.HeaderTimestamp, timestamp)
+	req.Header.Set(webhook.HeaderSignature, signature)
 	req.ContentLength = int64(len(payload))
 
 	resp, err := s.client.Do(req)
@@ -195,6 +265,20 @@ func (s *sender) send(ctx context.Context, d delivery) attemptResult {
 
 	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
 		return attemptResult{Status: resp.StatusCode}
+	}
+
+	if resp.StatusCode < http.StatusBadRequest && resp.StatusCode >= http.StatusMultipleChoices {
+		target, _ := resp.Location()
+		where := ""
+		if target != nil {
+			where = target.String()
+		}
+
+		return attemptResult{
+			Status: resp.StatusCode,
+			Err: coreerrors.Unavailable(codeSendFailed, "redirect %d to %q not followed: %s",
+				resp.StatusCode, where, redirectRefusal(resp.StatusCode, target, redirectsFollowed(resp)+1)),
+		}
 	}
 
 	return attemptResult{

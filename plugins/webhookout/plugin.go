@@ -34,8 +34,10 @@
 //  2. An event on the bus enqueues one delivery row per receiver that asked for
 //     that topic. That is all the subscriber does — see [webhookModule.onEvent]
 //     for why it does not send.
-//  3. A scheduled pass claims what is due and POSTs it, signed. See
-//     signature.go for the scheme a receiver verifies with.
+//  3. A scheduled pass claims what is due and POSTs it, signed. The scheme a
+//     receiver verifies with, and the envelope it decodes, are published as
+//     core/webhook (ADR 0435); what each topic carries is described under
+//     "webhooks" in /openapi.json.
 //  4. A delivery that keeps failing is retried on a ladder for more than a day
 //     and then DEAD-LETTERED, which fails the job's run — the one channel that
 //     reaches `gobit jobs`. `GET /admin/v1/webhooks/deliveries?state=dead` is
