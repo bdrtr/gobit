@@ -59,8 +59,8 @@ type endpoint struct {
 	Filters     topicFilters
 	Fields      topicFields
 	Description string
-	// MaxPerMinute is how many deliveries a pass sends it at most; zero is no
-	// cap (ADR 0275).
+	// MaxPerMinute is how many of its deliveries are leased in a clock minute
+	// at most, by every claim together; zero is no cap (ADR 0275, ADR 0436).
 	MaxPerMinute int64
 	CreatedAt    time.Time
 }
@@ -97,6 +97,10 @@ type delivery struct {
 	// Attempts is the count BEFORE this attempt, so the attempt about to be
 	// made is Attempts+1. The header the receiver sees is 1-based.
 	Attempts int64
+	// LeasedUntil is the next_attempt_at the claim wrote, which is what
+	// [store.release] compares before it hands the row back: a lease that has
+	// changed since is no longer this pass's to release.
+	LeasedUntil time.Time
 }
 
 // deadLetter is one delivery the sender gave up on.
@@ -353,7 +357,7 @@ func (s *store) enqueue(
 // answering, which is precisely when the pass runs long.
 //
 // So the transaction covers only the claim. It moves next_attempt_at forward by
-// [claimLease], which makes the rows invisible to another pass, and then the
+// [claimLease], which makes the rows invisible to another claim, and then the
 // requests happen with nothing held. The properties this trades for:
 //
 //   - A process that dies mid-pass leaves its rows leased rather than locked.
@@ -365,44 +369,130 @@ func (s *store) enqueue(
 //     never made and brings the dead letter closer for a receiver that did
 //     nothing wrong.
 //
-// SKIP LOCKED stays because the claim itself must not serialize behind another
-// instance's claim; the advisory lock the scheduler takes already makes two
-// concurrent passes unlikely, and "unlikely" is not "impossible" (a process
-// partitioned from the database after taking the lock is the documented case).
+// # One claim at a time (ADR 0436)
 //
-// # A receiver's rate (ADR 0275)
+// Every serving process claims — its worker and the minute job — so claims
+// meet as a matter of course, and SKIP LOCKED alone does not keep them apart.
+// A claim whose snapshot predates another's commit, and that reaches a row
+// after it, finds the row updated rather than locked: it locks the new version
+// and rechecks only the scan's own condition, the id, never the due condition
+// the snapshot already decided, and leases the row a second time (D275). So
+// [store.claimDue] takes [claimLockKey] before this statement, and the
+// statement's snapshot is taken after the claim before it committed.
 //
-// A receiver that set max_per_minute is offered at most that many of its due
-// deliveries in a pass, oldest first: the window numbers each receiver's due
-// rows and the claim takes only the ones inside its cap. The rest are not
-// leased, so they wait for the next pass with no attempt counted. The window
-// runs before the lock, over the due rows only; a row another pass holds is
-// skipped as before, which can leave a receiver a pass short of its cap and
-// never over it.
+// # One instant, read once the lock is held
+//
+// $3 is the claim's instant: what is due, the lease and the minute a cap
+// counts in are all measured from it. [store.claimDue] reads it after the lock
+// is granted, so the claims' instants run in the order they hold the lock. The
+// transaction's now() would not do: it is BEGIN's instant, before the wait for
+// the lock, and a claim that began just before a minute's end and took the
+// lock after one from the next minute counted in the older minute and reset
+// the receiver's window (measurements/0436).
+//
+// # A receiver's rate (ADR 0275, ADR 0436)
+//
+// A receiver that set max_per_minute is leased at most that many of its due
+// deliveries in a clock minute, by every claim together, oldest first. The
+// count is the receiver's own row: rate_claimed is what was leased in the
+// minute rate_window names, room is the cap less that count while the window
+// is this minute or later and the whole cap once it is older, the window
+// numbers each receiver's due rows and the claim takes only the ones inside
+// its room, and the counted CTE adds what was leased and never moves the
+// window back. The rest are not leased, so they wait with no attempt counted.
+// A row another process holds is skipped, and a leased row released
+// unattempted stays counted, which can leave a receiver under its cap for a
+// minute and never over it.
+//
+// What is capped is the LEASE. A pass sends what it leased within [maxRun], so
+// rows leased at the end of one minute can arrive in the next one beside that
+// minute's own: across a minute's boundary a receiver can be sent up to twice
+// its cap within sixty seconds, and never more than its cap leased in one
+// clock minute.
+//
+// # Receivers take turns (ADR 0436)
+//
+// The claim takes each receiver's oldest due row before any receiver's second,
+// and within a turn a row never attempted before one that has failed: place is
+// a receiver's rank by age, and both the LIMIT and the order the rows come
+// back in are by place, then attempts, then age. A pass attempts its rows in
+// that order, so a receiver whose requests hang until their timeout, and whose
+// retries keep their age, fills only its own turns: a fresh delivery to
+// another receiver is in the claim's first turn and among its first attempts.
+// Oldest first across all receivers let such a backlog hold every other
+// receiver's first attempt for minutes (measurements/0436). The same place
+// decides a capped receiver's room, so the rows inside its cap are its first
+// turns.
 const claimSQL = `
-WITH due AS (
-    SELECT d.id, d.created_at, e.max_per_minute,
+WITH clock AS (
+    SELECT date_trunc('minute', $3::timestamptz) AS minute
+), room AS (
+    SELECT e.id,
+           CASE WHEN e.max_per_minute IS NULL THEN NULL
+                WHEN e.rate_window >= c.minute THEN e.max_per_minute - e.rate_claimed
+                ELSE e.max_per_minute
+           END AS left_now
+    FROM webhook_endpoint e
+    CROSS JOIN clock c
+), due AS (
+    SELECT d.id, r.left_now,
            row_number() OVER (PARTITION BY d.endpoint_id ORDER BY d.created_at, d.id) AS place
     FROM webhook_delivery d
-    JOIN webhook_endpoint e ON e.id = d.endpoint_id
+    JOIN room r ON r.id = d.endpoint_id
     WHERE d.delivered_at IS NULL
       AND d.dead_lettered_at IS NULL
-      AND d.next_attempt_at <= now()
+      AND d.next_attempt_at <= $3::timestamptz
+      AND (r.left_now IS NULL OR r.left_now > 0)
 ), allowed AS (
-    SELECT id
-    FROM webhook_delivery
-    WHERE id IN (SELECT id FROM due WHERE max_per_minute IS NULL OR place <= max_per_minute)
-    ORDER BY created_at, id
+    SELECT d.id, u.place
+    FROM webhook_delivery d
+    JOIN due u ON u.id = d.id
+    WHERE u.left_now IS NULL OR u.place <= u.left_now
+    ORDER BY u.place, d.attempts, d.created_at, d.id
     LIMIT $1
-    FOR UPDATE SKIP LOCKED
+    FOR UPDATE OF d SKIP LOCKED
+), leased AS (
+    UPDATE webhook_delivery d
+    SET next_attempt_at = $3::timestamptz + make_interval(secs => $2)
+    FROM allowed
+    WHERE d.id = allowed.id
+    RETURNING d.id, d.endpoint_id, d.url, d.event_id, d.event_name, d.occurred_at,
+              d.payload, d.redacted, d.attempts, d.next_attempt_at, d.created_at, allowed.place
+), counted AS (
+    UPDATE webhook_endpoint e
+    SET rate_claimed = CASE WHEN e.rate_window >= c.minute THEN e.rate_claimed ELSE 0 END + n.claimed,
+        rate_window = GREATEST(e.rate_window, c.minute)
+    FROM (SELECT endpoint_id, count(*) AS claimed FROM leased GROUP BY endpoint_id) n
+    CROSS JOIN clock c
+    WHERE e.id = n.endpoint_id AND e.max_per_minute IS NOT NULL
 )
-UPDATE webhook_delivery d
-SET next_attempt_at = now() + make_interval(secs => $2)
-FROM allowed
-JOIN webhook_endpoint e ON TRUE
-WHERE d.id = allowed.id AND e.id = d.endpoint_id
-RETURNING d.id, d.endpoint_id, d.url, e.secret, d.event_id, d.event_name,
-          d.occurred_at, d.payload, d.redacted, d.attempts`
+SELECT l.id, l.endpoint_id, l.url, e.secret, l.event_id, l.event_name,
+       l.occurred_at, l.payload, l.redacted, l.attempts, l.next_attempt_at
+FROM leased l
+JOIN webhook_endpoint e ON e.id = l.endpoint_id
+ORDER BY l.place, l.attempts, l.created_at, l.id`
+
+// claimLockTimeoutSQL bounds the wait for [claimLockKey]: a claim takes
+// milliseconds, so five seconds behind one is a stuck backend, and the claim
+// fails and is tried again rather than holding a pooled connection behind it.
+// lock_timeout bounds an advisory lock's wait as it does a row's.
+const claimLockTimeoutSQL = `SET LOCAL lock_timeout = '5s'`
+
+// claimLockSQL takes the claim lock until the claim's transaction ends.
+const claimLockSQL = `SELECT pg_advisory_xact_lock($1)`
+
+// claimInstantSQL is the claim's instant, read in a statement of its own once
+// the lock is held: statement_timestamp() is when that statement arrived, after
+// the lock statement returned, where now() is the transaction's BEGIN.
+const claimInstantSQL = `SELECT statement_timestamp()`
+
+// claimLockClass is the class of the claim lock, the upper 32 bits of its key;
+// internal/arch holds every class in the tree apart.
+const claimLockClass int64 = 9
+
+// claimLockKey serializes the claims, so that each one's snapshot carries the
+// leases and the counts of the claims before it (ADR 0436, D275).
+const claimLockKey int64 = claimLockClass << 32
 
 // claimDue leases up to limit due deliveries and returns them.
 //
@@ -411,24 +501,139 @@ RETURNING d.id, d.endpoint_id, d.url, e.secret, d.event_id, d.event_name,
 // row can never be sent again, it keeps its place in the due index, and
 // [store.orphanCount] is what reports it — the delivery job says so on every
 // pass rather than leaving a row that is due forever and never picked up.
-func (s *store) claimDue(ctx context.Context, limit int32) ([]delivery, error) {
-	rows, err := s.pool.Query(ctx, claimSQL, limit, claimLease.Seconds())
+//
+// It also returns the claim's instant, by the database's clock: every row due
+// by then that the claim could take, it took, which is what the worker's next
+// wake is measured from ([store.nextWake]).
+func (s *store) claimDue(ctx context.Context, limit int32) ([]delivery, time.Time, error) {
+	return s.claimDueAt(ctx, limit, nil)
+}
+
+// claimDueAt is [store.claimDue] at a named instant: nil reads the claim's
+// instant from the database once the lock is held, and only a test names one,
+// to put a claim in a minute of its choosing.
+func (s *store) claimDueAt(
+	ctx context.Context, limit int32, at *time.Time,
+) ([]delivery, time.Time, error) {
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return nil, wrapDB(err, "the due webhook deliveries could not be claimed")
+		return nil, time.Time{}, wrapDB(err, "the due webhook deliveries could not be claimed")
 	}
-	defer rows.Close()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+
+	if _, err := tx.Exec(ctx, claimLockTimeoutSQL); err != nil {
+		return nil, time.Time{}, wrapDB(err, "the due webhook deliveries could not be claimed")
+	}
+	if _, err := tx.Exec(ctx, claimLockSQL, claimLockKey); err != nil {
+		return nil, time.Time{}, wrapDB(err, "the webhook claim lock could not be taken")
+	}
+	var instant time.Time
+	if at != nil {
+		instant = *at
+	} else if err := tx.QueryRow(ctx, claimInstantSQL).Scan(&instant); err != nil {
+		return nil, time.Time{}, wrapDB(err, "the webhook claim's instant could not be read")
+	}
+
+	rows, err := tx.Query(ctx, claimSQL, limit, claimLease.Seconds(), instant)
+	if err != nil {
+		return nil, time.Time{}, wrapDB(err, "the due webhook deliveries could not be claimed")
+	}
 
 	var out []delivery
 	for rows.Next() {
 		var d delivery
 		if err := rows.Scan(&d.ID, &d.EndpointID, &d.URL, &d.Secret, &d.EventID,
-			&d.EventName, &d.OccurredAt, &d.Payload, &d.Redacted, &d.Attempts); err != nil {
-			return nil, wrapDB(err, "a webhook delivery row could not be read")
+			&d.EventName, &d.OccurredAt, &d.Payload, &d.Redacted, &d.Attempts, &d.LeasedUntil); err != nil {
+			rows.Close()
+
+			return nil, time.Time{}, wrapDB(err, "a webhook delivery row could not be read")
 		}
 		out = append(out, d)
 	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, time.Time{}, wrapDB(err, "the webhook delivery rows could not be read")
+	}
 
-	return out, wrapDB(rows.Err(), "the webhook delivery rows could not be read")
+	if err := tx.Commit(ctx); err != nil {
+		return nil, time.Time{}, wrapDB(err, "the webhook claim could not be committed")
+	}
+
+	return out, instant, nil
+}
+
+// releaseSQL hands leased rows back, due at once, while each lease is still
+// the one its claim wrote.
+const releaseSQL = `
+UPDATE webhook_delivery d
+SET next_attempt_at = now()
+FROM unnest($1::text[], $2::timestamptz[]) AS r(id, leased_until)
+WHERE d.id = r.id
+  AND d.next_attempt_at = r.leased_until
+  AND d.delivered_at IS NULL
+  AND d.dead_lettered_at IS NULL`
+
+// release hands back the rows a pass claimed and did not attempt, so the next
+// claim sees them rather than the one after the lease (D274).
+//
+// It compares each lease with the one the claim wrote, so a row whose lease
+// elapsed and that another claim took since is left to that claim.
+func (s *store) release(ctx context.Context, rows []delivery) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	ids := make([]string, len(rows))
+	leases := make([]time.Time, len(rows))
+	for i := range rows {
+		ids[i], leases[i] = rows[i].ID, rows[i].LeasedUntil
+	}
+
+	if _, err := s.pool.Exec(ctx, releaseSQL, ids, leases); err != nil {
+		return wrapDB(err, "the unattempted webhook deliveries could not be released")
+	}
+
+	return nil
+}
+
+// nextWakeSQL is the instant the next pending delivery falls due after the
+// worker's last claim, and the database's own now beside it.
+//
+// It reads only rows due AFTER that claim's instant ($1). A row due by then
+// that the claim did not take is over its receiver's cap or held by another
+// process, and a worker that woke for it would wake again at once. A row that
+// fell due after the claim — while the pass was sending — is read, and if it
+// is due already the wait is not positive and the worker claims again at once
+// (ADR 0436, D273). A receiver's next minute comes to the minute job, or to a
+// worker within [every].
+const nextWakeSQL = `
+SELECT min(d.next_attempt_at), now()
+FROM webhook_delivery d
+WHERE d.delivered_at IS NULL
+  AND d.dead_lettered_at IS NULL
+  AND d.next_attempt_at > $1
+  AND EXISTS (SELECT 1 FROM webhook_endpoint e WHERE e.id = d.endpoint_id)`
+
+// nextWake reports how long until the first pending delivery due after the
+// instant claimed falls due, and false when there is none. The wait is zero or
+// less when that delivery is due already.
+//
+// The wait is the difference of two instants read from the DATABASE's clock in
+// one statement, so a server whose clock runs ahead of the database's cannot
+// wake before the row is due there.
+func (s *store) nextWake(ctx context.Context, claimed time.Time) (time.Duration, bool, error) {
+	var (
+		earliest *time.Time
+		now      time.Time
+	)
+	if err := s.pool.QueryRow(ctx, nextWakeSQL, claimed).Scan(&earliest, &now); err != nil {
+		return 0, false, wrapDB(err, "the next due webhook delivery could not be read")
+	}
+	if earliest == nil {
+		return 0, false, nil
+	}
+
+	return earliest.Sub(now), true, nil
 }
 
 // orphanCount reports how many due deliveries name an endpoint that is gone.

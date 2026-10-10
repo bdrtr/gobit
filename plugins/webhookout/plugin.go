@@ -23,9 +23,9 @@
 //
 // So this is the plugins/searchpg and plugins/webpush shape: a plugin that
 // brings a module, two tables, a migration, an admin surface, a subscription
-// per forwarded topic and one scheduled job, and that is named nowhere except
-// one line in the composition root's catalog. It is removable with
-// `rm -rf plugins/webhookout` plus that line.
+// per forwarded topic, one scheduled job and one worker, and that is named
+// nowhere except one line in the composition root's catalog. It is removable
+// with `rm -rf plugins/webhookout` plus that line.
 //
 // # The four moving parts
 //
@@ -34,14 +34,26 @@
 //  2. An event on the bus enqueues one delivery row per receiver that asked for
 //     that topic. That is all the subscriber does — see [webhookModule.onEvent]
 //     for why it does not send.
-//  3. A scheduled pass claims what is due and POSTs it, signed. The scheme a
-//     receiver verifies with, and the envelope it decodes, are published as
-//     core/webhook (ADR 0435); what each topic carries is described under
-//     "webhooks" in /openapi.json.
+//  3. The process that queued a delivery attempts it, signed, by the first
+//     claim of the worker every serving process runs, and a failed one by the
+//     first claim after its step of the ladder ends: at once when the worker
+//     is idle, or when its pass in flight ends. Receivers take turns in a
+//     claim. A scheduled pass a minute sends what no worker took (ADR 0436). The scheme a receiver verifies with, and the envelope it
+//     decodes, are published as core/webhook (ADR 0435); what each topic
+//     carries is described under "webhooks" in /openapi.json.
 //  4. A delivery that keeps failing is retried on a ladder for more than a day
 //     and then DEAD-LETTERED, which fails the job's run — the one channel that
 //     reaches `gobit jobs`. `GET /admin/v1/webhooks/deliveries?state=dead` is
 //     what a human reads, and redrive and discard are the two ways out.
+//
+// # Order
+//
+// Deliveries keep no order. Eight go out at once from each process, a failed
+// one arrives after later ones, and the bus that feeds the queue promises no
+// order either. A receiver reads the record the event names, or computes each
+// figure as a target, rather than trusting the sequence it is sent. Delivery
+// is at least once, and the delivery id, the same on every attempt, is the key
+// a receiver drops a repeat by.
 //
 // # The endpoint secrets are durable state on the order of the database
 //
@@ -89,7 +101,7 @@ func New() *Plugin { return &Plugin{} }
 // Name returns the plugin's name.
 func (p *Plugin) Name() string { return Name }
 
-// Setup adds the module, the subscriptions and the delivery job.
+// Setup adds the module, the subscriptions, the delivery job and the worker.
 //
 // # Every topic is subscribed to individually, by name
 //
@@ -105,12 +117,13 @@ func (p *Plugin) Name() string { return Name }
 // keeps producing. The one place the size IS stated names the path, so the
 // count gate audits it.
 //
-// # The job arrives WITH its consumer
+// # The senders arrive WITH their consumer
 //
-// [coreplugin.Host.RegisterJob] was built for a plugin that needed a periodic
-// pass; this is the second one to use it, and the pass is not optional
-// scaffolding. Without it a delivery row is written and never sent: the
-// subscriber only enqueues.
+// The subscriber only enqueues. The worker's first claim after a row is queued
+// or due sends it ([coreplugin.Host.RegisterWorker], ADR 0436), and the job's
+// pass is the backstop for what no worker took — a process whose worker died,
+// a capped receiver's next minute — and the one alarm `gobit jobs` shows for
+// the pile. Without the two of them a delivery row is written and never sent.
 func (p *Plugin) Setup(_ context.Context, h *coreplugin.Host) error {
 	p.mod = newModule(h.Logger().With("module", ModuleName))
 
@@ -139,6 +152,10 @@ func (p *Plugin) Setup(_ context.Context, h *coreplugin.Host) error {
 		Every:  every,
 		MaxRun: maxRun,
 		Run:    p.mod.deliverPass,
+	})
+	h.RegisterWorker(coreplugin.Worker{
+		Name: workerName,
+		Run:  p.mod.serve,
 	})
 
 	return nil

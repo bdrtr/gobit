@@ -212,3 +212,4 @@ truth: a report says what was true on the day it was taken.
 | [What a return gives back — measured 2026-10-09](0433-what-a-return-gives-back.md) | 105 |
 | [Who may write a password — measured 2026-10-09](0434-who-may-write-a-password.md) | 178 |
 | [What a receiver had to spell — measured 2026-10-10](0435-what-a-receiver-had-to-spell.md) | 393 |
+| [When a webhook goes out — measured 2026-10-10](0436-when-a-webhook-goes-out.md) | 421 |

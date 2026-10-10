@@ -309,6 +309,9 @@ var (
 	// groundJobs are the scheduled jobs the plugins registered. Nothing runs
 	// them on their own: a scenario that needs a pass runs it.
 	groundJobs []coreplugin.Job
+	// groundWorkers are the loops the plugins registered (ADR 0436). Nothing
+	// starts them on their own: a scenario that needs one runs it and stops it.
+	groundWorkers []coreplugin.Worker
 )
 
 // The identities the Phase 8 fixture produces; the tests only read them.
@@ -633,7 +636,7 @@ func setUpHarness(ctx context.Context, dsn string) (func(), error) {
 	}
 	installation = opened
 	ctr, testRouter, testModules = opened.Container, opened.Router, opened.Modules
-	testDoc, groundJobs = opened.Schema, opened.Jobs
+	testDoc, groundJobs, groundWorkers = opened.Schema, opened.Jobs, opened.Workers
 
 	if testPool, err = container.Resolve[*db.Pool](ctr, svcDB); err != nil {
 		return stop, err

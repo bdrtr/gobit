@@ -62,12 +62,15 @@ const narrowing = "\"filters\" names, per topic, payload fields and the values o
 	"each topic's \"data\" under this document's \"webhooks\"; a redacted field is none of " +
 	"them."
 
-// rate describes a receiver's cap (ADR 0275).
-const rate = "\"max_per_minute\" is how many deliveries a minute the receiver takes at most, " +
-	"from 1 to 10000; the delivery job runs once a minute, so a pass sends it at most that many " +
-	"of its due deliveries, oldest first, and the rest wait for the next pass with no attempt " +
-	"counted. Left out or zero at registration, and zero on a change, it takes whatever a pass " +
-	"can send."
+// rate describes a receiver's cap (ADR 0275, ADR 0436).
+const rate = "\"max_per_minute\" is how many of the receiver's due deliveries are taken for " +
+	"sending in a clock minute at most, from 1 to 10000, counted across every process that sends, " +
+	"oldest first; the rest wait for the next minute with no attempt counted. A delivery taken at " +
+	"the end of one minute can arrive in the next, so across a minute's boundary the receiver can " +
+	"be sent up to twice that many within sixty seconds. Left out or zero at registration, and " +
+	"zero on a change, it takes whatever the senders can send. Deliveries keep no order: a failed " +
+	"one arrives after later ones, so a receiver reads the record an event names rather than " +
+	"trusting the sequence."
 
 // describeReceivers records the registration surface.
 func (m *webhookModule) describeReceivers(d *openapi.Doc) {
@@ -206,7 +209,7 @@ func (m *webhookModule) describeDeliveries(d *openapi.Doc) {
 				"\n\n" +
 				"A delivery that is still being RETRIED cannot be acted on here: the pile is " +
 				"what has been given up on, and reaching into the retry ladder would race " +
-				"the job that owns it." +
+				"the senders that own it." +
 				"\n\n" +
 				"\"remaining\" is what is left of the pile afterwards, and " +
 				"\"job_alarm_clears\" says whether this action was the one that silenced the " +
@@ -304,8 +307,9 @@ func deliveryHeaders(topic string) []openapi.Parameter {
 
 	return []openapi.Parameter{
 		event,
-		header(webhook.HeaderDelivery, "The delivery id, the same on every attempt: deduplicate "+
-			"on it. The body's \"id\" is the same."),
+		header(webhook.HeaderDelivery, "The delivery id, the same on every attempt. Delivery is at "+
+			"least once — an attempt whose answer was lost, or that a stopping process could not "+
+			"record, is sent again — so deduplicate on it. The body's \"id\" is the same."),
 		header(webhook.HeaderAttempt, "The attempt number as decimal text, 1 on the first try."),
 		header(webhook.HeaderTimestamp, "The unix seconds of this attempt as decimal text."),
 		header(webhook.HeaderSignature, "\""+webhook.SignatureVersion+"=\" and the MAC; the "+

@@ -36,22 +36,25 @@ import "time"
 // # No jitter, for the outbox's reason, checked against this case
 //
 // Jitter earns its place when many independent clients would retry in step.
-// This is one scheduled job, elected by an advisory lock, so exactly one process
-// retries; a pass spreads its own rows across the batch by making the requests.
+// Here every serving process's worker retries (ADR 0436), but they claim one
+// at a time under one lock, so a row is leased once however many wake for it,
+// and a pass spreads its own rows across the batch by making the requests.
 // What is NEW here and was worth checking is that many deliveries can share one
 // receiver: an outage that fails a thousand deliveries at once makes them all
-// due at the same minute afterwards. That is bounded by the per-pass limit
-// rather than by jitter — a pass takes [deliveryLimit] rows and no more — and
-// bounding it by the limit is better, because it is a bound the operator can
-// see in the job's report rather than a random spread they cannot.
+// due at the same instant afterwards. That is bounded by the claim's limit and
+// the process's [concurrency] rather than by jitter — a claim takes
+// [deliveryLimit] rows and no more, and a receiver that wants fewer sets
+// max_per_minute — and a bound is better than a random spread, because an
+// operator can see it and set it.
 const (
 	// firstDelay is how long the first failure waits.
 	//
-	// One minute, and it is the same value as the outbox's for the same
-	// reason: the job runs once a minute, so any shorter delay would be
-	// rounded up to the next pass anyway, and a policy whose smallest step the
-	// scheduler cannot express documents a schedule the installation does not
-	// follow.
+	// One minute, the outbox's value: long enough for a receiver that is
+	// restarting to come back. The step is the wait: the worker retries the
+	// moment it ends, measured from the failure, or when the worker's pass in
+	// flight then ends (ADR 0436). Until then the minute job was the only
+	// sender, and a step ended between two of its passes, so each one took a
+	// pass longer than written here (D273).
 	firstDelay = time.Minute
 
 	// maxDelay caps the doubling.

@@ -325,14 +325,15 @@ func serve(opts Options) error {
 
 	warnIfShutdownIsShorterThanTheSaga(ctx, cfg, log)
 
-	// The job runner is started HERE and not in openApplication: the migrate,
-	// stuck and recover subcommands build the same application and must not
-	// begin running scheduled work as a side effect of an operator reading
-	// something.
+	// The job runner and the plugins' workers (ADR 0436) are started HERE and
+	// not in openApplication: the migrate, stuck and recover subcommands build
+	// the same application and must not begin running scheduled work, or
+	// sending anything, as a side effect of an operator reading something.
 	//
 	// Stop() is deferred rather than left to the context, because the runner
-	// waits for the pass it is in the middle of. Without it a shutdown could
-	// close the pool underneath a job that is still writing.
+	// waits for the pass it is in the middle of and the workers for their
+	// attempts. Without it a shutdown could close the pool underneath a job or
+	// a worker that is still writing.
 	jobs, stopJobs, err := startJobs(ctx, c, host, cfg, log)
 	if err != nil {
 		return err
@@ -387,8 +388,9 @@ func serve(opts Options) error {
 // one nobody deploys.
 //
 // What it deliberately does NOT do is anything with a PORT or a CLOCK: no
-// operator listener, no scheduled job, no HTTP server. Those are serve's, and a
-// test that started them would be running a relay under its own assertions.
+// operator listener, no scheduled job, no plugin worker, no HTTP server. Those
+// are serve's, and a test that started them would be running a relay under its
+// own assertions.
 func assemble(
 	ctx context.Context,
 	cfg config.Config,

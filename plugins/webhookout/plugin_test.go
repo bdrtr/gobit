@@ -157,3 +157,20 @@ func TestThePluginRegistersItsDeliveryJob(t *testing.T) {
 		"a run that can outlast its own interval is due again before it finished and "+
 			"can never catch up; the scheduler refuses it at boot")
 }
+
+// TestThePluginRegistersItsSender is the assertion that the worker exists
+// (ADR 0436): without it a delivery waits for the minute job, up to a minute
+// for its first attempt and a pass past every step of the ladder.
+func TestThePluginRegistersItsSender(t *testing.T) {
+	t.Parallel()
+
+	_, host, _, err := setUp(t)
+	require.NoError(t, err)
+
+	workers := host.Workers()
+	require.Len(t, workers, 1, "the plugin registers exactly one worker")
+	assert.Equal(t, webhookout.Name, workers[0].PluginName())
+	assert.True(t, strings.HasPrefix(workers[0].Name, webhookout.ModuleName),
+		"the worker's name has to carry this plugin's own prefix, got %q", workers[0].Name)
+	assert.NotNil(t, workers[0].Run, "a worker with no loop is refused at boot")
+}

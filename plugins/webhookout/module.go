@@ -246,13 +246,14 @@ const (
 	// with the core's jobs and with every other plugin's.
 	jobName = "webhookout-deliver"
 
-	// every is how often the delivery pass runs.
+	// every is how often the delivery job's pass runs, and the longest the
+	// worker sleeps (ADR 0436).
 	//
-	// A minute, the same as the outbox relay's, and for the same reason: what
-	// waits here is a message somebody is expecting. It is not shorter because
-	// a minute is already the floor under the retry ladder — the first backoff
-	// step is one minute precisely so that the schedule the ladder documents is
-	// the schedule the scheduler can express.
+	// The worker is what sends a delivery when its row is queued or its step
+	// of the ladder ends; the job's pass is the backstop behind it and the
+	// alarm. A minute is the scheduler's tick, and it is the shortest step of
+	// the ladder, [firstDelay], so a worker that looks at least this often
+	// cannot sleep past a step.
 	every = time.Minute
 
 	// maxRun bounds one pass.
@@ -269,19 +270,21 @@ const (
 	// it would have to exceed the interval.
 	maxRun = 45 * time.Second
 
-	// deliveryLimit caps one pass.
+	// deliveryLimit caps one claim.
 	//
-	// A cap that is hit is REPORTED as hit: a backlog of ten thousand
-	// deliveries is a different fact from a quiet minute, and the next pass is
-	// a minute away, so nothing is stranded by it.
+	// A cap that is hit is REPORTED as hit by the job: a backlog of ten
+	// thousand deliveries is a different fact from a quiet minute. Nothing is
+	// stranded by it: a worker whose claim came back full claims again at
+	// once.
 	deliveryLimit = 100
 
-	// claimLease is how long a claimed delivery is invisible to another pass.
+	// claimLease is how long a claimed delivery is invisible to another claim.
 	//
-	// Longer than [maxRun], so a pass cannot outlive its own claim and start
-	// re-sending rows it is still working on. Not much longer, because the
-	// lease is also the delay a crashed pass costs: rows a dead process claimed
-	// wait this out before anyone tries them again.
+	// Longer than [maxRun], the budget of either pass, the worker's or the
+	// job's, so a pass cannot outlive its own claim and see another process
+	// re-send rows it is still working on. Not much longer, because the lease
+	// is also the delay a crashed process costs: rows it claimed wait this out,
+	// and a worker's first claim after it ends takes them.
 	claimLease = 90 * time.Second
 
 	// deadLetterSample is how many dead letters the job's report carries.
@@ -328,6 +331,18 @@ type webhookModule struct {
 	log    *slog.Logger
 	store  *store
 	sender *sender
+
+	// queue and post are what the two passes deliver through: the store and
+	// the sender, or a unit test's fakes.
+	queue deliveryQueue
+	post  poster
+
+	// wake is the worker's doorbell (ADR 0436): one pending wake at most, so
+	// the ringing never blocks.
+	wake chan struct{}
+	// slots is the process's [concurrency], shared by the worker's pass and
+	// the job's.
+	slots chan struct{}
 }
 
 // The core's module contract is satisfied at compile time.
@@ -339,7 +354,21 @@ func newModule(log *slog.Logger) *webhookModule {
 		log = slog.New(slog.DiscardHandler)
 	}
 
-	return &webhookModule{log: log, sender: newSender()}
+	sender := newSender()
+
+	return &webhookModule{
+		log:    log,
+		sender: sender,
+		post:   sender,
+		wake:   make(chan struct{}, 1),
+		slots:  make(chan struct{}, concurrency),
+	}
+}
+
+// useStore wires the store the module reads and writes through.
+func (m *webhookModule) useStore(st *store) {
+	m.store = st
+	m.queue = st
 }
 
 // Name returns the module's unique name.
@@ -365,7 +394,7 @@ func (m *webhookModule) Register(ctx context.Context, c *container.Container) er
 			"the %s module could not resolve the database pool (%q)", ModuleName, dbServiceName)
 	}
 
-	m.store = newStore(pool.Pool())
+	m.useStore(newStore(pool.Pool()))
 	m.reportRegistry(ctx)
 
 	return nil
@@ -444,7 +473,8 @@ func (m *webhookModule) Routes(r chi.Router) {
 // the same stream.
 //
 // Writing a row instead moves the event onto storage that survives the process,
-// and the job is what turns rows into requests.
+// and the worker it wakes once the row is written turns it into a request,
+// with the minute job behind it (ADR 0436).
 //
 // # What is still lost, said plainly
 //
@@ -467,7 +497,7 @@ func (m *webhookModule) Routes(r chi.Router) {
 // which is why the refusal stands; the number is corrected here because a record whose stated
 // reason has quietly halved in force is the kind that gets rebuilt on.
 func (m *webhookModule) onEvent(ctx context.Context, e eventbus.Event) error {
-	if m.store == nil {
+	if m.queue == nil {
 		// The subscription is installed by the core and does not go through
 		// Routes, so a handler can be reached even when Register did not run. A
 		// typed log line beats a nil dereference in a goroutine.
@@ -484,7 +514,7 @@ func (m *webhookModule) onEvent(ctx context.Context, e eventbus.Event) error {
 		occurred = time.Now().UTC()
 	}
 
-	written, err := m.store.enqueue(ctx, e.ID, e.Name, occurred, payload, redacted)
+	written, err := m.queue.enqueue(ctx, e.ID, e.Name, occurred, payload, redacted)
 	if err != nil {
 		// The error is RETURNED as well as logged. The bus does not retry, so
 		// this is not a request for one; it is what makes the failure appear in
@@ -497,6 +527,9 @@ func (m *webhookModule) onEvent(ctx context.Context, e eventbus.Event) error {
 	if written > 0 {
 		m.log.InfoContext(ctx, "webhook deliveries were enqueued",
 			"event", e.Name, "event_id", e.ID, "deliveries", written)
+		// After the write, which committed on its own: the claim the wake
+		// causes sees the rows.
+		m.kick()
 	}
 
 	return nil
@@ -532,8 +565,9 @@ func redact(data map[string]any) (payload map[string]any, removed []string) {
 // A separate "dead letter watch" job would run on its own schedule, take its
 // own lock and produce its own history row, and an operator would then have to
 // correlate two listings to learn that the sender is fine and the deliveries
-// are not. This pass is the only thing that creates dead letters; it is the
-// right thing to report them.
+// are not. The worker gives up on deliveries too (ADR 0436) and logs each
+// moment, but it has no listing line; this pass is the one thing that REPORTS
+// the pile, on every run.
 //
 // # A non-empty pile FAILS the run, and that is the alarm
 //
@@ -556,16 +590,28 @@ func redact(data map[string]any) (payload map[string]any, removed []string) {
 // — `POST /admin/v1/webhooks/deliveries/{id}/discard`, and deleting the
 // receiver stops new ones being enqueued.
 func (m *webhookModule) deliverPass(ctx context.Context) error {
-	claimed, err := m.store.claimDue(ctx, deliveryLimit)
+	claimed, _, err := m.queue.claimDue(ctx, deliveryLimit)
 	if err != nil {
 		return coreerrors.Wrap(err, coreerrors.KindOf(err), codeDeliveryRunFailed,
 			"the due webhook deliveries could not be claimed")
 	}
 
-	result := deliverAll(ctx, m.sender, m.store, m.log, claimed)
+	// The attempts keep the run's deadline and not its cancellation: the
+	// runner cancels the run at shutdown, and an attempt cut off then would be
+	// a POST the receiver may have taken, recorded as nothing and sent again
+	// after the restart. The runner's Stop waits for the pass, so the attempts
+	// in flight finish, at most [perAttemptTimeout] later.
+	sendCtx, cancel := context.WithoutCancel(ctx), func() {}
+	if deadline, bounded := ctx.Deadline(); bounded {
+		sendCtx, cancel = context.WithDeadline(sendCtx, deadline)
+	}
+	defer cancel()
+
+	result, left := deliverAll(sendCtx, ctx.Done(), m.slots, m.post, m.queue, m.log, claimed)
+	m.release(ctx, left)
 	m.reportPass(ctx, result)
 
-	orphans, err := m.store.orphanCount(ctx)
+	orphans, err := m.queue.orphanCount(ctx)
 	if err != nil {
 		return coreerrors.Wrap(err, coreerrors.KindOf(err), codeDeliveryRunFailed,
 			"the orphaned webhook deliveries could not be counted")
@@ -574,7 +620,7 @@ func (m *webhookModule) deliverPass(ctx context.Context) error {
 	// Asked for on EVERY pass, including the ones that delivered nothing. A
 	// pile that is only counted when something happens is one that goes
 	// unnoticed during the quiet hour after the outage that filled it.
-	dead, err := m.store.deadLetters(ctx, deadLetterSample)
+	dead, err := m.queue.deadLetters(ctx, deadLetterSample)
 	if err != nil {
 		return coreerrors.Wrap(err, coreerrors.KindOf(err), codeDeliveryRunFailed,
 			"the webhook dead letters could not be read; the pass cannot say whether "+
@@ -606,16 +652,7 @@ func (m *webhookModule) reportPass(ctx context.Context, result passResult) {
 		return
 	}
 
-	if len(result.DeadLettered) > 0 {
-		// The moment of death, with the ids, logged once. The rows keep the
-		// last error and the attempt count, but nothing else records WHICH pass
-		// gave up on them, and an operator reconstructing an incident reads the
-		// log forwards.
-		m.log.ErrorContext(ctx, "webhook deliveries were given up on",
-			"delivery_ids", strings.Join(result.DeadLettered, ","),
-			"attempts", maxAttempts,
-			"window", deliveryWindow().String())
-	}
+	m.logDeadLetters(ctx, result)
 
 	m.log.InfoContext(ctx, "a webhook delivery pass finished",
 		"claimed", result.Claimed,
@@ -626,9 +663,24 @@ func (m *webhookModule) reportPass(ctx context.Context, result passResult) {
 
 	if result.Claimed == deliveryLimit {
 		m.log.WarnContext(ctx, "the webhook delivery pass hit its per-pass limit; "+
-			"there is a backlog and the next pass is a minute away",
+			"there is a backlog, which the workers keep claiming",
 			"limit", deliveryLimit)
 	}
+}
+
+// logDeadLetters logs the moment a pass, the worker's or the job's, gave up on
+// deliveries, with their ids, once. The rows keep the last error and the
+// attempt count, but nothing else records WHICH pass gave up on them, and an
+// operator reconstructing an incident reads the log forwards.
+func (m *webhookModule) logDeadLetters(ctx context.Context, result passResult) {
+	if len(result.DeadLettered) == 0 {
+		return
+	}
+
+	m.log.ErrorContext(ctx, "webhook deliveries were given up on",
+		"delivery_ids", strings.Join(result.DeadLettered, ","),
+		"attempts", maxAttempts,
+		"window", deliveryWindow().String())
 }
 
 // summarize renders one pass as the single line `gobit jobs` prints.
@@ -637,10 +689,11 @@ func (m *webhookModule) reportPass(ctx context.Context, result passResult) {
 // this is one cell of a tabwriter table. What it carries beyond the counts is
 // the one state the counts cannot express — a FILLED batch, which is the
 // difference between "the sender is working" and "the sender is working and
-// losing ground". [delayAfter]'s ladder needs no jitter because
-// [deliveryLimit] bounds the herd instead, and it calls that "a bound the
-// operator can see in the job's report" — which until ADR 0069 published the
-// reporting channel meant a log line, not the listing an operator opens first.
+// losing ground". [delayAfter]'s ladder needs no jitter because the claim
+// lock and [deliveryLimit] bound the herd instead, and a filled batch is the
+// bound an operator can see in the job's report — which until ADR 0069
+// published the reporting channel meant a log line, not the listing an
+// operator opens first.
 func summarize(result passResult) string {
 	if result.Claimed == 0 {
 		// Said rather than left blank. A blank cell is what a job that has
@@ -653,9 +706,9 @@ func summarize(result passResult) string {
 		result.Claimed, result.Delivered, result.Failed)
 
 	if result.Skipped > 0 {
-		// Leased, not lost — they come back when the lease elapses. It is here
-		// because a pass that attempted half its batch and one that attempted
-		// all of it produce the same two counts above.
+		// Released at the end of the pass, so the next claim takes them
+		// (D274). It is here because a pass that attempted half its batch and
+		// one that attempted all of it produce the same two counts above.
 		line += fmt.Sprintf(", %d left for the next pass", result.Skipped)
 	}
 

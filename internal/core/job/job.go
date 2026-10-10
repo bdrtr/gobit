@@ -72,6 +72,7 @@ import (
 //	6            the customer module's segment count lock
 //	7            the product module's attribute count lock
 //	8            the fulfillment module's per-order dispatch lock (ADR 0409)
+//	9            plugins/webhookout's delivery claim lock (ADR 0436)
 //
 // Class 0 is the one that matters. golang-migrate waits on its lock with
 // pg_advisory_lock on context.Background(), so the wait is unbounded AND

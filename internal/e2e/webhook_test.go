@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	coreplugin "github.com/bdrtr/gobit/core/plugin"
 	"github.com/bdrtr/gobit/plugins/webhookout"
 )
 
@@ -52,6 +53,11 @@ import (
 // the same value the composition root drains — and its Run is called directly.
 // That is the production body, reached through the production registration; the
 // only thing skipped is the clock.
+//
+// The worker that attempts a delivery by its first claim after it is queued
+// (ADR 0436) is not running either, for the same reason the scheduler is not;
+// the one scenario that is about it starts it from the plugin host and stops it
+// before it ends.
 
 // webhookReceiver is a test server standing in for a customer's endpoint.
 type webhookReceiver struct {
@@ -266,6 +272,51 @@ func TestARealOrderReachesARealWebhookReceiver(t *testing.T) {
 	assert.Contains(t, redacted, "customer_id",
 		"the withholding has to be visible; a receiver that simply sees no customer_id "+
 			"cannot tell a guest order from a withheld field")
+}
+
+// TestARealOrderReachesAReceiverWithoutThePass is ADR 0436 end to end: with
+// the plugin's worker running and its minute job never called, a real order's
+// delivery reaches the receiver within seconds, where it used to wait for the
+// next tick of a scheduler that ticks once a minute.
+func TestARealOrderReachesAReceiverWithoutThePass(t *testing.T) {
+	ctx := t.Context()
+
+	var worker *coreplugin.Worker
+	for i := range groundWorkers {
+		if groundWorkers[i].PluginName() == webhookout.Name {
+			worker = &groundWorkers[i]
+		}
+	}
+	require.NotNil(t, worker, "the %s plugin registered no worker; a delivery waits for the minute job", webhookout.Name)
+
+	receiver := newWebhookReceiver(t)
+	_, secret := registerWebhook(t, receiver.server.URL, "order.placed")
+	receiver.withSecret(secret)
+
+	// Started after the registration, so its first pass has nothing of this
+	// receiver's to send and the delivery below is the wake's.
+	workerCtx, stopWorker := context.WithCancel(context.WithoutCancel(ctx))
+	stopped := make(chan error, 1)
+	go func() { stopped <- worker.Run(workerCtx) }()
+	t.Cleanup(func() {
+		stopWorker()
+		assert.NoError(t, <-stopped)
+	})
+
+	orderID, _, _ := notificationOrder(ctx, t, "E2E Webhook Worker Product")
+
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.NotEmpty(c, receiver.deliveries())
+	}, 5*time.Second, 50*time.Millisecond,
+		"no delivery arrived for order %s within five seconds of it being placed, with the worker "+
+			"running and the minute job not called", orderID)
+
+	got := receiver.deliveries()
+	require.Len(t, got, 1)
+	assert.True(t, got[0].verified)
+	data, ok := got[0].body["data"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, orderID, data["order_id"])
 }
 
 // TestTheServedWebhooksAreWhatIsSent compares the promise with the wire on the

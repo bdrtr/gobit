@@ -43,6 +43,35 @@ design. It is fixed with `1.0.0`.
   plugin authors:**
   `openapi.Doc.DescribeWebhook` records a request a module sends, its body in
   the form gobit writes it.
+- **A plugin can run a loop while the server serves** (ADR 0436). **For
+  plugin authors:** `core/plugin.Worker`, `Host.RegisterWorker`,
+  `Host.Workers` and `Worker.PluginName`. A worker is started beside the
+  scheduled jobs by the server alone, cancelled first on shutdown and waited
+  for up to `SHUTDOWN_TIMEOUT`; one with no name, no `Run` or a name another
+  worker took stops startup.
+
+### Changed
+
+- **A webhook goes out when it is due** (ADR 0436, D273, D274, D275). **For
+  operators and integrators:** `webhook-out` attempts a delivery by the first
+  claim after it is queued or redriven, and a retry by the first after its
+  step of the ladder ends: at once when the process's worker is idle, or when
+  its pass in flight ends, at most forty-five seconds later. A delivery waited
+  up to a minute for the delivery job, and each step took a pass longer than
+  documented. Receivers take turns in each claim, so one receiver whose
+  requests hang no longer holds the others' deliveries back for minutes. `max_per_minute` counts how many of a receiver's deliveries
+  every process together takes for sending in a clock minute, so across a
+  minute's boundary a receiver can be sent up to twice its cap within sixty
+  seconds; each process has at most eight requests in flight, so an
+  installation of N processes can have 8N. An attempt in flight at shutdown
+  finishes, the delivery job's as well as the worker's, and an answer that
+  arrives at the end of a pass's budget is still recorded; rows a pass did
+  not attempt are released at once rather than at the end of their lease.
+  The `webhookout-deliver` job stays, sends what no worker took and keeps the
+  dead-letter alarm, and its listing line mostly reads "nothing due".
+  Deliveries keep no order and arrive at least once; the delivery id is the
+  key a receiver drops a repeat by. Migration 000004 of the plugin adds two
+  columns and an index.
 
 ### Deprecated
 

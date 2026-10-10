@@ -47,8 +47,9 @@ type createRequest struct {
 	Filters topicFilters `json:"filters"`
 	// Fields are, per topic, the payload fields the receiver is sent.
 	Fields topicFields `json:"fields"`
-	// MaxPerMinute is how many deliveries a minute the receiver takes at most;
-	// left out or zero, it takes whatever a pass can send (ADR 0275).
+	// MaxPerMinute is how many of the receiver's deliveries are taken for
+	// sending in a clock minute at most; left out or zero, it takes whatever
+	// the senders can send (ADR 0275, ADR 0436).
 	MaxPerMinute int64 `json:"max_per_minute"`
 }
 
@@ -63,16 +64,17 @@ type updateRequest struct {
 	MaxPerMinute *int64        `json:"max_per_minute"`
 }
 
-// maxRate bounds a receiver's cap: a pass sends at most [deliveryLimit]
-// deliveries in all, and a cap far above it is a typo rather than a rate.
+// maxRate bounds a receiver's cap. It is a guard against a typo, not a figure
+// a sender reaches: ten thousand a minute is a cap no receiver that needs one
+// asks for.
 const maxRate = 10_000
 
 // validateRate refuses a cap that is no rate (ADR 0275).
 func validateRate(maxPerMinute int64) error {
 	if maxPerMinute < 0 || maxPerMinute > maxRate {
 		return coreerrors.Invalid(codeInvalidRequest,
-			"max_per_minute is how many deliveries a minute the receiver takes, from 1 to %d, "+
-				"or 0 for no cap: %d", maxRate, maxPerMinute)
+			"max_per_minute is how many of the receiver's deliveries are taken for sending in a "+
+				"clock minute, from 1 to %d, or 0 for no cap: %d", maxRate, maxPerMinute)
 	}
 
 	return nil
@@ -502,7 +504,18 @@ func (m *webhookModule) handleDeliveries(w http.ResponseWriter, r *http.Request)
 // a single primary-key update — so the refusal costs nothing and buys the
 // reading of the row that a one-keystroke "redrive all" would skip.
 func (m *webhookModule) handleRedrive(w http.ResponseWriter, r *http.Request) {
-	m.act(w, r, "redriven", m.store.redrive)
+	m.act(w, r, "redriven", m.redrive)
+}
+
+// redrive puts a dead delivery back and wakes the worker, so the delivery goes
+// out once the write has committed rather than at the next pass (ADR 0436).
+func (m *webhookModule) redrive(ctx context.Context, id string) (bool, error) {
+	acted, err := m.store.redrive(ctx, id)
+	if acted {
+		m.kick()
+	}
+
+	return acted, err
 }
 
 // handleDiscard removes one dead delivery for good.

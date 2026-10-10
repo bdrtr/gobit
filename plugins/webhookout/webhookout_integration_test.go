@@ -136,7 +136,7 @@ func freshModule(t *testing.T) *webhookModule {
 	m := newModule(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelError,
 	})))
-	m.store = newStore(testPool.Pool())
+	m.useStore(newStore(testPool.Pool()))
 
 	return m
 }
@@ -952,6 +952,12 @@ func TestAReceiverIsSentNoMoreThanItsRate(t *testing.T) {
 	assert.Equal(t, 3, waiting, "the rest wait for the next pass")
 	assert.Zero(t, attempted, "waiting is not an attempt")
 
+	// The next pass is a minute later. The cap counts per clock minute
+	// (ADR 0436), so the count is moved back a minute rather than waited out;
+	// the same minute's second claim is TestACappedReceiverGetsItsCapPerClockMinuteWhoeverClaims.
+	_, err = testPool.Pool().Exec(t.Context(),
+		`UPDATE webhook_endpoint SET rate_window = rate_window - interval '1 minute' WHERE id = $1`, cappedEndpoint.ID)
+	require.NoError(t, err)
 	require.NoError(t, runPass(t, m))
 	require.Len(t, capped.seen(), 4, "the next pass sends the next two")
 	assert.ElementsMatch(t, []string{"ord_rate_2", "ord_rate_3"}, orders(capped.seen()[2:]))

@@ -1101,6 +1101,37 @@ func TestTwoPluginsEachBringingAJobKeepTheirOwnNames(t *testing.T) {
 	assert.Equal(t, "second", jobs[1].PluginName())
 }
 
+// TestAWorkerIsCollectedAtSetupWithItsPlugin proves a worker is complete when
+// Setup has run, carries the plugin's name, survives a nil Run to the place
+// that refuses it, and is handed out as a copy (ADR 0436).
+func TestAWorkerIsCollectedAtSetupWithItsPlugin(t *testing.T) {
+	t.Parallel()
+
+	_, reg, h := newHost(t, nil)
+
+	reg.Add(testPlugin{name: "webhook-out", setup: func(_ context.Context, h *coreplugin.Host) error {
+		h.RegisterWorker(coreplugin.Worker{Name: "webhookout-send", Run: func(context.Context) error { return nil }})
+		h.RegisterWorker(coreplugin.Worker{Name: "webhookout-broken"})
+
+		return nil
+	}})
+	require.NoError(t, reg.Install(t.Context(), h))
+
+	workers := h.Workers()
+	require.Len(t, workers, 2, "both workers must be there before Start, the incomplete one included")
+	assert.Equal(t, "webhookout-send", workers[0].Name)
+	assert.NotNil(t, workers[0].Run)
+	assert.Equal(t, "webhook-out", workers[0].PluginName(),
+		"the startup error that refuses a bad worker has to be able to name the plugin")
+	assert.Nil(t, workers[1].Run, "a worker with no Run must reach the composition root, which refuses it")
+
+	workers[0].Name = "rewritten"
+	_ = append(workers, coreplugin.Worker{Name: "smuggled"})
+	again := h.Workers()
+	require.Len(t, again, 2)
+	assert.Equal(t, "webhookout-send", again[0].Name, "the host handed out its own slice")
+}
+
 // TestAPluginCannotBindInsideTheAdminPanel is ADR 0157's refusal.
 //
 // # Why a refusal and not a policy fix alone

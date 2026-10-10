@@ -2,7 +2,8 @@
 // core.
 //
 // A plugin can register a module, routes, event subscribers, scheduled jobs
-// ([Host.RegisterJob]) and providers (payment, fulfillment, notification,
+// ([Host.RegisterJob]), loops the server runs while it serves
+// ([Host.RegisterWorker]) and providers (payment, fulfillment, notification,
 // file). While doing so it imports NO
 // commerce module: it reaches the registration points from the container BY
 // NAME and takes the contracts from the core's
@@ -281,6 +282,53 @@ type Job struct {
 // It is empty for a Job that never went through [Host.RegisterJob].
 func (j Job) PluginName() string { return j.plugin }
 
+// Worker is a loop a plugin runs for as long as the server serves (ADR 0436).
+//
+// # Why it is not a job
+//
+// A [Job] runs on the scheduler's clock: an occurrence a minute at the
+// finest, elected across the installation by an advisory lock, one run at a
+// time. Work that has to happen the moment something is written — a webhook
+// delivery queued a millisecond ago — waits for the next tick under that
+// clock, and no interval fixes it, because the scheduler ticks once a minute
+// for every job. A worker is the other shape: every serving process runs one,
+// and what keeps two processes from doing the same work is the plugin's own
+// claim, not an election.
+//
+// # When it runs
+//
+// Only while the server serves: it is started beside the scheduled jobs and
+// nowhere else. The migrate, jobs, stuck and recover subcommands, the MCP
+// surface and an installation opened in-process start none, for the reason
+// they start no job — reading or testing an installation must not begin
+// sending things as a side effect.
+//
+// It is the same in every other way the copy of [Job] is: it is COLLECTED at
+// Setup, and an empty name, a name another worker already took or a nil Run
+// stops the server at startup, naming the plugin.
+type Worker struct {
+	// Name identifies the worker in the startup and shutdown log lines. It
+	// shares one namespace with every other plugin's workers; prefix it with
+	// the plugin's own name.
+	Name string
+
+	// Run is the loop. It is called once, in its own goroutine, and it MUST
+	// return once ctx is done: the server cancels ctx when it is asked to stop
+	// and waits for Run to return, for at most SHUTDOWN_TIMEOUT, before it
+	// closes the database pool underneath it. A Run that returns early is
+	// logged as an error and not started again.
+	Run func(ctx context.Context) error
+
+	// plugin is the name of the plugin that registered the worker, captured by
+	// [Host.RegisterWorker], for [Job.PluginName]'s reason.
+	plugin string
+}
+
+// PluginName reports the plugin that registered the worker.
+//
+// It is empty for a Worker that never went through [Host.RegisterWorker].
+func (w Worker) PluginName() string { return w.plugin }
+
 // queuedTask represents a registration to be applied during the Start phase.
 type queuedTask struct {
 	// description says which task failed, in the error message.
@@ -312,6 +360,8 @@ type Host struct {
 	routes []routeRegistration
 	// jobs are the scheduled jobs the plugins declared.
 	jobs []Job
+	// workers are the loops the plugins declared (ADR 0436).
+	workers []Worker
 	// adminPages are the panel screens the plugins declared.
 	adminPages []AdminPage
 	// queue holds the tasks to be applied at Start.
@@ -438,6 +488,26 @@ func (h *Host) RegisterJob(j Job) {
 // the returned slice would either mutate the host's own or not, depending on
 // capacity — the least debuggable of all possible outcomes.
 func (h *Host) Jobs() []Job { return slices.Clone(h.jobs) }
+
+// RegisterWorker declares a loop the plugin runs while the server serves
+// (ADR 0436).
+//
+// It follows [Host.RegisterJob] in both of its decisions: it is collected
+// during Setup rather than queued, and it validates nothing, so an incomplete
+// worker reaches the composition root and is refused there, at startup, with
+// the plugin's name, rather than dropped here into an installation that
+// believes it is sending.
+func (h *Host) RegisterWorker(w Worker) {
+	w.plugin = h.active
+
+	h.workers = append(h.workers, w)
+}
+
+// Workers returns the workers the plugins declared, in registration order.
+//
+// It is the composition root's read; the slice is a copy, for [Host.Jobs]'s
+// reason.
+func (h *Host) Workers() []Worker { return slices.Clone(h.workers) }
 
 // AdminPage is a screen a plugin puts in the admin panel (ADR 0155).
 //

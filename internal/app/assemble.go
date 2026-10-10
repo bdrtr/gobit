@@ -84,6 +84,9 @@ type Installation struct {
 	// Jobs are the scheduled jobs the plugins registered. Nothing runs them:
 	// an opened installation starts no clock.
 	Jobs []coreplugin.Job
+	// Workers are the loops the plugins registered, admitted by the rule serve
+	// applies (ADR 0436). Nothing starts them: a test that needs one runs it.
+	Workers []coreplugin.Worker
 
 	describe func() *openapi.Doc
 }
@@ -147,6 +150,13 @@ func Open(ctx context.Context, opts Options) (*Installation, func(), error) {
 		closeApp()
 	}
 
+	workers, err := pluginWorkers(app.host)
+	if err != nil {
+		closeAll()
+
+		return nil, nil, err
+	}
+
 	modules := app.registry.Modules()
 	title, version := cfg.ServiceName+" API", opts.version()
 
@@ -156,6 +166,7 @@ func Open(ctx context.Context, opts Options) (*Installation, func(), error) {
 		Modules:   modules,
 		Schema:    app.schema,
 		Jobs:      app.host.Jobs(),
+		Workers:   workers,
 		describe: func() *openapi.Doc {
 			return describeInstallation(title, version, modules)
 		},

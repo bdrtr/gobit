@@ -1056,9 +1056,27 @@ past and is not corrected retroactively.
   owed only the topics it registered for, only the events its filters match, and
   only the fields it lists (ADR 0218), so a receiver of `cart.created` is still
   owed one delivery per opened cart in the regions it names. Its rate is per
-  minute and nothing finer: `max_per_minute` caps what one pass sends it, and
-  the pass runs once a minute
-  ([ADR 0275](adr/0275-a-webhook-receiver-sets-its-rate.md)).
+  minute and nothing finer: `max_per_minute` caps how many of its deliveries
+  every process together takes for sending in a clock minute, and a delivery
+  taken at the end of one minute can arrive in the next, so across a minute's
+  boundary it can be sent up to twice its cap within sixty seconds
+  ([ADR 0275](adr/0275-a-webhook-receiver-sets-its-rate.md),
+  [ADR 0436](adr/0436-a-webhook-goes-out-when-it-is-due.md)); each process
+  can have eight requests to it in flight at once.
+
+- **Webhook deliveries keep no order.** A failed delivery arrives after later
+  ones, eight go out at once from each process, and the bus that feeds the
+  queue promises no order either; a receiver reads the record the event names,
+  or computes each figure as a target, rather than trusting the sequence.
+  Delivery is at least once and the delivery id is the key a repeat is dropped
+  by. A delivery is attempted by the first claim after it is queued, and a
+  retry by the first after its step ends: at once when its process's worker is
+  idle, or when the worker's pass in flight ends, at most forty-five seconds
+  later. Receivers take turns in a claim and a delivery never tried goes first
+  in its turn, so a receiver whose requests hang to the ten-second timeout
+  holds another's delivery back no longer than that, until more such receivers
+  have an older delivery never tried than one pass can attempt, thirty-two
+  ([ADR 0436](adr/0436-a-webhook-goes-out-when-it-is-due.md)).
 
 - **The served document names a status field and not the values it takes.** A
   client compares `delivered`, `authorized` or `captured` from the owning

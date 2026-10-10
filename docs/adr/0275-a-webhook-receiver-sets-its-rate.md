@@ -4,7 +4,7 @@
 `max_per_minute`, and each delivery pass sends it at most that many of its due
 deliveries, oldest first, leaving the rest for the next pass.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0436](0436-a-webhook-goes-out-when-it-is-due.md), which counts the cap as the leases of every claim per clock minute rather than per pass, so a receiver can be sent up to twice its cap within sixty seconds across a minute's boundary
 - **Date:** 2026-10-01
 
 ## Context

@@ -391,11 +391,14 @@ func addPluginJobs(registry *job.Registry, host *coreplugin.Host) error {
 	return nil
 }
 
-// startJobs builds the runner and starts it.
+// startJobs builds the runner and starts it, and starts the plugins' workers
+// beside it (ADR 0436).
 //
 // The returned stop function is called on the way out of serve; it waits for
 // the pass in progress so that shutdown cannot close the pool underneath a job
-// that is still writing its outcome.
+// that is still writing its outcome. It tells the workers to stop first, so
+// that they finish their attempts while the runner finishes its pass, and
+// waits for them for at most SHUTDOWN_TIMEOUT.
 func startJobs(
 	ctx context.Context,
 	c *container.Container,
@@ -404,6 +407,11 @@ func startJobs(
 	log *slog.Logger,
 ) (*job.Runner, func(), error) {
 	registry, err := registerJobs(c, host, log)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	workers, err := pluginWorkers(host)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -425,8 +433,17 @@ func startJobs(
 	warnIfAJobOutlivesShutdown(ctx, registry, cfg, log)
 
 	runner.Start(ctx)
+	running := startWorkers(ctx, workers, log)
 
-	return runner, runner.Stop, nil
+	return runner, func() { stopWork(running, runner, cfg.ShutdownTimeout) }, nil
+}
+
+// stopWork stops what [startJobs] started: the workers are told first, the
+// runner's pass is waited for, and then the workers are, for at most timeout.
+func stopWork(running *workerSet, runner interface{ Stop() }, timeout time.Duration) {
+	running.cancel()
+	runner.Stop()
+	running.stop(timeout)
 }
 
 // warnIfAJobOutlivesShutdown reports a job that can still be running when the

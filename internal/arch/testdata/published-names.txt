@@ -462,8 +462,10 @@ core/plugin Host.RegisterFulfillmentProvider
 core/plugin Host.RegisterJob
 core/plugin Host.RegisterNotificationProvider
 core/plugin Host.RegisterPaymentProvider
+core/plugin Host.RegisterWorker
 core/plugin Host.Setting
 core/plugin Host.Subscribe
+core/plugin Host.Workers
 core/plugin Job
 core/plugin Job.PluginName
 core/plugin NewHost
@@ -479,6 +481,8 @@ core/plugin Registry.Install
 core/plugin Registry.MountRoutes
 core/plugin Registry.Plugins
 core/plugin Registry.Start
+core/plugin Worker
+core/plugin Worker.PluginName
 core/provider Address
 core/provider AuthResult
 core/provider ChannelEmail

@@ -26,13 +26,18 @@ import (
 // [maxRun].
 const perAttemptTimeout = 10 * time.Second
 
-// concurrency is how many deliveries are in flight at once.
+// concurrency is how many deliveries one process has in flight at once.
 //
 // Eight, the same number webpush's fan-out settled on, and the reason is the
 // same shape: the limit is about the receivers rather than about this process.
 // A pass that opens a hundred connections to one receiver is a burst that
 // receiver will rate limit as a whole, and then the failure is the sender's own
 // doing rather than the receiver's.
+//
+// It is one semaphore per process, [webhookModule.slots], which the worker and
+// the minute job's pass share (ADR 0436). An installation of N processes can
+// therefore have 8N in flight, where one job once had eight; a receiver that
+// cannot take that sets max_per_minute.
 const concurrency = 8
 
 // maxBodyRead bounds how much of a receiver's answer is read.
@@ -63,6 +68,12 @@ type attemptResult struct {
 
 // ok reports whether the receiver accepted the delivery.
 func (r attemptResult) ok() bool { return r.Err == nil }
+
+// poster makes one attempt; [sender] is the real one and a unit test drives a
+// pass with a fake.
+type poster interface {
+	send(ctx context.Context, d delivery) attemptResult
+}
 
 // sender makes one signed POST.
 type sender struct {
@@ -319,92 +330,146 @@ type passResult struct {
 	// Claimed is how many rows the pass took.
 	Claimed int
 	// Skipped is how many claimed rows were never attempted because the pass
-	// ran out of budget. They are leased, not lost: they come back when the
-	// lease elapses. It is reported because a pass that silently attempted half
-	// its batch looks identical to a quiet one.
+	// ran out of budget or was told to stop. They are released at the end of
+	// the pass, so the next claim takes them (D274). It is reported because a
+	// pass that silently attempted half its batch looks identical to a quiet
+	// one.
 	Skipped int
 }
 
-// deliverAll makes one pass over the claimed deliveries.
+// deliverAll makes one pass over the claimed deliveries and returns the ones it
+// did not attempt, for the caller to release.
 //
 // # The budget check is not an optimization
 //
-// The job's context carries [maxRun] as a deadline. A pass of [deliveryLimit]
-// deliveries at [perAttemptTimeout] each, even eight at a time, can outlast it,
-// and a request cut off by the pass deadline is recorded as a FAILURE against
-// a receiver that may have been perfectly healthy — an attempt spent, and the
-// dead letter one step nearer, for the sender's own scheduling. So a delivery
-// is not started unless the remaining budget can hold a whole attempt.
+// ctx carries the pass's budget as a deadline, [maxRun] for either pass. A
+// pass of [deliveryLimit] deliveries at [perAttemptTimeout] each, even eight
+// at a time, can outlast it, and a request cut off by the pass deadline is
+// recorded as a FAILURE against a receiver that may have been perfectly
+// healthy — an attempt spent, and the dead letter one step nearer, for the
+// sender's own scheduling. So a delivery is not started unless the remaining
+// budget can hold a whole attempt.
+//
+// # stop is not ctx
+//
+// stop says "start nothing more" and nothing else. Both passes hand in their
+// own context's Done and a ctx detached from its cancellation, so a shutdown
+// stops the feed while the attempts in flight finish and write their outcome:
+// an attempt cut off by shutdown would be a POST the receiver may have taken,
+// recorded as nothing, and sent again after the restart.
+//
+// Every attempt takes one of slots first, the process's [concurrency].
 func deliverAll(
-	ctx context.Context, s *sender, st *store, log *slog.Logger, claimed []delivery,
-) passResult {
+	ctx context.Context, stop <-chan struct{}, slots chan struct{},
+	p poster, q deliveryQueue, log *slog.Logger, claimed []delivery,
+) (passResult, []delivery) {
 	var (
 		mu     sync.Mutex
+		wg     sync.WaitGroup
 		result = passResult{Claimed: len(claimed)}
+		left   []delivery
 	)
 
-	work := make(chan delivery)
-	var wg sync.WaitGroup
-
-	for range concurrency {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for d := range work {
-				status, dead, err := deliverOne(ctx, s, st, d)
-
-				mu.Lock()
-				switch {
-				case err != nil:
-					result.Failed++
-					if dead {
-						result.DeadLettered = append(result.DeadLettered, d.ID)
-					}
-				default:
-					result.Delivered++
-				}
-				mu.Unlock()
-
-				if err != nil {
-					log.WarnContext(ctx, "a webhook delivery attempt failed",
-						"delivery_id", d.ID,
-						"endpoint_id", d.EndpointID,
-						"event", d.EventName,
-						"attempt", d.Attempts+1,
-						"status", status,
-						"dead_lettered", dead,
-						"error", err)
-				}
-			}
-		}()
-	}
-
 	for i := range claimed {
-		if !budgetAllows(ctx) {
-			result.Skipped++
+		if !acquire(ctx, stop, slots) {
+			left = append(left, claimed[i:]...)
 
-			continue
+			break
 		}
-		work <- claimed[i]
+
+		d := claimed[i]
+		wg.Go(func() {
+			defer func() { <-slots }()
+
+			status, dead, err := deliverOne(ctx, p, q, d)
+
+			mu.Lock()
+			switch {
+			case err != nil:
+				result.Failed++
+				if dead {
+					result.DeadLettered = append(result.DeadLettered, d.ID)
+				}
+			default:
+				result.Delivered++
+			}
+			mu.Unlock()
+
+			if err != nil {
+				log.WarnContext(ctx, "a webhook delivery attempt failed",
+					"delivery_id", d.ID,
+					"endpoint_id", d.EndpointID,
+					"event", d.EventName,
+					"attempt", d.Attempts+1,
+					"status", status,
+					"dead_lettered", dead,
+					"error", err)
+			}
+		})
 	}
-	close(work)
 	wg.Wait()
 
-	return result
+	result.Skipped = len(left)
+
+	return result, left
+}
+
+// acquire takes one of slots when the pass may still start an attempt, and
+// reports whether it did.
+//
+// The budget is read again once the slot is held: waiting for one, while the
+// other pass holds all eight, is time the budget no longer has.
+func acquire(ctx context.Context, stop <-chan struct{}, slots chan struct{}) bool {
+	if stopped(stop) || !budgetAllows(ctx) {
+		return false
+	}
+
+	select {
+	case slots <- struct{}{}:
+	case <-stop:
+		return false
+	case <-ctx.Done():
+		return false
+	}
+
+	if stopped(stop) || !budgetAllows(ctx) {
+		<-slots
+
+		return false
+	}
+
+	return true
+}
+
+// stopped reports whether stop is closed.
+func stopped(stop <-chan struct{}) bool {
+	select {
+	case <-stop:
+		return true
+	default:
+		return false
+	}
 }
 
 // budgetAllows reports whether the pass has room for one more whole attempt.
 func budgetAllows(ctx context.Context) bool {
 	deadline, ok := ctx.Deadline()
 	if !ok {
-		// No deadline means no budget to run out of. The job always sets one;
-		// a caller that does not (a test, a manual run) is not second-guessed
+		// No deadline means no budget to run out of. Both passes set one; a
+		// caller that does not (a test, a manual run) is not second-guessed
 		// into doing nothing.
 		return true
 	}
 
 	return time.Until(deadline) > perAttemptTimeout
 }
+
+// outcomeTimeout bounds the write that records an attempt's outcome.
+//
+// The write runs on a context of its own, detached from the pass's budget: an
+// attempt may end at the budget's last instant, and a 2xx the receiver sent
+// that could not then be recorded would be sent again when the lease ends.
+const outcomeTimeout = 5 * time.Second
 
 // deliverOne sends one delivery and closes its row.
 //
@@ -413,11 +478,15 @@ func budgetAllows(ctx context.Context) bool {
 // delivery that landed but whose row could not be closed is worse than one that
 // did not land, because the receiver will get it again and nothing here knows.
 func deliverOne(
-	ctx context.Context, s *sender, st *store, d delivery,
+	ctx context.Context, p poster, q deliveryQueue, d delivery,
 ) (status int, dead bool, err error) {
-	result := s.send(ctx, d)
+	result := p.send(ctx, d)
+
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), outcomeTimeout)
+	defer cancel()
+
 	if result.ok() {
-		if writeErr := st.markDelivered(ctx, d.ID, result.Status); writeErr != nil {
+		if writeErr := q.markDelivered(writeCtx, d.ID, result.Status); writeErr != nil {
 			return result.Status, false, writeErr
 		}
 
@@ -425,7 +494,7 @@ func deliverOne(
 	}
 
 	delay := delayAfter(d.Attempts + 1)
-	dead, writeErr := st.markFailed(ctx, d.ID, result.Err.Error(), result.Status, delay)
+	dead, writeErr := q.markFailed(writeCtx, d.ID, result.Err.Error(), result.Status, delay)
 	if writeErr != nil {
 		return result.Status, false, writeErr
 	}
