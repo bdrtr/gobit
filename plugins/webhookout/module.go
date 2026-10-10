@@ -59,7 +59,7 @@ var migrationsRoot = mustSub(migrationFiles, "migrations")
 //
 // So the list is written out, and it is the WHOLE set: a static census of every
 // eventbus.Event this repository can publish resolves to exactly this slice —
-// the thirteen topics plugins/webhookout forwards.
+// the sixteen topics plugins/webhookout forwards.
 //
 // The number and the path sit on ONE line deliberately. It is the only place
 // the size is written, and the count gate is LINE-ANCHORED: a sentence whose
@@ -109,6 +109,9 @@ var ForwardedTopics = []string{
 	topicCartCompleted,
 	topicOrderCanceled,
 	topicOrderCompleted,
+	topicFulfillmentDelivered,
+	topicOrderReturnOpened,
+	topicOrderReturnCanceled,
 }
 
 // The topics, as constants the arch gates can resolve.
@@ -190,6 +193,18 @@ const (
 	// (ADR 0386); it carries the order and the moment. Archiving publishes
 	// nothing, so a receiver hears an order's end as completed or canceled.
 	topicOrderCompleted = "order.completed"
+	// topicFulfillmentDelivered is published when a parcel is marked delivered
+	// (ADR 0437). It carries the cancel's identities and the moment and no
+	// tracking number, so it needs no new redaction rule; nothing inside gobit
+	// subscribes to it, and the consumer that asked for it hears it here.
+	topicFulfillmentDelivered = "fulfillment.delivered"
+	// topicOrderReturnOpened is published when a return is opened on an order
+	// (ADR 0437). It carries the order, the return and the moment, and not the
+	// shopper's reason or note, so it needs no new redaction rule.
+	topicOrderReturnOpened = "order.return_opened"
+	// topicOrderReturnCanceled is published when a return is withdrawn
+	// (ADR 0437); same payload, same reason.
+	topicOrderReturnCanceled = "order.return_canceled"
 )
 
 // redactedFields are the payload fields that never leave this installation, and
@@ -490,9 +505,10 @@ func (m *webhookModule) Routes(r chi.Router) {
 // coverage would have been one in four. ADR 0121 put the payment module's
 // capture and refund there as well, and the order's write-offs, the parcel's
 // cancellation and its coming back, the cart's two events and the order's
-// cancel and completion followed, so it is now ten of the thirteen this plugin
-// forwards; the three product events are still published directly. Ten in
-// thirteen is still partial
+// cancel and completion, a parcel's delivery and a return's opening and
+// withdrawal followed, so it is now thirteen of the sixteen this plugin
+// forwards; the three product events are still published directly. Thirteen in
+// sixteen is still partial
 // and the shape of the objection is unchanged,
 // which is why the refusal stands; the number is corrected here because a record whose stated
 // reason has quietly halved in force is the kind that gets rebuilt on.
@@ -803,12 +819,15 @@ var TopicFields = map[string][]string{
 		"bought_quantity", fieldCanceledAt, "canceled_before", "canceled_quantity", "cancellation_id",
 		fieldOrderID, "order_line_item_id", "variant_id",
 	},
-	topicFulfillmentCanceled: {fieldCanceledAt, "fulfillment_id", "reference", "return_id"},
-	topicFulfillmentReturned: {"fulfillment_id", "reference", "return_id", "returned_at"},
-	topicCartCreated:         {fieldCartID, fieldCurrencyCode, fieldOccurredAt, fieldRegionID},
-	topicCartCompleted:       {fieldCartID, fieldCurrencyCode, fieldOccurredAt, fieldRegionID},
-	topicOrderCanceled:       {fieldCanceledAt, fieldOrderID},
-	topicOrderCompleted:      {"completed_at", fieldOrderID},
+	topicFulfillmentCanceled:  {fieldCanceledAt, fieldFulfillmentID, fieldReference, fieldReturnID},
+	topicFulfillmentReturned:  {fieldFulfillmentID, fieldReference, fieldReturnID, "returned_at"},
+	topicCartCreated:          {fieldCartID, fieldCurrencyCode, fieldOccurredAt, fieldRegionID},
+	topicCartCompleted:        {fieldCartID, fieldCurrencyCode, fieldOccurredAt, fieldRegionID},
+	topicOrderCanceled:        {fieldCanceledAt, fieldOrderID},
+	topicOrderCompleted:       {"completed_at", fieldOrderID},
+	topicFulfillmentDelivered: {"delivered_at", fieldFulfillmentID, fieldReference, fieldReturnID},
+	topicOrderReturnOpened:    {"opened_at", fieldOrderID, fieldReturnID},
+	topicOrderReturnCanceled:  {fieldCanceledAt, fieldOrderID, fieldReturnID},
 }
 
 // The payload fields more than one topic carries, spelled as their publishers
@@ -817,10 +836,13 @@ const (
 	fieldCanceledAt          = "canceled_at"
 	fieldCartID              = "cart_id"
 	fieldCurrencyCode        = "currency_code"
+	fieldFulfillmentID       = "fulfillment_id"
 	fieldOccurredAt          = "occurred_at"
 	fieldOrderID             = "order_id"
 	fieldPaymentCollectionID = "payment_collection_id"
 	fieldProductID           = "product_id"
+	fieldReference           = "reference"
 	fieldRegionID            = "region_id"
+	fieldReturnID            = "return_id"
 	fieldStatus              = "status"
 )

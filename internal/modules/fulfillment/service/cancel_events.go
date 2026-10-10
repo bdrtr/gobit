@@ -70,7 +70,8 @@ const (
 	// back holds none of the order's outgoing units, so a subscriber that
 	// counts those skips it; an event written before the field reads as empty.
 	EventFieldReturnID = "return_id"
-	// EventFieldCanceledAt is the moment, RFC 3339 with nanoseconds, UTC.
+	// EventFieldCanceledAt is the moment, RFC 3339 with nanoseconds, UTC:
+	// the canceled_at the row was written with (D278).
 	EventFieldCanceledAt = "canceled_at"
 )
 

@@ -93,6 +93,10 @@ func (s *Service) CreateReturn(ctx context.Context, in CreateReturnInput) (model
 // lines and what its units were sold for (ADR 0433), from what the write
 // itself read: an answer that read after the commit could fail for a return
 // that exists, and a caller retrying it would open a second one.
+//
+// The opening writes [EventOrderReturnOpened] into the outbox in its
+// transaction and publishes it after the commit (ADR 0437); a refused opening
+// writes nothing.
 func (s *Service) CreateReturnRecord(ctx context.Context, in CreateReturnInput) (ReturnRecord, error) {
 	if err := requireID("order_id", in.OrderID); err != nil {
 		return ReturnRecord{}, err
@@ -173,11 +177,14 @@ func (s *Service) CreateReturnRecord(ctx context.Context, in CreateReturnInput) 
 			created.Items = append(created.Items, item)
 		}
 
-		return nil
+		// The outbox row commits with the record (ADR 0437).
+		return s.recordReturnOpened(ctx, created)
 	})
 	if err != nil {
 		return ReturnRecord{}, err
 	}
+	s.publishReturnOpened(ctx, created)
+
 	return ReturnRecord{Return: created, SoldFor: returnedWorth(orderLines, created.Items)}, nil
 }
 

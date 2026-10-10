@@ -553,7 +553,8 @@ func describeReturns(d *openapi.Doc) {
 		Summary: "Opens a return record on the order.",
 		Description: amountNote + " lines name the order lines coming back, a quantity and the part of " +
 			"the refund for each; a return that names none cannot be restocked when it is received, " +
-			"and cannot be refunded (409 \"returns_workflow_return_names_no_line\"). " + returnRecordNote,
+			"and cannot be refunded (409 \"returns_workflow_return_names_no_line\"). Opening " +
+			"publishes order.return_opened (ADR 0437). " + returnRecordNote,
 		RequestBody: d.RequestBody(createReturnRequest{}),
 		Responses: map[string]any{
 			// The handler writes 201 (see admin.go); a new record is born.
@@ -584,7 +585,9 @@ func describeReturns(d *openapi.Doc) {
 				"from, so withdrawing would not un-receive them. A return a live exchange " +
 				"takes back answers 409 \"order_return_named_by_exchange\": withdraw the " +
 				"exchange first (ADR 0432). A second call on an " +
-				"already withdrawn record succeeds and keeps the first moment.",
+				"already withdrawn record succeeds and keeps the first moment. The " +
+				"withdrawal publishes order.return_canceled; a repeat or a refused one " +
+				"publishes nothing (ADR 0437).",
 			Responses: map[string]any{
 				"200": openapi.Response("The withdrawn return record", d.Item(returnDTO{})),
 			},
@@ -1297,7 +1300,8 @@ func describeAfterSales(d *openapi.Doc) {
 			"would let a customer decide their own refund, which is the same defect as a " +
 			"cart that names its own shipping price. " +
 			"\n\n" +
-			"\"reason\" is optional free text. " + returnRecordNote,
+			"\"reason\" is optional free text. Opening publishes order.return_opened, " +
+			"which carries neither the reason nor the lines (ADR 0437). " + returnRecordNote,
 		RequestBody: d.RequestBody(storeReturnRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response("The opened return request", d.Item(returnDTO{})),

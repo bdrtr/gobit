@@ -36,6 +36,7 @@ import (
 	"github.com/bdrtr/gobit/core/db"
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/eventbus"
+	"github.com/bdrtr/gobit/core/eventbus/outbox"
 	"github.com/bdrtr/gobit/core/link"
 	coreprovider "github.com/bdrtr/gobit/core/provider"
 	"github.com/bdrtr/gobit/core/query"
@@ -116,6 +117,13 @@ func runWithPostgres(m *testing.M) int {
 
 	if err := db.Migrate(ctx, testDSN, fulfillment.New().Migrations(), fulfillment.ModuleName); err != nil {
 		fmt.Fprintf(os.Stderr, "the migration could not be applied: %v\n", err)
+		return 1
+	}
+
+	// The outbox is a CORE schema the module writes into inside its own
+	// transaction, so the harness applies it as the composition root does.
+	if err := db.Migrate(ctx, testDSN, outbox.Migrations(), outbox.MigrationOwner); err != nil {
+		fmt.Fprintf(os.Stderr, "the outbox migration could not be applied: %v\n", err)
 		return 1
 	}
 

@@ -3,7 +3,7 @@
 **Summary:** Completing an order publishes `order.completed`, and the notification
 module mails the order's address unless the provider says it holds no such template. Archiving publishes nothing, and no generic transition hook is added.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0437](0437-a-parcels-delivery-and-a-returns-moves-are-on-the-bus.md), whose return transitions gain `order.return_opened` and `order.return_canceled` for an outside consumer
 - **Date:** 2026-10-05
 - **Amends:** [0243](0243-a-failed-confirmation-is-sent-again-by-an-operator.md) and [0317](0317-the-panel-lists-the-notifications.md), whose resend and its panel button now take the completion notice as well as the confirmation
 

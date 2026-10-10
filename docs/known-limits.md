@@ -1122,12 +1122,15 @@ past and is not corrected retroactively.
   ([ADR 0385](adr/0385-a-workflow-step-has-no-observer.md),
   [ADR 0400](adr/0400-a-shopping-agent-is-a-storefront-client.md)).
 
-- **An order's archiving and its after-sales transitions publish nothing.**
-  Placing, canceling and completing an order publish `order.placed`,
-  `order.canceled` and `order.completed`; archiving one and moving a return, a
-  claim or an exchange do not, so neither a plugin nor a webhook receiver can
-  react to them, and there is no generic transition hook
-  ([ADR 0386](adr/0386-a-completed-order-says-so-on-the-bus.md)).
+- **An order's archiving, a parcel's collection, a return's receipt and the
+  claim, exchange and replacement moves publish nothing.** Placing, canceling
+  and completing an order, a parcel's cancellation, coming back and delivery,
+  and a return's opening and withdrawal are published; the rest are not, so
+  neither a plugin nor a webhook receiver can react to them, and there is no
+  generic transition hook
+  ([ADR 0386](adr/0386-a-completed-order-says-so-on-the-bus.md),
+  [ADR 0437](adr/0437-a-parcels-delivery-and-a-returns-moves-are-on-the-bus.md)). A parcel a fulfillment provider reports delivered as
+  it is opened announces no delivery: only marking a parcel delivered does.
 
 - **An order confirmation is pushed at most once, and not late.** The
   `web-push` plugin records an order's event before it pushes, so a process

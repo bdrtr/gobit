@@ -67,7 +67,8 @@ const (
 	EventFieldRegionID = "region_id"
 	// EventFieldCurrencyCode is the cart's ISO 4217 code, upper case.
 	EventFieldCurrencyCode = "currency_code"
-	// EventFieldOccurredAt is the moment, RFC 3339 with nanoseconds, UTC.
+	// EventFieldOccurredAt is the moment, RFC 3339 with nanoseconds, UTC: the
+	// cart's created_at or completed_at as the row stores it (D278).
 	EventFieldOccurredAt = "occurred_at"
 )
 

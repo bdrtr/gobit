@@ -149,7 +149,7 @@ tomorrow silently stays outside it.
 | Modules do not import each other | `TestModulesDoNotImportEachOther` | — (a second line of defense alongside depguard) |
 | Every module is registered in the composition root | `TestEveryModuleIsRegisteredInTheCompositionRoot` | The whole of phases 8 and 9 was written, its tests were green, and **not one** of the `/admin/v1/**` endpoints had been mounted |
 | Every declared link is **read** | `TestTheLinkDefinitionsAreTraversed` | The sales-channel link was being written and never read; on its first run the test found **four dead links** |
-| Every published event topic has a subscriber | `TestTheEventTopicsHaveASubscriber` | `order.placed` went a long time with no subscriber and the event did nothing |
+| Every published event topic has a subscriber, or names the outside consumer and the record that brought it | `TestTheEventTopicsHaveASubscriber` | `order.placed` went a long time with no subscriber and the event did nothing |
 | Every `env` tag is in `.env.example` with the same default | `TestTheEnvExampleAgreesWithTheConfigDefaults` | `.env.example` said "the **two** limits below"; there were seven |
 | Every path reading a `variant` makes a sales-channel decision | `TestVariantReadsGoThroughTheChannelDecision` | The scope was enforced on the read surface and not on add-to-cart: channel A's variant could be bought with channel B's key |
 | Every path and symbol in the documents resolves | `TestTheReferencesInTheDocsResolve` | An independent verification broke both a symbol and a path in an ADR and `internal/arch` stayed green |
@@ -252,7 +252,7 @@ on a list; it is that.
 
 | Document | What it answers |
 |---|---|
-| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: 434 records, each with its decision in one sentence. In case of conflict, **the ADR wins** |
+| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: 435 records, each with its decision in one sentence. In case of conflict, **the ADR wins** |
 | [`docs/mimari.md`](./docs/mimari.md) | The architecture narrative: layers, the life cycle of a request and of a module, data, sagas, the core packages |
 | [`docs/gaps.md`](./docs/gaps.md) | The defect ledger: every fault this repository found in itself, one sentence and the ADR that closed it |
 | [`docs/known-limits.md`](./docs/known-limits.md) | The known limits: eighty-nine items in seven groups — identity and authorization, sales channel scope, the category tree, a product's history, tax, installation and operation, the limit of the invariants |

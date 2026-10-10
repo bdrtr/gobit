@@ -326,10 +326,16 @@ path, so nothing else could tell the order (ADR 0121); an order canceled by the
 shop or by the checkout's compensation has no flow on its path that holds its
 payment (ADR 0288).
 
-Archiving an order publishes nothing, and neither do the return, claim and
-exchange transitions: a topic arrives with the first subscriber inside gobit
-that acts on it (ADR 0063, ADR 0386). There is no transition hook beside the
-bus.
+Archiving an order publishes nothing, and neither do a parcel's collection, a
+return's receipt, or the claim, exchange and replacement transitions: a topic
+arrives with the first subscriber inside gobit that acts on it, or with an
+outside consumer's report decided in a record, which the arch gate's
+`subscriberlessPublications` names (ADR 0063, ADR 0386, ADR 0437). A parcel's
+delivery and a return's opening and withdrawal are of the second kind: nothing
+inside gobit subscribes to them and `webhook-out` carries them.
+`fulfillment.returned` is the carrier bringing a parcel back undelivered;
+`order.return_*` is the customer's return record. There is no transition hook
+beside the bus.
 
 | Event | Payload |
 |---|---|
@@ -342,6 +348,9 @@ bus.
 | `payment.captured` / `payment.refunded` | `payment_collection_id`, `occurred_at` |
 | `fulfillment.canceled` | `fulfillment_id`, `reference`, `return_id` (empty for a parcel that went out), `canceled_at` |
 | `fulfillment.returned` | `fulfillment_id`, `reference`, `return_id` (empty for a parcel that went out), `returned_at` |
+| `fulfillment.delivered` | `fulfillment_id`, `reference`, `return_id` (empty for a parcel that went out), `delivered_at` |
+| `order.return_opened` | `order_id`, `return_id`, `opened_at` |
+| `order.return_canceled` | `order_id`, `return_id`, `canceled_at` |
 | `cart.created` / `cart.completed` | `cart_id`, `region_id`, `currency_code`, `occurred_at` |
 
 `plugins/webhookout` lists the same fields, `customer_id` withheld, as
@@ -360,8 +369,10 @@ receiver written in any other language (ADR 0435).
 
 `placed_at` is a timestamp, but it too is a string: the moment the order was
 placed, converted to UTC and formatted with `time.RFC3339Nano`
-(`EventFieldPlacedAt`). `occurred_at`, `canceled_at`, `completed_at` and
-`returned_at` are the same shape.
+(`EventFieldPlacedAt`). `occurred_at`, `canceled_at`, `completed_at`,
+`returned_at`, `delivered_at` and `opened_at` are the same shape. Every
+moment is the one its record stores, so it equals what the record's read
+returns, to the microsecond.
 
 The payment events carry **no amount**, and it is worth saying why the narrow
 rule below is not the whole reason. A refund is deliberately not idempotent, so

@@ -352,7 +352,9 @@ func describeFulfillments(d *openapi.Doc) {
 		Summary: "Marks the fulfillment as delivered.",
 		Description: "It is IDEMPOTENT. A delivery may be reported on a fulfillment that " +
 			"was never marked as collected; shipped_at then stays empty, which says that " +
-			"nobody has reported the dispatch rather than that it did not happen.",
+			"nobody has reported the dispatch rather than that it did not happen. The " +
+			"first report publishes fulfillment.delivered (ADR 0437); a repeat publishes " +
+			"nothing.",
 		Responses: map[string]any{
 			"200": openapi.Response("The delivered fulfillment", d.Item(fulfillmentDTO{})),
 		},

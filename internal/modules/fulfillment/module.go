@@ -155,9 +155,9 @@ const (
 	// codeLinkDefine reports a link definition that could not be declared.
 	codeLinkDefine       = "fulfillment_module_link_define_failed"
 	codeProviderRegister = "fulfillment_module_provider_register_failed"
-	// svcEventBus is the core bus in the container. This module publishes two
-	// events, a parcel canceled (ADR 0139) and a parcel come back (ADR 0423),
-	// and it resolves the bus to send them.
+	// svcEventBus is the core bus in the container. This module publishes a
+	// parcel's cancellation (ADR 0139), its coming back (ADR 0423) and its
+	// delivery (ADR 0437), and it resolves the bus to send them.
 	svcEventBus = "core.eventbus"
 )
 

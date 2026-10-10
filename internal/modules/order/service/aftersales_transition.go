@@ -51,8 +51,15 @@ func (s *Service) ReceiveReturn(
 // exchange's difference counts its units as coming back, and the return is
 // what brings them. The exchange is withdrawn first, which lets the return go.
 // The check holds the return's lock, which naming it takes as well.
+//
+// The withdrawal writes [EventOrderReturnCanceled] into the outbox in its
+// transaction and publishes it after the commit (ADR 0437); a repeat and a
+// refused withdrawal write nothing.
 func (s *Service) CancelReturn(ctx context.Context, returnID string) (models.Return, error) {
-	return s.transitionReturn(ctx, returnID, "canceling",
+	// withdrawn says this call made the withdrawal; a return already canceled
+	// takes the no-op branch, which never reaches the write below.
+	withdrawn := false
+	ret, err := s.transitionReturn(ctx, returnID, "canceling",
 		models.ReturnStatus.CancelAction, func(ctx context.Context, id string) (models.Return, error) {
 			named, err := s.store.LiveExchangeOfReturn(ctx, id)
 			if err != nil {
@@ -64,8 +71,25 @@ func (s *Service) CancelReturn(ctx context.Context, returnID string) (models.Ret
 						"difference counts goods that never come back", named, id)
 			}
 
-			return s.store.CancelReturn(ctx, id)
+			canceled, err := s.store.CancelReturn(ctx, id)
+			if err != nil {
+				return models.Return{}, err
+			}
+			if err := s.recordReturnCanceled(ctx, canceled); err != nil {
+				return models.Return{}, err
+			}
+			withdrawn = true
+
+			return canceled, nil
 		})
+	if err != nil {
+		return models.Return{}, err
+	}
+	if withdrawn {
+		s.publishReturnCanceled(ctx, ret)
+	}
+
+	return ret, nil
 }
 
 // WHERE the goods arrived is required, and it is required HERE rather than

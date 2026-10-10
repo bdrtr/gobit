@@ -29,7 +29,7 @@ import (
 const EventFulfillmentReturned = "fulfillment.returned"
 
 // EventFieldReturnedAt is the moment the parcel was marked come back, RFC 3339
-// with nanoseconds, UTC.
+// with nanoseconds, UTC: the returned_at the row was written with (D278).
 const EventFieldReturnedAt = "returned_at"
 
 // fulfillmentReturnedEventID derives the event's id from the PARCEL: a parcel

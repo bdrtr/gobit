@@ -52,6 +52,9 @@ type fakeStore struct {
 	items    map[string]models.FulfillmentItem
 	// outbox holds what was written inside a transaction, in order.
 	outbox []outboxRow
+	// outboxErr, when set, makes WriteOutboxEvent fail: a move whose event
+	// cannot be promised is not made.
+	outboxErr error
 	// locations are the warehouse shipping policies; the key is the location
 	// identifier.
 	locations map[string]models.ShippingLocation
@@ -715,8 +718,10 @@ func (f *fakeStore) UpdateFulfillmentStatus(
 	ful.Status = status
 	ful.TrackingNumber = trackingNumber
 	ful.TrackingURL = trackingURL
-	ful.ShippedAt, ful.DeliveredAt, ful.CanceledAt = shippedAt, deliveredAt, canceledAt
-	ful.ReturnedAt = returnedAt
+	// The columns keep microseconds and the driver truncates to them, so the
+	// row the store hands back holds less than the clock said (D278).
+	ful.ShippedAt, ful.DeliveredAt = toMicroseconds(shippedAt), toMicroseconds(deliveredAt)
+	ful.CanceledAt, ful.ReturnedAt = toMicroseconds(canceledAt), toMicroseconds(returnedAt)
 	ful.UpdatedAt = testNow
 	f.fuls[id] = ful
 	f.fulWrites++
@@ -1500,6 +1505,16 @@ func (f *fakeStore) LocationPolicies(
 	return out, nil
 }
 
+// toMicroseconds is a stamp as a timestamptz column stores it.
+func toMicroseconds(stamp *time.Time) *time.Time {
+	if stamp == nil {
+		return nil
+	}
+	stored := stamp.Truncate(time.Microsecond)
+
+	return &stored
+}
+
 // outboxRow is one event the fake store was asked to write inside a transaction.
 type outboxRow struct {
 	id   string
@@ -1520,6 +1535,9 @@ func (f *fakeStore) WriteOutboxEvent(
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.outboxErr != nil {
+		return f.outboxErr
+	}
 	f.outbox = append(f.outbox, outboxRow{id: id, name: name, data: data})
 
 	return nil

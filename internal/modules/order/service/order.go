@@ -1067,7 +1067,8 @@ func (s *Service) CompleteOrder(ctx context.Context, orderID string) (models.Ord
 //
 // Archiving is the merchant filing the order away, which the shopper's timeline
 // does not show either, and nothing in gobit acts on it; a topic waits for a
-// subscriber that does (ADR 0386, ADR 0063).
+// subscriber that does, or for an outside consumer's report decided in a
+// record (ADR 0386, ADR 0063, ADR 0437).
 func (s *Service) ArchiveOrder(ctx context.Context, orderID string) (models.Order, error) {
 	return s.transition(ctx, orderID, models.OrderCompleted, "archiving",
 		func(ctx context.Context, id string) (models.Order, error) {

@@ -27,6 +27,20 @@ design. It is fixed with `1.0.0`.
 
 ### Added
 
+- **A parcel's delivery and a return's opening and withdrawal are on the bus**
+  (ADR 0437, D276, D277). **For integrators:** marking a parcel delivered
+  publishes `fulfillment.delivered` (`fulfillment_id`, `reference`,
+  `return_id`, `delivered_at`), and opening and withdrawing a return publish
+  `order.return_opened` (`order_id`, `return_id`, `opened_at`) and
+  `order.return_canceled` (`order_id`, `return_id`, `canceled_at`), each
+  through the outbox in the move's transaction. `webhook-out` forwards them,
+  sixteen topics in all, and a receiver hears them only once it names them.
+  No tracking number, reason, note or line travels; a parcel's collection and
+  a return's receipt are still not published. No migration, no setting.
+  **For contributors:** an entry in `subscriberlessPublications`, the way out
+  ADR 0063 named for a topic only an outside consumer hears, now passes the
+  gates, and names that consumer and a record whose Decision names the topic.
+
 - **A webhook receiver builds against a published contract** (ADR 0435,
   D271). **For integrators:** `core/webhook` holds the signature scheme
   (`SignatureVersion`, `HeaderEvent`, `HeaderDelivery`, `HeaderAttempt`,
@@ -72,6 +86,16 @@ design. It is fixed with `1.0.0`.
   Deliveries keep no order and arrive at least once; the delivery id is the
   key a receiver drops a repeat by. Migration 000004 of the plugin adds two
   columns and an index.
+
+### Fixed
+
+- **Every event's moment is the moment its record stores** (ADR 0437, D278).
+  **For integrators:** `canceled_at` in `fulfillment.canceled` and
+  `returned_at` in `fulfillment.returned` were the clock's nanoseconds and are
+  now the microsecond the parcel row holds, the value
+  `GET /admin/v1/fulfillments/{id}` returns; `occurred_at` in `cart.created`
+  and `cart.completed` was a clock read before the cart's transaction and is
+  now the cart row's `created_at` and `completed_at`.
 
 ### Deprecated
 

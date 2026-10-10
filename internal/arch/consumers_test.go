@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -725,24 +726,102 @@ func owningModulePrefix(file *sourceFile) string {
 // SURFACE 2 — event topics
 // ---------------------------------------------------------------------------
 
-// subscriberlessPublications are the events whose subscriber is NOT LOOKED FOR
-// because they are open to the outside.
+// subscriberlessPublications are the events whose subscriber inside gobit is NOT
+// LOOKED FOR, because the consumer that asked for them is outside it (ADR 0063,
+// ADR 0437).
 //
 // A topic having no subscriber inside the repository can be DELIBERATE: gobit
-// is a framework and the application doing the installation may bind its own
-// handler. That decision is written here, with the topic name and its REASON;
-// as long as it is not written, a topic without a subscriber is a bug.
+// is a framework, and a consumer running beside it hears a topic through
+// plugins/webhookout. That decision is written here, with the topic, the
+// consumer and the record that decided it; as long as it is not written, a topic
+// without a subscriber is a bug.
 //
-// The map is EMPTY today and this is not a gap but a finding: every published
-// topic has a subscriber inside the repository. The sentence that stood here
-// priced that set at FOUR and stayed at four while it grew to ten — the stale
-// published claim this repository keeps producing (D81, D85, D86) — so the
-// number is gone and the census is left to the test below, which counts the tree
-// rather than a comment. The price of an exemption is high — an exempt topic
-// means going back to the state where "order.placed" did nothing for months —
-// which is why anyone adding a line here is expected to answer the question "who
-// listens, in which installation" in the reason.
-var subscriberlessPublications = map[string]string{}
+// The price of an entry is high — an exempt topic means going back to the state
+// where "order.placed" did nothing for months, and a published topic is not
+// unpublished — so an entry is a decision: [TestAnOutsideListenerIsDecidedInARecord]
+// requires its record to exist and its Decision to name the topic. Whether the consumer still
+// listens is not observable from here. The census of entries is the map itself
+// and no sentence counts it (D81, D85, D86).
+var subscriberlessPublications = map[string]outsideListener{
+	"fulfillment.delivered": {
+		Listener: "a marketplace running beside gobit settles a seller's payout a week after delivery " +
+			"and polled every pending payout's parcels for it; it hears the topic over webhook-out",
+		Record: "0437",
+	},
+	"order.return_opened": {
+		Listener: "the same marketplace could not hear a return opened at the storefront or in the " +
+			"panel; it hears the topic over webhook-out",
+		Record: "0437",
+	},
+	"order.return_canceled": {
+		Listener: "the same marketplace hears how a return it heard opened ended without goods coming " +
+			"back, over webhook-out",
+		Record: "0437",
+	},
+}
+
+// outsideListener is who hears a topic nothing inside gobit subscribes to, and
+// the record that published the topic for them.
+type outsideListener struct {
+	// Listener names the consumer outside gobit and how it hears the topic.
+	Listener string
+	// Record is the four-digit number of the decision record that published the
+	// topic for it.
+	Record string
+}
+
+// TestAnOutsideListenerIsDecidedInARecord holds every subscriberlessPublications
+// entry to a decision record whose Decision names its topic (ADR 0437).
+//
+// The entry is a premise the gate cannot check — that somebody outside listens
+// — so the gate puts the premise where everybody reads it: the record has to
+// exist, exactly once, and spell the topic in backticks under its Decision
+// heading, and the listener has to be said. A record that names the topic only
+// elsewhere — among its rejected alternatives, on a Status line another record
+// amended — did not decide to publish it, and a number that names no record is
+// an exemption nobody decided.
+func TestAnOutsideListenerIsDecidedInARecord(t *testing.T) {
+	t.Parallel()
+
+	for _, topic := range slices.Sorted(maps.Keys(subscriberlessPublications)) {
+		entry := subscriberlessPublications[topic]
+		assert.NotEmptyf(t, strings.TrimSpace(entry.Listener),
+			"the %q entry names no listener; an exemption says who hears the topic", topic)
+		if !assert.Regexpf(t, `^\d{4}$`, entry.Record,
+			"the %q entry's record is %q, which is not a four-digit ADR number", topic, entry.Record) {
+			continue
+		}
+		found, err := filepath.Glob(filepath.Join(append([]string{repoRoot}, append(adrDir, entry.Record+"-*.md")...)...))
+		require.NoError(t, err)
+		if !assert.Lenf(t, found, 1,
+			"the %q entry names ADR %s, and docs/adr holds %d records by that number", topic, entry.Record, len(found)) {
+			continue
+		}
+		assert.Truef(t, decidesTopic(readADR(t, found[0]), topic),
+			"%s is the record the %q entry names, and its Decision does not name the topic. A "+
+				"record that mentions it elsewhere, a rejected alternative or an amendment on its "+
+				"Status line, did not decide to publish it; the decision to publish a topic for an "+
+				"outside consumer is written in the Decision of the record that makes it",
+			short(found[0]), topic)
+	}
+}
+
+// decisionSection is the text under a record's Decision heading, up to the next
+// heading; it is empty for a record that has none.
+func decisionSection(record string) string {
+	_, after, found := strings.Cut(record, "\n## Decision\n")
+	if !found {
+		return ""
+	}
+	section, _, _ := strings.Cut(after, "\n## ")
+
+	return section
+}
+
+// decidesTopic reports whether a record's Decision names the topic in backticks.
+func decidesTopic(record, topic string) bool {
+	return strings.Contains(decisionSection(record), "`"+topic+"`")
+}
 
 // TestTheEventTopicsHaveASubscriber verifies that every published event name
 // has a subscriber.
@@ -769,11 +848,14 @@ var subscriberlessPublications = map[string]string{}
 // declaring publish site already named — but a topic the relay alone produced
 // would go unaudited, which is the hole the struck sentence denied.
 //
-// A name that cannot be resolved on the subscription side, however, is skipped
-// SILENTLY and this asymmetry is deliberate: the core's plugin host is an
-// intermediate layer that forwards the subscription and carries the name as a
-// parameter. A missed subscription can only produce a FALSE ALARM (not seeing
-// an existing subscriber), it cannot produce a silent pass.
+// A subscription whose name cannot be resolved is not skipped either.
+// ~~A missed subscription can only produce a FALSE ALARM (not seeing an existing
+// subscriber), it cannot produce a silent pass.~~ **Corrected 2026-10-11:** once
+// subscriberlessPublications could be written (ADR 0437), a missed subscription
+// could be the subscriber that retires an exemption, and missing it passes a
+// dead one. [sourceTree.subscriptionCensus] therefore fails such a site, naming
+// it, and skips only the relays [knownRelays] names by package and function,
+// which hand on whatever topic their caller names.
 func TestTheEventTopicsHaveASubscriber(t *testing.T) {
 	t.Parallel()
 
@@ -803,58 +885,36 @@ func TestTheEventTopicsHaveASubscriber(t *testing.T) {
 		}
 	}
 
-	subscribed := map[string][]string{}
-	for _, site := range tree.calls["Subscribe"] {
-		if len(site.call.Args) == 0 {
-			continue
-		}
-		for _, name := range tree.stringValues(site.file, site.fn, site.call.Args[0], 0) {
-			subscribed[name] = append(subscribed[name], site.file.path)
-		}
-	}
-
 	if len(published) == 0 {
 		t.Fatal("no event publish was found; the scan must be missing the publish surface " +
 			"(if the use of eventbus.Event has changed this test must change too)")
 	}
 
+	census := tree.subscriptionCensus(t, knownRelays)
 	for _, name := range slices.Sorted(maps.Keys(published)) {
-		if reason, exempt := subscriberlessPublications[name]; exempt {
+		if entry, exempt := subscriberlessPublications[name]; exempt {
 			// A FORWARDER does not count as the subscriber that retires an
 			// exemption: plugins/webhookout subscribes to every published topic
 			// by its own mandatory gate, so its subscription says nothing about
-			// whether anybody wanted the topic. The distinction is
-			// [genericForwarders]', the same one
-			// [TestEveryTopicHasASubscriberThatChoseIt] draws.
-			//
-			// This does NOT make the exemption route reachable, and the message
-			// below says so rather than promising it: the plugin HOST relays
-			// every topic as well, and that is not a forwarder by this list. The
-			// filter is here because it is right, not because it opens a door.
-			var chose []string
-			for _, path := range subscribed[name] {
-				if forwarderOf(path) == "" {
-					chose = append(chose, path)
-				}
-			}
-			if len(chose) > 0 {
+			// whether anybody wanted the topic. Nor does a relay, which hands on
+			// whatever topic its caller names. Only a subscriber that CHOSE the
+			// topic retires the entry (D276).
+			if chose := census.chosen[name]; len(chose) > 0 {
 				t.Errorf("the %q topic was counted as subscriberless but it HAS a subscriber (%s).\n"+
-					"The reason for the exemption no longer holds (%q); delete it from subscriberlessPublications — "+
+					"The entry no longer holds (%s, ADR %s); delete it from subscriberlessPublications — "+
 					"a dead exemption covers up the next real violation.",
-					name, strings.Join(chose, ", "), reason)
+					name, strings.Join(chose, ", "), entry.Listener, entry.Record)
 			}
 			continue
 		}
-		if len(subscribed[name]) == 0 {
+		if len(census.chosen[name]) == 0 && len(census.forwarded[name]) == 0 {
 			t.Errorf("%s: the %q event is published but NO PRODUCTION FILE subscribes to it.\n"+
 				"A topic without a subscriber is work that is believed to be done but is not: the publish returns "+
 				"successfully, nobody sees an error, the feature is absent (\"order.placed\" was like this for months).\n"+
-				"The answer is a subscriber inside this repository. The exemption map below is "+
-				"NOT a way out today and that was measured on 2026-09-08: the plugin host relays "+
-				"every topic to the plugins it loaded, so a published topic always has at least "+
-				"that subscription and an entry written here would read as stale the moment it "+
-				"was made. The map is kept for the day a publish genuinely has no reader inside "+
-				"the tree and the relay no longer stands between.", published[name], name)
+				"The answer is a subscriber inside this repository, or, for a consumer outside it, an entry in "+
+				"subscriberlessPublications naming that consumer and the record that decided it (ADR 0063, "+
+				"ADR 0437). The relays (%s) hand on whatever topic their caller names and count as no "+
+				"subscriber.", published[name], name, strings.Join(census.relays(), ", "))
 		}
 	}
 
@@ -915,19 +975,23 @@ var genericForwarders = map[string]string{
 // site resolves to every topic every plugin subscribes to. Counted as an
 // ordinary subscription it makes this test blind in exactly the case it exists
 // for: webhookout's forwarding would arrive under core/plugin's path, which is
-// not a forwarder prefix, and every forwarder-only topic would pass. A site
-// whose topic argument is a PARAMETER is therefore skipped; the plugin's own
-// call, which names the constant, is scanned on its own.
+// not a forwarder prefix, and every forwarder-only topic would pass. The relay
+// is therefore skipped, and so is internal/app's command bus: the two are
+// [knownRelays], a closed set named by package and function. The plugin's own
+// call, which names the constant, is scanned on its own, and any other site
+// that takes its topic from a parameter fails the census.
 //
 // The skip has a floor rather than trust: what the relay makes visible must
-// still be visible without it.
+// still be visible without it. Both the skip and that floor are
+// [sourceTree.subscriptionCensus]', which the first gate counts from too.
 //
 // # What a failure means
 //
 // Not that the forwarder is wrong. It means the topic's only consumer is
 // outside this repository, which is a legitimate thing for a framework to
 // publish and an illegitimate thing to leave undeclared: write the subscriber,
-// or write the topic into subscriberlessPublications with its reason.
+// or write the topic into subscriberlessPublications with the consumer and the
+// record that decided it.
 func TestEveryTopicHasASubscriberThatChoseIt(t *testing.T) {
 	t.Parallel()
 
@@ -952,44 +1016,8 @@ func TestEveryTopicHasASubscriberThatChoseIt(t *testing.T) {
 			"against nothing. The publish surface must have changed; this test has to "+
 			"change with it.")
 
-	chosen := map[string][]string{}
-	forwarded := map[string][]string{}
-	relayed := map[string]string{}
-	for _, site := range tree.calls["Subscribe"] {
-		if len(site.call.Args) == 0 {
-			continue
-		}
-		names := tree.stringValues(site.file, site.fn, site.call.Args[0], 0)
-		if relaysItsTopic(site) {
-			for _, name := range names {
-				relayed[name] = tree.location(site.file, site.call.Pos())
-			}
-			continue
-		}
-		for _, name := range names {
-			if forwarderOf(site.file.path) != "" {
-				forwarded[name] = append(forwarded[name], site.file.path)
-				continue
-			}
-			chosen[name] = append(chosen[name], site.file.path)
-		}
-	}
-
-	// Floor one. A relay resolves to its callers' topics, so skipping it may
-	// not make a topic disappear: every name the relay carried has to be
-	// visible at a declaring site too. When it is not, the skip has swallowed
-	// the only subscription there was and this test would pass a topic nothing
-	// subscribes to at all.
-	for _, name := range slices.Sorted(maps.Keys(relayed)) {
-		if len(chosen[name]) == 0 && len(forwarded[name]) == 0 {
-			t.Errorf("%s: the %q topic is visible ONLY through a relayed subscription.\n"+
-				"The relay was skipped because it declares no topic, which leaves this "+
-				"topic with no subscription site at all — so it would be judged here "+
-				"against nothing. Either a subscriber names the topic in a constant this "+
-				"scan can resolve, or the skip has grown past the case it was written for.",
-				relayed[name], name)
-		}
-	}
+	census := tree.subscriptionCensus(t, knownRelays)
+	chosen, forwarded := census.chosen, census.forwarded
 
 	// Floor two. A forwarder that no longer subscribes to anything — renamed,
 	// removed, or turned into a loop whose names no longer resolve — makes
@@ -1025,17 +1053,186 @@ func TestEveryTopicHasASubscriberThatChoseIt(t *testing.T) {
 			"TestTheEventTopicsHaveASubscriber is green here and has checked nothing.\n"+
 			"The consumer is OUTSIDE this repository, which is allowed and has to be SAID — "+
 			"either write the subscriber that acts on the event, or write the topic into "+
-			"subscriberlessPublications with the installation that listens (ADR 0063).",
+			"subscriberlessPublications with the consumer that listens and the record that "+
+			"decided it (ADR 0063, ADR 0437).",
 			published[name], name, strings.Join(forwarded[name], ", "))
 	}
+}
+
+// subscriptionCensus is every subscription the scan resolves, in the three kinds
+// the event gates tell apart.
+//
+// Both [TestTheEventTopicsHaveASubscriber] and
+// [TestEveryTopicHasASubscriberThatChoseIt] count from it, so the two cannot
+// disagree about what a subscription is. Until ADR 0437 the first counted every
+// site, a relay included, and an entry in subscriberlessPublications failed the
+// build the moment it was written (D276). The relays it skips are a closed set
+// it is handed, and every other site has to resolve to a named topic.
+type subscriptionCensus struct {
+	// chosen maps a topic to the files of the subscribers that named it.
+	chosen map[string][]string
+	// forwarded maps a topic to the files of the [genericForwarders] that
+	// subscribe to it.
+	forwarded map[string][]string
+	// relayed maps a topic to the relay site last found resolving to it.
+	relayed map[string]string
+	// relaySites are the files of the relays, sorted and once each.
+	relaySites []string
+}
+
+// subscriptionCensus counts the subscriptions, skipping the relays it is
+// handed, and fails t for every site it cannot read and for a topic the skip
+// would hide.
+//
+// It fails CLOSED. A site in a function the relays do not name has to resolve
+// to a topic of its own: one that takes its topic from a parameter could be a
+// relay or a subscriber written as a helper, and one whose topic does not
+// resolve could be anything, and either could be the subscriber that retires
+// an exemption. A relay named that no longer subscribes fails too, since a dead
+// entry is room for a new relay to hide in.
+//
+// The skip has a floor rather than trust. A relay resolves to its callers'
+// topics, so skipping it may not make a topic disappear: every name the relay
+// carried has to be visible at a declaring site too. When it is not, the skip
+// has swallowed the only subscription there was and every gate counting from
+// here would judge the topic against nothing.
+func (a *sourceTree) subscriptionCensus(t censusReporter, relays map[relaySite]string) subscriptionCensus {
+	t.Helper()
+
+	census := subscriptionCensus{
+		chosen:    map[string][]string{},
+		forwarded: map[string][]string{},
+		relayed:   map[string]string{},
+	}
+	seen := map[relaySite]bool{}
+	for _, site := range a.calls["Subscribe"] {
+		if len(site.call.Args) == 0 {
+			continue
+		}
+		where := a.location(site.file, site.call.Pos())
+		names := a.stringValues(site.file, site.fn, site.call.Args[0], 0)
+		key := relaySiteOf(site)
+		if _, relay := relays[key]; relay {
+			seen[key] = true
+			if !slices.Contains(census.relaySites, site.file.path) {
+				census.relaySites = append(census.relaySites, site.file.path)
+			}
+			for _, name := range names {
+				census.relayed[name] = where
+			}
+			continue
+		}
+		if relaysItsTopic(site) {
+			t.Errorf("%s: this subscription takes its topic from a parameter of %s, which is not one of "+
+				"knownRelays.\nThe census cannot tell a relay, which hands on whatever topic its caller "+
+				"names, from a subscriber written as a helper, and skipping either silently is how a dead "+
+				"exemption passes. Name the topic at the call, or, if the site is a relay, add it to "+
+				"knownRelays with its reason.", where, key)
+			continue
+		}
+		if len(names) == 0 {
+			t.Errorf("%s: the topic of this subscription cannot be resolved statically.\n"+
+				"A subscription this census cannot read may be the subscriber that retires an exemption, "+
+				"so it is not skipped. Bind the topic to a string constant.", where)
+			continue
+		}
+		for _, name := range names {
+			if forwarderOf(site.file.path) != "" {
+				census.forwarded[name] = append(census.forwarded[name], site.file.path)
+				continue
+			}
+			census.chosen[name] = append(census.chosen[name], site.file.path)
+		}
+	}
+	slices.Sort(census.relaySites)
+
+	for _, key := range slices.SortedFunc(maps.Keys(relays), func(x, y relaySite) int {
+		return strings.Compare(x.String(), y.String())
+	}) {
+		if !seen[key] {
+			t.Errorf("knownRelays names %s, and no subscription sits there.\nDelete the entry: a "+
+				"relay listed and gone is room for a new one to be skipped unread.", key)
+		}
+	}
+
+	for _, name := range slices.Sorted(maps.Keys(census.relayed)) {
+		if len(census.chosen[name]) == 0 && len(census.forwarded[name]) == 0 {
+			t.Errorf("%s: the %q topic is visible ONLY through a relayed subscription.\n"+
+				"The relay was skipped because it declares no topic, which leaves this "+
+				"topic with no subscription site at all — so it would be judged here "+
+				"against nothing. Either a subscriber names the topic in a constant this "+
+				"scan can resolve, or the skip has grown past the case it was written for.",
+				census.relayed[name], name)
+		}
+	}
+
+	return census
+}
+
+// relaySite names a function by its package's directory in this repository and
+// its name, with its receiver's type for a method.
+type relaySite struct {
+	pkg string
+	fn  string
+}
+
+// String writes the site as "pkg.fn", for a message.
+func (r relaySite) String() string { return r.pkg + "." + r.fn }
+
+// knownRelays are the functions whose Subscribe call hands on the topic its
+// own caller named, and why each does; the census skips their sites and no
+// other (D277, ADR 0437).
+//
+// A relay resolves to every topic of every caller, so counting one as a
+// subscriber blinds both event gates, and recognizing one by its shape — a
+// topic that is a parameter — skipped a subscriber written as a helper and
+// passed a dead exemption. So the set is closed and named: a new relay is
+// written here, with its reason, or it fails the census.
+var knownRelays = map[relaySite]string{
+	{pkg: "core/plugin", fn: "Host.Subscribe"}: "hands a plugin's subscription to the bus when the " +
+		"registry starts",
+	{pkg: "internal/app", fn: "commandBus.Subscribe"}: "stands in for the bus in a command process, " +
+		"accepts every subscription and consumes nothing, and hands its caller's topic to the real bus " +
+		"only to have an empty one refused (ADR 0160)",
+}
+
+// relaySiteOf names the function a subscription sits in.
+func relaySiteOf(site callSite) relaySite {
+	key := relaySite{pkg: filepath.ToSlash(filepath.Dir(site.file.path))}
+	if site.fn == nil {
+		return key
+	}
+	key.fn = site.fn.Name.Name
+	if site.fn.Recv != nil && len(site.fn.Recv.List) > 0 {
+		key.fn = receiverTypeName(site.fn.Recv.List[0].Type) + "." + key.fn
+	}
+
+	return key
+}
+
+// censusReporter is the part of *testing.T the census reports through, so a
+// test can read what it reports about a tree it builds.
+type censusReporter interface {
+	Helper()
+	Errorf(format string, args ...any)
+}
+
+// relays names the relay files the census skipped, for a message.
+func (c subscriptionCensus) relays() []string {
+	if len(c.relaySites) == 0 {
+		return []string{"none found"}
+	}
+
+	return c.relaySites
 }
 
 // relaysItsTopic reports whether the subscription's topic is a PARAMETER of the
 // function it sits in, which makes the site a relay rather than a declaration.
 //
-// core/plugin's Host.Subscribe is the one in this repository: it takes a topic
-// and hands it to the bus, so the resolver walks back to the callers and that
-// single site answers with every topic every plugin subscribes to.
+// It no longer decides what is skipped: [knownRelays] does, by name, after a
+// gate's message named one relay for weeks after the second came (D277). A site
+// of this shape that is not listed fails the census, because the shape is
+// shared by a relay and by a subscriber written as a helper.
 func relaysItsTopic(site callSite) bool {
 	if len(site.call.Args) == 0 || site.fn == nil || site.fn.Type.Params == nil {
 		return false

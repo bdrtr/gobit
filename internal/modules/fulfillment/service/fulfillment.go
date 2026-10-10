@@ -453,21 +453,23 @@ func (s *Service) CancelFulfillment(ctx context.Context, id string) error {
 		}
 
 		now := s.now()
-		if _, err = s.store.UpdateFulfillmentStatus(ctx, ful.ID, models.StatusCanceled,
+		updated, err := s.store.UpdateFulfillmentStatus(ctx, ful.ID, models.StatusCanceled,
 			ful.TrackingNumber, ful.TrackingURL,
-			ful.ShippedAt, ful.DeliveredAt, &now, ful.ReturnedAt); err != nil {
+			ful.ShippedAt, ful.DeliveredAt, &now, ful.ReturnedAt)
+		if err != nil {
 			return err
 		}
+		at := storedMoment(updated.CanceledAt, now)
 
 		// The outbox row commits with the status. A parcel canceled without its
 		// event is units that left a live parcel and went nowhere: the
 		// cancellation that counted them as gone is never recomputed, and the
 		// stock stays deducted with nothing saying it should not be (ADR 0139).
-		if err := s.recordFulfillmentCanceled(ctx, ful.ID, ful.Reference, ful.ReturnID, now); err != nil {
+		if err := s.recordFulfillmentCanceled(ctx, ful.ID, ful.Reference, ful.ReturnID, at); err != nil {
 			return err
 		}
 
-		reference, returnID, canceledAt = ful.Reference, ful.ReturnID, now
+		reference, returnID, canceledAt = ful.Reference, ful.ReturnID, at
 
 		return nil
 	})
@@ -646,7 +648,11 @@ func (s *Service) recordLateShipment(
 //
 // THE PROVIDER IS NOT CALLED; the rationale is the same as for
 // [Service.MarkShipped]. On an already delivered fulfillment a second call
-// returns no error (idempotency).
+// returns no error (idempotency) and announces nothing.
+//
+// The delivery writes [EventFulfillmentDelivered] into the outbox in its
+// transaction and publishes it after the commit (ADR 0437); a refused delivery
+// writes nothing.
 //
 // # A PENDING fulfillment can be delivered, and shipped_at stays empty
 //
@@ -673,7 +679,12 @@ func (s *Service) MarkDelivered(ctx context.Context, id string) (models.Fulfillm
 		return models.Fulfillment{}, err
 	}
 
-	var out models.Fulfillment
+	var (
+		out models.Fulfillment
+		// delivered is the moment of a delivery this call recorded; it stays
+		// zero for a parcel that was already delivered, which announces nothing.
+		delivered time.Time
+	)
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {
 		ful, err := s.store.LockFulfillment(ctx, id)
 		if err != nil {
@@ -710,12 +721,23 @@ func (s *Service) MarkDelivered(ctx context.Context, id string) (models.Fulfillm
 		if err != nil {
 			return err
 		}
-		out = updated
+
+		// The outbox row commits with the status (ADR 0437).
+		at := storedMoment(updated.DeliveredAt, now)
+		if err := s.recordFulfillmentDelivered(ctx, ful.ID, ful.Reference, ful.ReturnID, at); err != nil {
+			return err
+		}
+		out, delivered = updated, at
+
 		return nil
 	})
 	if err != nil {
 		return models.Fulfillment{}, err
 	}
+	if !delivered.IsZero() {
+		s.publishFulfillmentDelivered(ctx, out.ID, out.Reference, out.ReturnID, delivered)
+	}
+
 	return out, nil
 }
 
@@ -784,15 +806,16 @@ func (s *Service) MarkReturned(ctx context.Context, id string) (models.Fulfillme
 		if err != nil {
 			return err
 		}
+		at := storedMoment(updated.ReturnedAt, now)
 
 		// The outbox row commits with the status: the parcel now holds its
 		// units only as far as a return or a replacement speaks for them, and a
 		// line written off while it was on the way is recounted when this event
 		// is heard (ADR 0423).
-		if err := s.recordFulfillmentReturned(ctx, ful.ID, ful.Reference, ful.ReturnID, now); err != nil {
+		if err := s.recordFulfillmentReturned(ctx, ful.ID, ful.Reference, ful.ReturnID, at); err != nil {
 			return err
 		}
-		out, cameBack = updated, now
+		out, cameBack = updated, at
 
 		return nil
 	})
@@ -804,6 +827,19 @@ func (s *Service) MarkReturned(ctx context.Context, id string) (models.Fulfillme
 	}
 
 	return out, nil
+}
+
+// storedMoment is the moment a move's UPDATE returned, which is the one its
+// event carries (ADR 0437, D278): the column keeps microseconds and the clock
+// nanoseconds, so a moment taken from the clock names an instant no reader of
+// the parcel sees. The clock's value stands in only for a store that returned
+// no stamp, which the stamp constraints do not allow for the status written.
+func storedMoment(stored *time.Time, clock time.Time) time.Time {
+	if stored == nil {
+		return clock
+	}
+
+	return *stored
 }
 
 // GetFulfillment returns the fulfillment together with its ITEMS;

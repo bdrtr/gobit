@@ -98,8 +98,12 @@ func (s *Service) CreateCart(ctx context.Context, in CreateCartInput) (models.Ca
 	// cart written without its promised event is the state the outbox exists to
 	// prevent, and an event written for a cart that rolled back is the mirror of
 	// it.
-	var cart models.Cart
-	at := time.Now().UTC()
+	// The event's moment is the row's created_at, which the INSERT returns:
+	// an event's moment is the stored moment (ADR 0437, D278).
+	var (
+		cart models.Cart
+		at   time.Time
+	)
 	err = s.store.WithTx(ctx, func(ctx context.Context) error {
 		created, createErr := s.store.CreateCart(ctx, models.Cart{
 			ID:             models.NewCartID(),
@@ -115,7 +119,7 @@ func (s *Service) CreateCart(ctx context.Context, in CreateCartInput) (models.Ca
 		if createErr != nil {
 			return createErr
 		}
-		cart = created
+		cart, at = created, created.CreatedAt
 
 		return s.recordCartEvent(ctx, EventCartCreated, created, at)
 	})
@@ -455,8 +459,12 @@ func (s *Service) MarkCompleted(ctx context.Context, cartID string) (models.Cart
 		return models.Cart{}, err
 	}
 
-	var completed models.Cart
-	at := time.Now().UTC()
+	// The event's moment is the completed_at the UPDATE returns (ADR 0437,
+	// D278).
+	var (
+		completed models.Cart
+		at        time.Time
+	)
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {
 		cart, err := s.store.LockCart(ctx, cartID)
 		if err != nil {
@@ -481,6 +489,12 @@ func (s *Service) MarkCompleted(ctx context.Context, cartID string) (models.Cart
 		completed, err = s.store.MarkCartCompleted(ctx, cartID)
 		if err != nil {
 			return err
+		}
+		// The UPDATE sets completed_at, so the row always carries it; the clock
+		// stands in only for a store that returned none.
+		at = time.Now().UTC()
+		if completed.CompletedAt != nil {
+			at = *completed.CompletedAt
 		}
 
 		return s.recordCartEvent(ctx, EventCartCompleted, completed, at)

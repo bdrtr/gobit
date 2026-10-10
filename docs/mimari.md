@@ -424,7 +424,7 @@ payload is kept narrow and all values are strings (rationale:
 an int64 put in reaches a subscriber as a float64 on Redis and as an int64 in
 memory.
 
-Two steps are not optional, and both are enforced by a build that goes red
+Three steps are not optional, and each is enforced by a build that goes red
 rather than by this paragraph:
 
 1. **Forward it.** `plugins/webhookout` must carry the topic. A published topic
@@ -440,6 +440,12 @@ rather than by this paragraph:
    forever with nothing saying it should not be, which is why the fulfillment and
    order modules fail the write when the row will not go in
    ([ADR 0139](adr/0139-a-canceled-parcel-gives-its-units-back.md)).
+3. **Say who chose it.** A topic whose only subscriber is `plugins/webhookout`
+   fails `TestEveryTopicHasASubscriberThatChoseIt`: write the subscriber that
+   acts on it, or an entry in `subscriberlessPublications` naming the outside
+   consumer that reported it and the record whose Decision names the topic
+   ([ADR 0063](adr/0063-a-forwarder-is-not-a-first-subscriber.md),
+   [ADR 0437](adr/0437-a-parcels-delivery-and-a-returns-moves-are-on-the-bus.md)).
 
 Where the publish sits varies with that answer: in order it is inside the saga,
 in catalog it is after the commit, and returning an error there would be telling

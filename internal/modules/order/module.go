@@ -75,11 +75,13 @@
 //
 // "order.placed" when an order is created (plan Phase 6 DoD),
 // "order.line_canceled" when units of a line are written off (ADR 0134),
-// "order.canceled" when an order is canceled (ADR 0288) and "order.completed"
-// when it is completed (ADR 0386); each is written into the outbox in the
-// transaction that made it and published after the commit. Archiving publishes
-// nothing. For the payloads see [service.EventOrderPlaced], service/events.go
-// and the files beside it.
+// "order.canceled" when an order is canceled (ADR 0288), "order.completed"
+// when it is completed (ADR 0386), and "order.return_opened" and
+// "order.return_canceled" when a return is opened or withdrawn (ADR 0437); each
+// is written into the outbox in the transaction that made it and published
+// after the commit. Archiving publishes nothing, and neither do a return's
+// receipt and the claim, exchange and replacement moves. For the payloads see
+// [service.EventOrderPlaced], service/events.go and the files beside it.
 //
 // # The links it declares
 //

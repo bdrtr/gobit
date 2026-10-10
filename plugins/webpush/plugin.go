@@ -111,9 +111,9 @@ const (
 
 // orderPlacedEvent is the one order event the plugin pushes.
 //
-// The order module also publishes "order.line_canceled", "order.canceled" and
-// "order.completed"; none is pushed, because ADR 0051 names this plugin's
-// fan-out a standing authority and a second trigger would widen it (ADR 0386).
+// The order module publishes other topics too, which its module documentation
+// lists; none is pushed, because ADR 0051 names this plugin's fan-out a
+// standing authority and a second trigger would widen it (ADR 0386).
 const orderPlacedEvent = "order.placed"
 
 // Plugin is the web push plugin.
