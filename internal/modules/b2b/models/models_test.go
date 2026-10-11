@@ -87,7 +87,7 @@ func TestZeroLimitDiffersFromUnlimited(t *testing.T) {
 func TestNormalizationConvertsToStorageForm(t *testing.T) {
 	t.Parallel()
 
-	assert.Equal(t, "muhasebe@acme.example", models.NormalizeEmail("  Muhasebe@Acme.Example "))
+	assert.Equal(t, "accounting@acme.example", models.NormalizeEmail("  Accounting@Acme.Example "))
 	assert.Equal(t, "TR", models.NormalizeCountryCode(" tr "))
 	assert.Equal(t, "TRY", models.NormalizeCurrencyCode("try"))
 }

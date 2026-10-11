@@ -454,9 +454,10 @@ var countEnglishScales = map[string]bool{
 // Turkish, and that half was removed when the ledger emptied and no Turkish prose
 // was left for it to read (D228).
 //
-// It costs this: Turkish written without diacritics and without a word from the
-// language detector's closed lists ([safeTurkishWords], [turkishStems]) is now
-// read by neither gate, so a count written that way goes unread. The premise that
+// It costs this: Turkish written without diacritics, without a word from the
+// language detector's closed lists ([safeTurkishWords], [turkishStems]) and
+// without one of its endings ([turkishEndings]) is now read by neither gate, so
+// a count written that way goes unread. The premise that
 // no Turkish prose is left is held by [TestNoTurkishOutsideLedger] with the ledger
 // empty.
 func countNumeralWords() countNumerals {

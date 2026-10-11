@@ -212,7 +212,7 @@ func TestStoreGetProductTakesTheChannelFromThePath(t *testing.T) {
 		},
 	}
 
-	rec := storeRequest(t, newRouter(catalog), storeProductPath+"tisort",
+	rec := storeRequest(t, newRouter(catalog), storeProductPath+"t-shirt",
 		&corehttp.Principal{ID: "apk_1", Kind: "api_key", SalesChannelIDs: []string{scopedChannel, "sc_b"}})
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	assert.Equal(t, []string{scopedChannel}, got)
@@ -231,7 +231,7 @@ func TestStoreGetProductRefusesAChannelTheKeyDoesNotHold(t *testing.T) {
 		},
 	}
 
-	rec := storeRequest(t, newRouter(catalog), "/store/v1/sales-channels/sc_other/products/tisort",
+	rec := storeRequest(t, newRouter(catalog), "/store/v1/sales-channels/sc_other/products/t-shirt",
 		&corehttp.Principal{ID: "apk_1", Kind: "api_key", SalesChannelIDs: []string{scopedChannel}})
 
 	assert.Equal(t, http.StatusForbidden, rec.Code, "body: %s", rec.Body.String())

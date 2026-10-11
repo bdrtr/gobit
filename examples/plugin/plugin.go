@@ -1,7 +1,7 @@
-// Package havale is an OUT-OF-TREE plugin written only against the packages
+// Package banktransfer is an OUT-OF-TREE plugin written only against the packages
 // gobit publishes. Its whole purpose is to fail to compile if the published
 // surface is missing something an extension author needs.
-package havale
+package banktransfer
 
 import (
 	"context"
@@ -27,7 +27,7 @@ type Plugin struct{}
 func New() *Plugin { return &Plugin{} }
 
 // Name identifies the plugin to the host.
-func (p *Plugin) Name() string { return "havale" }
+func (p *Plugin) Name() string { return "banktransfer" }
 
 // RequiresCore names the gobit releases the plugin works with; the host refuses
 // to install it with any other (core/plugin.CoreRequirement).
@@ -37,13 +37,13 @@ func (p *Plugin) RequiresCore() string { return ">=v0.9.0" }
 func (p *Plugin) Setup(_ context.Context, h *coreplugin.Host) error {
 	account, ok := h.Setting("account")
 	if !ok {
-		return coreerrors.Invalid("havale_account_missing",
-			"the havale plugin needs an account setting")
+		return coreerrors.Invalid("banktransfer_account_missing",
+			"the bank transfer plugin needs an account setting")
 	}
-	h.Logger().Info("havale is set up", "account", account)
+	h.Logger().Info("the bank transfer plugin is set up", "account", account)
 	h.RegisterPaymentProvider(&transfer{account: account})
 	h.AddRoutes(func(r chi.Router) {
-		r.Get("/store/v1/havale/account", func(w http.ResponseWriter, r *http.Request) {
+		r.Get("/store/v1/banktransfer/account", func(w http.ResponseWriter, r *http.Request) {
 			corehttp.WriteJSON(r.Context(), w, http.StatusOK, map[string]string{"account": account})
 		})
 	})
@@ -83,7 +83,7 @@ func (p *Plugin) Setup(_ context.Context, h *coreplugin.Host) error {
 	// only fail. jobreport.Report compiling here is the proof that the wall is
 	// gone, in the one place where Go's own internal/ rule really applies.
 	h.RegisterJob(coreplugin.Job{
-		Name:   "havale-reminder",
+		Name:   "banktransfer-reminder",
 		Every:  24 * time.Hour,
 		MaxRun: time.Minute,
 		Run: func(ctx context.Context) error {
@@ -102,7 +102,7 @@ func (p *Plugin) Setup(_ context.Context, h *coreplugin.Host) error {
 type transfer struct{ account string }
 
 // ID is the durable identity the configuration selects.
-func (t *transfer) ID() string { return "havale" }
+func (t *transfer) ID() string { return "banktransfer" }
 
 // CreateSession opens a transfer the customer will make by hand.
 func (t *transfer) CreateSession(
@@ -110,7 +110,7 @@ func (t *transfer) CreateSession(
 ) (coreprovider.Session, error) {
 	data, err := json.Marshal(map[string]string{"account": t.account})
 	if err != nil {
-		return coreprovider.Session{}, coreerrors.Internal("havale_encode_failed",
+		return coreprovider.Session{}, coreerrors.Internal("banktransfer_encode_failed",
 			"the account could not be encoded")
 	}
 

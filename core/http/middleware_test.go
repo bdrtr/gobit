@@ -132,11 +132,11 @@ func TestRecovererReturnsA500JSONOnAPanic(t *testing.T) {
 
 	log, buf := testLogger()
 	h := corehttp.RequestID(corehttp.Recoverer(log)(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-		panic("unexpected state: secret-detay-123")
+		panic("unexpected state: secret-detail-123")
 	})))
 
-	req := httptest.NewRequest(http.MethodGet, "/patlayan", http.NoBody)
-	req.Header.Set(requestIDHeaderName, "req_panik")
+	req := httptest.NewRequest(http.MethodGet, "/panicking", http.NoBody)
+	req.Header.Set(requestIDHeaderName, "req_panic")
 	rec := httptest.NewRecorder()
 
 	require.NotPanics(t, func() { h.ServeHTTP(rec, req) }, "the panic must not get past the middleware")
@@ -147,21 +147,21 @@ func TestRecovererReturnsA500JSONOnAPanic(t *testing.T) {
 	var body corehttp.ErrorResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body), "the body has to be JSON: %s", rec.Body.String())
 	assert.Equal(t, "internal_error", body.Error.Code)
-	assert.Equal(t, "req_panik", body.Error.RequestID)
+	assert.Equal(t, "req_panic", body.Error.RequestID)
 	assert.NotContains(t, rec.Body.String(), "secret-detail-123", "the panic text must not leak to the client")
 
 	records := logRecords(t, buf)
 	require.Len(t, records, 1)
 	assert.Equal(t, "the handler panicked", records[0]["msg"])
-	assert.Equal(t, "unexpected state: secret-detay-123", records[0]["panic"])
+	assert.Equal(t, "unexpected state: secret-detail-123", records[0]["panic"])
 	assert.Contains(t, records[0]["stack"], "panic", "the stack trace has to be logged")
-	assert.Equal(t, "req_panik", records[0]["request_id"])
+	assert.Equal(t, "req_panic", records[0]["request_id"])
 
 	// The process is up: the same chain handles the next request normally.
 	okRec := httptest.NewRecorder()
 	corehttp.Recoverer(log)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
-	})).ServeHTTP(okRec, httptest.NewRequest(http.MethodGet, "/saglikli", http.NoBody))
+	})).ServeHTTP(okRec, httptest.NewRequest(http.MethodGet, "/healthy", http.NoBody))
 	assert.Equal(t, http.StatusNoContent, okRec.Code)
 }
 
@@ -300,7 +300,7 @@ func TestRequestLoggerDoesNotLogSensitiveData(t *testing.T) {
 		cookieValue  = "session-cookie-secret-value"
 		queryToken   = "secret-token-value-in-the-query"
 		apiKeyValue  = "sk-live-api-key"
-		passwordText = "hunter2-parolasi"
+		passwordText = "hunter2-password"
 	)
 
 	log, buf := testLogger()
@@ -415,7 +415,7 @@ func TestRequestLoggerMasksSensitiveQueryKeys(t *testing.T) {
 		"pagination":      {key: "limit", masked: false},
 		"sorting":         {key: "sort", masked: false},
 		"a status filter": {key: "status", masked: false},
-		"an unknown key":  {key: "renk", masked: false},
+		"an unknown key":  {key: "color", masked: false},
 		// "pin" appears inside "shipping": because short names are not searched for as
 		// substrings, the shipping filter has to stay readable.
 		"a shipping filter": {key: "shipping", masked: false},
@@ -466,13 +466,13 @@ func TestRequestLoggerWritesAnAccessRecordOnAPanicToo(t *testing.T) {
 		}))
 
 		assert.Panics(t, func() {
-			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/patlayan", http.NoBody))
+			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/panicking", http.NoBody))
 		}, "RequestLogger must not swallow the panic")
 
 		records := logRecords(t, buf)
 		require.Len(t, records, 1, "a panicking request has to show up in the access log too")
 		assert.Equal(t, "request completed", records[0]["msg"])
-		assert.Equal(t, "/patlayan", records[0]["path"])
+		assert.Equal(t, "/panicking", records[0]["path"])
 		assert.InDelta(t, float64(http.StatusInternalServerError), records[0]["status"], 0,
 			"if the response never started, status 500 is recorded")
 	})
@@ -631,7 +631,7 @@ func TestResponseWriterReturnsAnErrorWhenHijackIsUnsupported(t *testing.T) {
 		_, _, err = hj.Hijack()
 	}))
 
-	// httptest.ResponseRecorder Hijack desteklemez.
+	// httptest.ResponseRecorder does not support Hijack.
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/ws", http.NoBody))
 
 	require.Error(t, err)

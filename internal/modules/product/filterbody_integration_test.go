@@ -114,13 +114,13 @@ func newFilterFixture(t *testing.T) filterFixture {
 	// per-option unique index on the folded form is not in the way (it is the
 	// rule for two spellings inside ONE option, which is a merchant error the
 	// index refuses at write time).
-	fx.addOptionValue(t, fx.both, "Renk", turkishRed)
-	fx.addOptionValue(t, fx.catOnly, "Renk", "KIRMIZI")
-	fx.addOptionValue(t, fx.plain, "Renk", "Mavi")
+	fx.addOptionValue(t, fx.both, "Color", turkishRed)
+	fx.addOptionValue(t, fx.catOnly, "Color", "KIRMIZI")
+	fx.addOptionValue(t, fx.plain, "Color", "Blue")
 
 	// The value under a DELETED option: removing an option is not a cascade, so
 	// this row stays alive and the filter must still refuse it.
-	deadOption := fx.addOptionValue(t, fx.tagOnly, "Renk", turkishRed)
+	deadOption := fx.addOptionValue(t, fx.tagOnly, "Color", turkishRed)
 	require.NoError(t, repo.SoftDeleteOption(context.Background(), deadOption))
 
 	return fx
@@ -346,7 +346,7 @@ func TestSeveralCriteriaTogetherIntersect(t *testing.T) {
 	t.Run("category and option value", func(t *testing.T) {
 		f := fx.filter()
 		f.CategoryID = &fx.categoryID
-		folded := models.FoldOptionValue("mavi")
+		folded := models.FoldOptionValue("blue")
 		f.OptionValueFolded = &folded
 		// plain offers the color and is in no category; both and catOnly are
 		// in the category and offer the other color.

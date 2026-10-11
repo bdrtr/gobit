@@ -55,8 +55,9 @@ linters:
       # typo of that spelling in English passes too, which is the accepted
       # price of not sprinkling nolint through a lookup table:
       #   adres    -> mistaken for "address"
-      # The repository has held no Turkish prose since D227, and the words that
-      # stood in for it went with it.
+      # The repository was taken to hold no Turkish prose from D227 on, and the
+      # words that stood in for it went with it; the last lines of it, which the
+      # language gate could not read, were translated with D279.
       ignore-rules:
         - adres
     gocritic:

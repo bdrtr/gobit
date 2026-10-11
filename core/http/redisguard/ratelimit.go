@@ -104,8 +104,8 @@ var _ corehttp.RateLimiter = (*Limiter)(nil)
 // to corehttp.RateLimit as an interface produces a "non-nil interface holding
 // nil" value, the middleware's limiter == nil check comes out FALSE and the
 // first request panics. With the constructor already returning an error there is
-// no reason to carry that trap; a caller wanting no limit simply does not plug
-// nil verir.
+// no reason to carry that trap; a caller wanting no limit passes a plain nil to
+// corehttp.RateLimit instead.
 func NewLimiter(client *redis.Client, keyPrefix string, limit int, window time.Duration) (*Limiter, error) {
 	if client == nil {
 		return nil, coreerrors.Invalid(CodeInvalidConfig, "the redis client cannot be nil")

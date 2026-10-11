@@ -101,12 +101,12 @@ func TestARowNamesTheProductItSold(t *testing.T) {
 
 	h := newHarness(t)
 	h.orders.order.Items[0].ProductTitle = "Kenya AA"
-	h.orders.order.Items[0].Title = "1 kg / Filtre"
+	h.orders.order.Items[0].Title = "1 kg / Filter"
 
 	_, err := h.flow.IssueForOrder(context.Background(), validIssue())
 	require.NoError(t, err)
 
-	assert.Equal(t, "Kenya AA — 1 kg / Filtre", h.invoices.lastDocument(t).Lines[0].Description)
+	assert.Equal(t, "Kenya AA — 1 kg / Filter", h.invoices.lastDocument(t).Lines[0].Description)
 }
 
 // TestIssuingTwiceDoesNotSpendASecondNumber is the flow's own guarantee.

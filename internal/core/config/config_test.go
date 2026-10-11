@@ -918,8 +918,8 @@ func TestASharedEnvironmentWantsASeedPasswordLength(t *testing.T) {
 		password    string
 		rejected    bool
 	}{
-		"staging, 15 characters":        {environment: "staging", password: "onbes-karakter1", rejected: true},
-		"staging, 16 characters":        {environment: "staging", password: "onalti-karakter1"},
+		"staging, 15 characters":        {environment: "staging", password: "fifteen-chars-1", rejected: true},
+		"staging, 16 characters":        {environment: "staging", password: "sixteen-chars-01"},
 		"production, a short password":  {environment: "production", password: "short", rejected: true},
 		"production, a long password":   {environment: "production", password: "a-sufficiently-long-password"},
 		"development, a short password": {environment: "development", password: "short"},
@@ -981,7 +981,7 @@ func TestTheRedisKeyPrefixFormIsValidated(t *testing.T) {
 		"a plain name":              {prefix: "gobit"},
 		"a name with a hyphen":      {prefix: "gobit-staging"},
 		"a name with an underscore": {prefix: "gobit_prod"},
-		"a name with a dot":         {prefix: "magaza.42"},
+		"a name with a dot":         {prefix: "shop.42"},
 		"containing a separator":    {prefix: "gobit:staging", rejected: true},
 		"ending with a separator":   {prefix: "gobit:", rejected: true},
 		"with a trailing space":     {prefix: "gobit ", rejected: true},

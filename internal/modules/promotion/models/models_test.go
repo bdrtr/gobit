@@ -133,7 +133,7 @@ func TestPromotionCandidateSeparatesRulesByType(t *testing.T) {
 	candidate := models.PromotionCandidate{
 		Rules: []models.PromotionRule{
 			{ID: "prule_1", RuleType: models.RuleContext, Attribute: "region_id"},
-			{ID: "prule_2", RuleType: models.RuleTarget, Attribute: "kategori"},
+			{ID: "prule_2", RuleType: models.RuleTarget, Attribute: "category"},
 			{ID: "prule_3", RuleType: models.RuleContext, Attribute: "customer_group_id"},
 		},
 	}

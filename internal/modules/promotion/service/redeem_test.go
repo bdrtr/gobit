@@ -245,7 +245,7 @@ func TestRedeemPromotionRefusesConflictingIDAndCode(t *testing.T) {
 	repo := repoWithCoupon(nil, nil)
 
 	_, err := newTestService(repo).RedeemPromotion(context.Background(), RedeemInput{
-		PromotionID: "promo_1", Code: "BASKAKOD", Reference: "order_1",
+		PromotionID: "promo_1", Code: "OTHERCODE", Reference: "order_1",
 		Amount: 100, CurrencyCode: "TRY",
 	})
 
@@ -377,14 +377,14 @@ func TestRedeemPromotionRefusesWhenTheCampaignWindowIsClosed(t *testing.T) {
 		{
 			name: "window has closed",
 			campaign: models.Campaign{
-				ID: "camp_1", Name: "Ended", CampaignIdentifier: "BITMIS",
+				ID: "camp_1", Name: "Ended", CampaignIdentifier: "ENDED",
 				BudgetType: models.BudgetNone, EndsAt: ptr(testNow.Add(-time.Hour)),
 			},
 		},
 		{
 			name: "window has not opened yet",
 			campaign: models.Campaign{
-				ID: "camp_1", Name: "Gelecek", CampaignIdentifier: "GELECEK",
+				ID: "camp_1", Name: "Upcoming", CampaignIdentifier: "UPCOMING",
 				BudgetType: models.BudgetNone, StartsAt: ptr(testNow.Add(time.Hour)),
 			},
 		},

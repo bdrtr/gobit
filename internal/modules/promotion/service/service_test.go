@@ -181,11 +181,11 @@ func TestUpdatePromotionKeepsTheUsageCounter(t *testing.T) {
 	repo.promotions[promo.ID] = record
 
 	updated, err := svc.UpdatePromotion(context.Background(), promo.ID, PromotionInput{
-		Code: "KIS20", Status: models.PromotionActive,
+		Code: "WINTER20", Status: models.PromotionActive,
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, "KIS20", updated.Code)
+	assert.Equal(t, "WINTER20", updated.Code)
 	assert.Equal(t, int64(7), updated.UsageCount,
 		"only the redemption flow writes the counter; an admin update cannot reset it")
 }
@@ -586,11 +586,11 @@ func TestLookupStoreCouponReturnsOnlyAUsableCoupon(t *testing.T) {
 
 func TestLookupStoreCouponDoesNotLeak(t *testing.T) {
 	closedCampaign := models.Campaign{
-		ID: "camp_1", Name: "Ended", CampaignIdentifier: "BITMIS",
+		ID: "camp_1", Name: "Ended", CampaignIdentifier: "ENDED",
 		BudgetType: models.BudgetNone, EndsAt: ptr(testNow.Add(-time.Hour)),
 	}
 	exhaustedCampaign := models.Campaign{
-		ID: "camp_2", Name: "Exhausted", CampaignIdentifier: "TUKENMIS",
+		ID: "camp_2", Name: "Exhausted", CampaignIdentifier: "EXHAUSTED",
 		BudgetType: models.BudgetUsage, BudgetLimit: ptr(int64(1)), BudgetUsed: 1,
 	}
 
@@ -610,20 +610,20 @@ func TestLookupStoreCouponDoesNotLeak(t *testing.T) {
 			name: "draft promotion",
 			setup: func(repo *memRepo) {
 				seedPromotion(repo, models.Promotion{
-					ID: "promo_1", Code: "TASLAK", Status: models.PromotionDraft,
+					ID: "promo_1", Code: "DRAFT", Status: models.PromotionDraft,
 				}, percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationEach))
 			},
-			code:   "TASLAK",
+			code:   "DRAFT",
 			reason: "a draft coupon must not APPEAR TO EXIST to the customer",
 		},
 		{
 			name: "inactive promotion",
 			setup: func(repo *memRepo) {
 				seedPromotion(repo, models.Promotion{
-					ID: "promo_1", Code: "PASIF", Status: models.PromotionInactive,
+					ID: "promo_1", Code: "INACTIVE", Status: models.PromotionInactive,
 				}, percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationEach))
 			},
-			code:   "PASIF",
+			code:   "INACTIVE",
 			reason: "an inactive coupon must not APPEAR TO EXIST to the customer",
 		},
 		{
@@ -631,10 +631,10 @@ func TestLookupStoreCouponDoesNotLeak(t *testing.T) {
 			setup: func(repo *memRepo) {
 				repo.campaigns[closedCampaign.ID] = closedCampaign
 				seedPromotion(repo, models.Promotion{
-					ID: "promo_1", Code: "KAPALI", CampaignID: ptr(closedCampaign.ID),
+					ID: "promo_1", Code: "CLOSED", CampaignID: ptr(closedCampaign.ID),
 				}, percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationEach))
 			},
-			code:   "KAPALI",
+			code:   "CLOSED",
 			reason: "the campaign schedule must not be given away",
 		},
 		{
@@ -642,20 +642,20 @@ func TestLookupStoreCouponDoesNotLeak(t *testing.T) {
 			setup: func(repo *memRepo) {
 				repo.campaigns[exhaustedCampaign.ID] = exhaustedCampaign
 				seedPromotion(repo, models.Promotion{
-					ID: "promo_1", Code: "TUKENMIS", CampaignID: ptr(exhaustedCampaign.ID),
+					ID: "promo_1", Code: "EXHAUSTED", CampaignID: ptr(exhaustedCampaign.ID),
 				}, percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationEach))
 			},
-			code:   "TUKENMIS",
+			code:   "EXHAUSTED",
 			reason: "the budget state must not be given away",
 		},
 		{
 			name: "usage allowance exhausted",
 			setup: func(repo *memRepo) {
 				seedPromotion(repo, models.Promotion{
-					ID: "promo_1", Code: "BITTI", UsageLimit: ptr(int64(1)), UsageCount: 1,
+					ID: "promo_1", Code: "USED_UP", UsageLimit: ptr(int64(1)), UsageCount: 1,
 				}, percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationEach))
 			},
-			code:   "BITTI",
+			code:   "USED_UP",
 			reason: "the usage counter must not be given away",
 		},
 		{
@@ -676,10 +676,10 @@ func TestLookupStoreCouponDoesNotLeak(t *testing.T) {
 			name: "buyget without a quantity pair",
 			setup: func(repo *memRepo) {
 				seedPromotion(repo, models.Promotion{
-					ID: "promo_1", Code: "YARIM", Type: models.PromotionBuyGet,
+					ID: "promo_1", Code: "HALF", Type: models.PromotionBuyGet,
 				}, percentageMethod("promo_1", 10000, models.TargetItems, models.AllocationEach))
 			},
-			code: "YARIM",
+			code: "HALF",
 			reason: "a coupon the computation would eliminate must NOT BE OFFERED to the customer; " +
 				"had it been offered, the customer would type the code and nothing would happen",
 		},
@@ -728,10 +728,10 @@ func TestLookupStoreCouponReturnsABuygetCouponWithItsMechanic(t *testing.T) {
 func TestGetPromotionByCodeAdminSeesTheDraft(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo, models.Promotion{
-		ID: "promo_1", Code: "TASLAK", Status: models.PromotionDraft,
+		ID: "promo_1", Code: "DRAFT", Status: models.PromotionDraft,
 	}, nil)
 
-	promo, err := newTestService(repo).GetPromotionByCode(context.Background(), "taslak")
+	promo, err := newTestService(repo).GetPromotionByCode(context.Background(), "draft")
 	require.NoError(t, err)
 
 	assert.Equal(t, models.PromotionDraft, promo.Status,

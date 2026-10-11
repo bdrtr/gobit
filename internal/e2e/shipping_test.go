@@ -853,7 +853,7 @@ func TestTheCartsAddressReachesTheOrder(t *testing.T) {
 	require.NoError(t, err)
 
 	billing := shipping
-	billing.Company = "Gobit Muhasebe"
+	billing.Company = "Gobit Accounting"
 	billing.Address1 = "Bagdat Cad. 99"
 	_, err = cartSvc.SetBillingAddress(ctx, cartID, billing)
 	require.NoError(t, err)
@@ -889,7 +889,7 @@ func TestTheCartsAddressReachesTheOrder(t *testing.T) {
 
 	require.NotNil(t, order.BillingAddress,
 		"the order has no billing address; an invoice cannot print a buyer")
-	assert.Equal(t, "Gobit Muhasebe", order.BillingAddress.Company)
+	assert.Equal(t, "Gobit Accounting", order.BillingAddress.Company)
 	assert.Equal(t, "Bagdat Cad. 99", order.BillingAddress.Address1,
 		"the billing address came back with the SHIPPING address's street; the two "+
 			"were not kept apart")

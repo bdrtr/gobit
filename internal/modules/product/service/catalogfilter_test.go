@@ -539,13 +539,13 @@ func TestTheOptionValueFilterMatchesOnTheFoldedForm(t *testing.T) {
 		// fold exists for. The value is written with \u escapes so this file
 		// carries no Turkish letter of its own (ADR 0012): it is "k", the
 		// dotless i (U+0131), "rm", the dotless i again, "z" and once more.
-		Options:  []service.CreateOptionInput{{Title: "Renk", Values: []string{turkishRed}}},
-		Variants: []service.CreateVariantInput{{Title: "One size", Options: map[string]string{"Renk": turkishRed}}},
+		Options:  []service.CreateOptionInput{{Title: "Color", Values: []string{turkishRed}}},
+		Variants: []service.CreateVariantInput{{Title: "One size", Options: map[string]string{"Color": turkishRed}}},
 	})
 	seedProductInput(t, svc, service.CreateProductInput{
 		Handle: "cap", Title: "Cap", Status: models.StatusPublished,
-		Options:  []service.CreateOptionInput{{Title: "Renk", Values: []string{"Mavi"}}},
-		Variants: []service.CreateVariantInput{{Title: "One size", Options: map[string]string{"Renk": "Mavi"}}},
+		Options:  []service.CreateOptionInput{{Title: "Color", Values: []string{"Blue"}}},
+		Variants: []service.CreateVariantInput{{Title: "One size", Options: map[string]string{"Color": "Blue"}}},
 	})
 
 	for _, spelling := range []string{"KIRMIZI", "  kirmizi  ", turkishRed} {

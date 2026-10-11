@@ -101,7 +101,7 @@ func TestRetriedStepCompensationFailureMarksExecution(t *testing.T) {
 	eng := workflow.New(store, testLogger())
 
 	_, err := eng.Run(t.Context(),
-		workflow.Workflow{Name: "telafi_de_patlar", Steps: steps(s)}, nil,
+		workflow.Workflow{Name: "compensation_blows_up_too", Steps: steps(s)}, nil,
 		workflow.WithRetry(workflow.RetryPolicy{MaxAttempts: 2}))
 
 	require.Error(t, err)
@@ -140,7 +140,7 @@ func TestCompensationRecordKeepsInvokeOutput(t *testing.T) {
 	store := workflow.NewMemoryStore()
 	eng := workflow.New(store, testLogger())
 
-	_, err := eng.Run(t.Context(), workflow.Workflow{Name: "iz_korunur", Steps: steps(a, b)}, nil,
+	_, err := eng.Run(t.Context(), workflow.Workflow{Name: "trail_is_kept", Steps: steps(a, b)}, nil,
 		workflow.WithRetry(workflow.RetryPolicy{MaxAttempts: 3}))
 	require.Error(t, err)
 

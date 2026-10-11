@@ -107,7 +107,7 @@ func TestIdempotencyADifferentBodyReturnsAConflict(t *testing.T) {
 	require.Equal(t, http.StatusCreated, w1.Code)
 
 	w2 := httptest.NewRecorder()
-	mw.ServeHTTP(w2, postRequest("idem_1", "/store/v1/orders", `{"cart":"BASKA"}`))
+	mw.ServeHTTP(w2, postRequest("idem_1", "/store/v1/orders", `{"cart":"OTHER"}`))
 
 	assert.Equal(t, http.StatusConflict, w2.Code)
 	assert.Contains(t, w2.Body.String(), corehttp.CodeIdempotencyConflict)
@@ -604,7 +604,7 @@ func TestIdempotencyAnotherCallerDoesNotOccupyTheKeySpace(t *testing.T) {
 	require.Equal(t, http.StatusCreated, w1.Code)
 
 	w2 := httptest.NewRecorder()
-	mw.ServeHTTP(w2, asPrincipal(postRequest("order-1", "/x", `{"cart":"BASKA"}`), "api_key", "ak_2"))
+	mw.ServeHTTP(w2, asPrincipal(postRequest("order-1", "/x", `{"cart":"OTHER"}`), "api_key", "ak_2"))
 
 	assert.Equal(t, http.StatusCreated, w2.Code, "the second caller has to be in their own key space")
 	assert.Equal(t, 2, h.count())
@@ -626,7 +626,7 @@ func TestIdempotencyTheSameCallerWithTheSameKeyConflicts(t *testing.T) {
 	require.Equal(t, http.StatusCreated, w1.Code)
 
 	w2 := httptest.NewRecorder()
-	mw.ServeHTTP(w2, asPrincipal(postRequest("1", "/x", `{"cart":"BASKA"}`), "user", "usr_1"))
+	mw.ServeHTTP(w2, asPrincipal(postRequest("1", "/x", `{"cart":"OTHER"}`), "user", "usr_1"))
 
 	assert.Equal(t, http.StatusConflict, w2.Code)
 	assert.Contains(t, w2.Body.String(), corehttp.CodeIdempotencyConflict)

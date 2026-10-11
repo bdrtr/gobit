@@ -329,17 +329,17 @@ func TestGraphReturnsNotFoundForAnUnknownLinkWithTheRealService(t *testing.T) {
 
 	_, err := q.Graph(t.Context(), query.GraphSpec{
 		Entity: "shop_item",
-		Expand: []query.Expansion{{Link: "tanimsiz_link"}},
+		Expand: []query.Expansion{{Link: "undefined_link"}},
 	})
 	require.Error(t, err)
 	assert.True(t, errors.IsNotFound(err), "the expected class is NotFound, got: %v", err)
-	assert.Contains(t, err.Error(), "tanimsiz_link")
+	assert.Contains(t, err.Error(), "undefined_link")
 }
 
 func TestGraphReturnsNotFoundForAnUnregisteredProvider(t *testing.T) {
 	items, _, links := setUp(t)
 
-	// shop_price.query bilerek kaydedilmiyor.
+	// shop_price.query is left unregistered on purpose.
 	c := container.New(nil)
 	require.NoError(t, c.Provide(items.Entity()+query.ProviderSuffix, items))
 
@@ -394,7 +394,7 @@ func setUp(t *testing.T) (items, prices *dummyModule, links link.LinkService) {
 
 	items.insert(t, "id, title, status", "item_1", "T-shirt", "published")
 	items.insert(t, "id, title, status", "item_2", "Hat", "published")
-	items.insert(t, "id, title, status", "item_3", "Taslak", "draft")
+	items.insert(t, "id, title, status", "item_3", "Draft", "draft")
 
 	prices.insert(t, "id, amount, currency", "price_1", int64(1990), "TRY")
 	prices.insert(t, "id, amount, currency", "price_2", int64(2490), "TRY")

@@ -396,7 +396,7 @@ func (e storefrontEnvelope) ids() []string {
 // module binds its route and its OpenAPI description to one constant, and a test
 // that imported that constant could not report a typo in it.
 //
-// suffix is what follows the channel — "/products", "/products/tisort",
+// suffix is what follows the channel — "/products", "/products/t-shirt",
 // "/option-values" — and carries its own leading slash so the call sites read
 // like the addresses they produce.
 func catalogPath(channelID, suffix string) string {

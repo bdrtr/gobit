@@ -25,7 +25,7 @@ import (
 // integration test (see internal/e2e).
 
 // CodeInteropTotalsInvalid reports that an unparseable totals body arrived.
-const CodeInteropTotalsInvalid = "e2e_kopru_totals_invalid"
+const CodeInteropTotalsInvalid = "cart_interop_totals_invalid"
 
 // CodeInteropMetadataInvalid reports that an unparseable metadata body
 // arrived.

@@ -62,7 +62,7 @@ func erasureAddress(kind models.AddressType, source string) models.OrderAddress 
 		SourceAddressID: source,
 		FirstName:       "Ayse",
 		LastName:        "Yilmaz",
-		Company:         "Gobit Muhasebe",
+		Company:         "Gobit Accounting",
 		Address1:        "Ataturk Cad. 12",
 		Address2:        "Daire 3",
 		City:            "Istanbul",

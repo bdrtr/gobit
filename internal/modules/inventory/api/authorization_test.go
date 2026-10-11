@@ -37,7 +37,7 @@ func requestWithScopes(
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
-		ID:     "usr_dar",
+		ID:     "usr_narrow",
 		Kind:   "user",
 		Scopes: scopes,
 	}))

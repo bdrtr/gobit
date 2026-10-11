@@ -208,8 +208,8 @@ func (e CompanyEmployee) HasSpendingLimit() bool { return e.SpendingLimit != nil
 // NormalizeEmail converts the e-mail into its storage form: it is trimmed and
 // lowered to LOWERCASE.
 //
-// The normalization is done on STORAGE, not on read: if "Muhasebe@X.com" and
-// "muhasebe@x.com" are meant to denote the same address, both have to come down
+// The normalization is done on STORAGE, not on read: if "Accounting@X.com" and
+// "accounting@x.com" are meant to denote the same address, both have to come down
 // to the same bytes, otherwise the e-mail filter would take them for two
 // different ones.
 //

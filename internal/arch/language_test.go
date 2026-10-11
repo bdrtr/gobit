@@ -2,6 +2,7 @@ package arch_test
 
 import (
 	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -38,7 +39,7 @@ import (
 // line requires touching this file in a review. A new file is born clean
 // because nobody adds it to the ledger.
 //
-// # Why four lanes
+// # Why five lanes
 //
 // A detector that only looked for Turkish LETTERS would be satisfied by a
 // single transliteration pass. This was measured, not guessed: running
@@ -47,7 +48,7 @@ import (
 // repository already writes Turkish this way — of 2852 test function names,
 // zero carry a Turkish letter and hundreds are transliterated Turkish.
 //
-// So the letter scan is one lane of four, and the other three survive
+// So the letter scan is one lane of five, and the other four survive
 // transliteration:
 //
 //   - [laneDiacritic] — Turkish-specific letters anywhere in the file.
@@ -56,6 +57,8 @@ import (
 //   - [laneIdentifier] — Turkish stems as whole parts of an identifier.
 //   - [laneTextStem] — the same stems as whole words of a Go comment or string
 //     literal (ADR 0408).
+//   - [laneSuffix] — words ending the way Turkish inflects and no English word
+//     ends, in Go comments and literals and in every other file (D279).
 //
 // A file is Turkish if ANY lane fires. The lanes report separately so the
 // message says what to fix.
@@ -104,6 +107,22 @@ const (
 	// path ledger carries is subtracted here for the same reason, since that
 	// debt is paid by a rename the path ledger already counts.
 	laneTextStem = "text stem"
+
+	// laneSuffix scans Go comments and string literals, as [laneTextStem] reads
+	// them, and every line of every other file, for a word ending in one of
+	// [turkishEndings], or a name carrying a Turkish case ending after an
+	// apostrophe ([turkishApostropheEndings]) (D279).
+	//
+	// The word and stem lanes read a list of whole words, and a list of words
+	// cannot follow a language that builds a word from a stem and a chain of
+	// suffixes: a comment in core/http, "Status" followed by four Turkish words
+	// typed without their marks, carried none of them and passed every lane
+	// from 2026-09-04, when its file left the ledger, to 2026-10-11, beside eight
+	// more half-translated lines in core/http and core/query and Turkish words
+	// in the test data of a dozen modules. The suffix chain is the part Turkish
+	// shares across its whole vocabulary, so this lane reads the grammar rather
+	// than the vocabulary.
+	laneSuffix = "suffix"
 )
 
 // turkishLedgerPath lists every hand-written source file that still contains
@@ -198,6 +217,12 @@ var safeTurkishWords = []string{
 // English words are excluded even when Turkish shares them: "test", "panel",
 // "kanal" as a spelling of "channel", "rol" inside "rollback". Whole-part
 // matching handles most of these; the rest are simply absent from the list.
+//
+// The last block came with D279: Turkish words a sweep of the tree found in
+// test data and comments, which [laneSuffix] cannot read because they carry no
+// ending, each absent from the English word forms and the standard-library
+// words [turkishEndings] was measured against. Words the tree keeps as the
+// subject of a folding test ("kirmizi", "tisort", "mavi") are not on it.
 var turkishStems = []string{
 	"ac", "adet", "adres", "agac", "akis", "akislar", "alan", "altinda", "ara",
 	"arac", "araci",
@@ -227,7 +252,107 @@ var turkishStems = []string{
 	"varyant", "veri", "veritabani", "vergi", "vitrin", "yakala", "yanit", "yapilandirma",
 	"yardimci", "yaz", "yazmasi", "yeni", "yer", "yeter", "yetki", "yigin", "yol",
 	"yollar", "yonetim", "zaman",
+	// D279: the words a sweep of the tree found on 2026-10-11 that no ending
+	// in turkishEndings reads.
+	"aktif", "bagsiz", "bambaska", "baska", "bedava", "belki", "bitti", "butce",
+	"deposu", "detay", "dijital", "elektronik", "eski", "filtre", "fincan",
+	"garanti", "garantiler", "gecmis", "giyim", "gonderi", "guncelleme", "havale",
+	"hesap", "kampanya", "kapali", "karakter", "kategori", "kilit", "kimlik",
+	"kimlikli", "kimliksiz", "kopru", "magaza", "misafir", "muhasebe", "okuma",
+	"onalti", "onbes", "onek", "panik", "parola", "pasif", "patlar", "patlat",
+	"pencere", "rastgele", "renk", "sahte", "sanayi", "seviye", "tanimsiz",
+	"taslak", "telafi", "terlik", "varyantlar", "yabanci", "yarim", "yuzde",
 }
+
+// turkishEndings are Turkish inflectional endings in their folded spelling,
+// read by [laneSuffix] at the end of a word.
+//
+// Each is a suffix chain in the vowel-harmony forms it takes: the copula, the
+// negative and the ability, the progressive, the aorist and the passive, the
+// verbal nouns and participles, the reported past, the gerunds, a plural or a
+// possessive followed by a case, the relative "-ki", the privative, "-lik", the
+// agent noun, the past and the conditional. An ending is on the list only if no
+// English word ends with it, and that is measured rather than judged: on
+// 2026-10-11 none of the 328,631 word forms hunspell's en_US and en_GB
+// dictionaries expand to, and none of the 74,235 words in the comments and
+// literals of the go1.26.9 standard library, ended in one, counting only words
+// at least [suffixStemFloor] letters longer than the ending. The 38 literals
+// and comments of that library that carry a Turkish letter were left out as
+// case-mapping data; the one ending found in them is a Turkish verb in the
+// strings package's example. The forms that failed say what the measurement
+// is for: "-yor" ends "mayor", "-nir" "souvenir", "-mis" "dermis", "-dir"
+// "basedir", "-mez" "Gomez", and "-lmaz" the surname Yilmaz, which this
+// repository keeps as data.
+//
+// It is not the suffix list ADR 0408 rejected. That one matched a stem followed
+// by a suffix, so "para" read "parade"; this one needs no stem, and keeps an
+// ending only where English has no word ending that way. Over the 71,288 lines
+// of Turkish this repository wrote with its marks, transliterated, the word and
+// stem lanes found 68.6% and this list alone 76.7%; together they find 92.3%.
+var turkishEndings = []string{
+	// The copula, -DIr.
+	"idir", "odur", "dudur", "tudur", "ludur", "sudur", "ktir", "rdur", "ldur", "mdur",
+	// The negative aorist, -mAz.
+	"amaz", "emez", "lmez", "nmaz", "nmez", "rmaz",
+	// The progressive, -Iyor.
+	"iyor", "uyor", "yordu",
+	// The aorist and the passive, with the ability -AbIlIr.
+	"ilir", "ulur", "inir", "unur", "anir", "rir",
+	// The verbal nouns and the necessity.
+	"mek", "makta", "mekte", "maktan", "mekten", "meye", "mesi", "masini", "mesini",
+	"masina", "mesine", "mayi", "meyi", "meli", "mamali", "meden",
+	// The participles.
+	"digi", "dugu", "tigi", "tugu", "digini", "dugunu", "tigini", "tugunu",
+	"acak", "ecek", "acagi", "ecegi", "mayan", "eyen", "dilen",
+	// The reported past, -mIş.
+	"nmis", "tmis", "kmis", "smis", "zmis", "ilmis", "ulmus", "mistir", "mustur",
+	"misti", "mamis", "memis",
+	// The gerunds.
+	"yarak", "yerek", "larak", "lerek", "rarak", "rerek", "narak", "nerek", "inca",
+	"unca", "yken",
+	// A plural followed by a case or the copula.
+	"larin", "larda", "lerde", "lardan", "lerden", "larla", "lerle", "larini",
+	"lerini", "larinda", "lerinde", "larinin", "lerinin", "lardir", "lerdir",
+	// A possessive followed by a case.
+	"sunu", "suna", "sune", "sinda", "sinde", "sunda", "sunde", "sindan", "suyla",
+	"suyle", "unun", "inden", "undan",
+	// The relative -ki and the instrumental.
+	"daki", "deki", "teki", "iyla", "iyle",
+	// The privative and -lIk.
+	"suz", "sizlik", "suzluk", "sizdir", "rsiz", "tsiz", "isiz", "nsiz", "lsiz",
+	"ligi", "ligini", "likli", "luklu",
+	// The agent noun, -CI.
+	"yici", "cisi", "cinin",
+	// The past and the conditional.
+	"irdi", "urdu", "ildi", "uldu", "ydi", "ydu", "irse", "ursa",
+}
+
+// suffixStemFloor is how many letters a word must carry in front of an ending
+// before [laneSuffix] reads the ending.
+//
+// Two, because one reads the city of Bursa as the conditional "-ursa", and the
+// customer module's fixtures ship to Bursa.
+const suffixStemFloor = 2
+
+// turkishApostropheEndings are the case and possessive endings Turkish writes
+// after an apostrophe on a name, a number or a code span ("Abort'un", "2026'da"),
+// in folded spelling.
+//
+// English writes "'s", "'t", "'d", "'m", "'re", "'ve" and "'ll" there, none of
+// which is on the list, and a quotation opens after a space or a bracket rather
+// than after a letter. The name must carry two characters, since French elides
+// a one-letter word the same way ("d'un").
+var turkishApostropheEndings = []string{
+	"a", "e", "i", "u", "ya", "ye", "yi", "yu", "da", "de", "ta", "te", "dan", "den",
+	"tan", "ten", "in", "un", "nin", "nun", "yla", "yle", "la", "le", "lar", "ler",
+	"lari", "leri", "larin", "lerin", "daki", "deki", "taki", "teki", "nda", "nde",
+	"ndan", "nden", "na", "ne", "ni", "nu", "si", "su", "sini", "sunu", "sine", "suna",
+	"sinde", "sunda", "sinden", "sundan", "yken",
+}
+
+// apostropheEnding matches a name of at least two characters, an apostrophe and
+// the letters after it.
+var apostropheEnding = regexp.MustCompile("[\\p{L}\\p{N}`\\])\"]{2,}['\\x{2019}](\\p{L}+)")
 
 // scanWitnesses are files the content scan must read, named because each is a
 // kind of file it once did not (D227).
@@ -268,8 +393,8 @@ const generatedMarker = "Code generated"
 
 // diacriticDataExemptions lists text that carries a Turkish letter without
 // being Turkish prose, and since ADR 0408 text that carries a Turkish word the
-// word or text stem lane reads, for the same reason. The name stayed: ADR 0009,
-// which takes no edit, names it.
+// word or text stem lane reads, and since D279 the suffix lane, for the same
+// reason. The name stayed: ADR 0009, which takes no edit, names it.
 //
 // The key is a repo-relative path, the value the exact substrings to ignore.
 // Line numbers are deliberately not used: they rot on the first edit, which is
@@ -314,6 +439,9 @@ var diacriticDataExemptions = map[string][]string{
 	// The incident this gate exists for quotes the Makefile's selector as it
 	// was written, and the matcher's own probe replays it.
 	"internal/arch/build_files_test.go": {"TestTemelYukAltindaDogruKalir"},
+	// The smoke audit's incident quotes the log message whose translation broke
+	// a smoke test, as it was written (D279).
+	"internal/arch/messages_test.go": {`"izleme kuruldu"`},
 	// The reference audit names a file and two tests as the records that take
 	// no edit wrote them (ADR 0012, ADR 0047, and this file's own example), and
 	// one comment gives three Turkish words as the example of what the link rule
@@ -321,10 +449,14 @@ var diacriticDataExemptions = map[string][]string{
 	"internal/arch/doc_references_test.go": {
 		`"hatayolu_test.go"`, `"TestYerineKonanFiyatSatirdanSilinir"`, `"TestKayitBayatlamiyor"`,
 		`"zorunlu", "sonuc" or "tanim"`,
+		// D279: two more test names the same records quote, and the suffix a
+		// path reference has to be trimmed of, given as its example.
+		`"TestSilinenKabinFiyatlariDamgalanir"`, `"TestKrediDefteriGuncellenmez"`,
+		`("openapi.go'da")`,
 	},
 	// A slug test's expected handle is the ASCII fold of its Turkish input,
 	// which is spelled in escapes above it.
-	"internal/modules/product/service/internal_test.go": {`"cok-guzel"`},
+	"internal/modules/product/service/internal_test.go": {`"cok-guzel"`, `"bosluklu"`},
 
 	// The changelog was translated on 2026-10-03, and what keeps a Turkish
 	// letter is quotation. Two entries report test bindings that searched for a
@@ -334,6 +466,10 @@ var diacriticDataExemptions = map[string][]string{
 	"CHANGELOG.md": {
 		"`\"b\" adımı`", "`ELLE MÜDAHALE`",
 		"`\"çanta\"`", "`\"Çanta\"`", "q=çanta", "q=Çanta", "`'Ç' ILIKE 'ç'`",
+		// D279: three entries about the language work quote, as they were
+		// written, a message the gate once missed, a word a test searched for
+		// and the message whose translation broke a smoke test.
+		`olamaz: %d"`, `"kimlikli"`, "`\"izleme kuruldu\"`",
 	},
 	// The region module's seed holds ISO 3166-1 short names as data, and two
 	// of them carry a letter this lane reads: Curaçao, and Türkiye, the name
@@ -343,7 +479,14 @@ var diacriticDataExemptions = map[string][]string{
 	"internal/modules/region/migrations/000002_region_seed.up.sql": {
 		"('CW', 'Curaçao'),", "('TR', 'Türkiye'),",
 	},
-	"docs/adr/0012-repository-language-and-solid.md": {"`çğıöşüÇĞİÖŞÜ`"},
+	// ADR 0012, ADR 0047 and two measurements quote names of tests and of an
+	// operation that have since been renamed, as they were written (D279).
+	"docs/adr/0012-repository-language-and-solid.md": {"`çğıöşüÇĞİÖŞÜ`", "`TestKayitBayatlamiyor`"},
+	"docs/adr/0047-a-replaced-price-is-deleted.md": {
+		"`TestSilinenKabinFiyatlariDamgalanir`", "`TestYerineKonanFiyatSatirdanSilinir`",
+	},
+	"docs/measurements/0164-a-name-that-was-already-taken.md":           {"`TestKrediDefteriGuncellenmez`"},
+	"docs/measurements/0400-a-shopping-agent-is-a-storefront-client.md": {"`islemKimligi`"},
 	// ADR 0015 records the same defect and has to quote the same two words to
 	// show it: the whole finding is that one of them does not match the other.
 	"docs/adr/0015-postgresql-cluster-contract.md": {
@@ -515,6 +658,35 @@ func textStemHit(text string, pathNames []string) string {
 	return ""
 }
 
+// suffixHit reports the first word of the text that ends in one of
+// [turkishEndings], or the first Turkish ending after an apostrophe, or "".
+//
+// The names in pathNames are taken out first, as [textStemHit] takes them out,
+// and a word is read part by part, so a Turkish word inside a test name or a
+// camelCase key is read on its own. An escape needs no blanking here: it ends
+// the run of letters before it, so it can neither hide an ending nor make one.
+func suffixHit(text string, pathNames []string) string {
+	for _, name := range pathNames {
+		text = strings.ReplaceAll(text, name, " ")
+	}
+	for _, m := range apostropheEnding.FindAllStringSubmatch(text, -1) {
+		if slices.Contains(turkishApostropheEndings, foldTurkish(m[1])) {
+			return m[0]
+		}
+	}
+	for _, w := range letterWords(text) {
+		for _, part := range splitIdentifier(w) {
+			folded := foldTurkish(part)
+			for _, ending := range turkishEndings {
+				if len(folded) >= len(ending)+suffixStemFloor && strings.HasSuffix(folded, ending) {
+					return part
+				}
+			}
+		}
+	}
+	return ""
+}
+
 // goEscape matches one escape sequence of a Go string or rune literal.
 var goEscape = regexp.MustCompile(`\\(u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|x[0-9a-fA-F]{2}|[0-7]{3}|.)`)
 
@@ -528,7 +700,7 @@ func withoutExemptions(text string, exempt []string) string {
 	return text
 }
 
-// scanSource runs the four lanes over one file.
+// scanSource runs the five lanes over one file.
 //
 // The second result reports a generated file, which the caller drops: a
 // generated file's language is not editable, so flagging it would create debt
@@ -584,18 +756,11 @@ func scanSource(rel string, src []byte, exemptions map[string][]string, pathName
 		// TEXT IS DATA, NOT PROSE, and that is a fact about the text rather than
 		// about a lane. A subtraction that applies to one lane and not the other
 		// was a bug in the mechanism, not a property of the rule.
-		for i, line := range strings.Split(text, "\n") {
-			stripped := line
-			for _, e := range exempt {
-				stripped = strings.ReplaceAll(stripped, e, "")
-			}
-
-			if w := wordHit(stripped); w != "" {
-				hits = append(hits, turkishHit{lane: laneWord, line: i + 1, detail: w})
-				break
-			}
-		}
-		return hits, false
+		//
+		// The suffix lane reads these lines too (D279), with the path ledger's
+		// names out like the exemptions: a link to a historical record spells
+		// its Turkish file name, and that debt is the path ledger's.
+		return append(hits, rawLineHits(text, exempt, pathNames)...), false
 	}
 
 	fset := token.NewFileSet()
@@ -603,16 +768,10 @@ func scanSource(rel string, src []byte, exemptions map[string][]string, pathName
 	if err != nil {
 		// A file that does not parse cannot be scanned precisely; fall back to
 		// the raw text rather than reporting it clean.
-		for i, line := range strings.Split(text, "\n") {
-			if w := wordHit(line); w != "" {
-				hits = append(hits, turkishHit{lane: laneWord, line: i + 1, detail: w})
-				break
-			}
-		}
-		return hits, false
+		return append(hits, rawLineHits(text, exempt, pathNames)...), false
 	}
 
-	wordFound, identFound, textStemFound := false, false, false
+	wordFound, identFound, textStemFound, suffixFound := false, false, false, false
 	record := func(lane, detail string, pos token.Pos) {
 		hits = append(hits, turkishHit{lane: lane, line: fset.Position(pos).Line, detail: detail})
 	}
@@ -628,11 +787,15 @@ func scanSource(rel string, src []byte, exemptions map[string][]string, pathName
 				record(laneTextStem, s, c.Pos())
 				textStemFound = true
 			}
+			if s := suffixHit(text, pathNames); s != "" && !suffixFound {
+				record(laneSuffix, s, c.Pos())
+				suffixFound = true
+			}
 		}
 	}
 
 	ast.Inspect(file, func(n ast.Node) bool {
-		if wordFound && identFound && textStemFound {
+		if wordFound && identFound && textStemFound && suffixFound {
 			return false
 		}
 		switch node := n.(type) {
@@ -644,6 +807,10 @@ func scanSource(rel string, src []byte, exemptions map[string][]string, pathName
 			if s := textStemHit(written, pathNames); s != "" && !textStemFound {
 				record(laneTextStem, s, node.Pos())
 				textStemFound = true
+			}
+			if s := suffixHit(written, pathNames); s != "" && !suffixFound {
+				record(laneSuffix, s, node.Pos())
+				suffixFound = true
 			}
 			if wordFound {
 				return true
@@ -669,6 +836,28 @@ func scanSource(rel string, src []byte, exemptions map[string][]string, pathName
 	})
 
 	return hits, false
+}
+
+// rawLineHits runs the word and suffix lanes over a file's lines, its exempt
+// text taken out of each, and reports the first hit of each lane.
+func rawLineHits(text string, exempt, pathNames []string) []turkishHit {
+	var hits []turkishHit
+	wordFound, suffixFound := false, false
+	for i, line := range strings.Split(text, "\n") {
+		stripped := withoutExemptions(line, exempt)
+		if w := wordHit(stripped); w != "" && !wordFound {
+			hits = append(hits, turkishHit{lane: laneWord, line: i + 1, detail: w})
+			wordFound = true
+		}
+		if s := suffixHit(stripped, pathNames); s != "" && !suffixFound {
+			hits = append(hits, turkishHit{lane: laneSuffix, line: i + 1, detail: s})
+			suffixFound = true
+		}
+		if wordFound && suffixFound {
+			break
+		}
+	}
+	return hits
 }
 
 // repositoryFiles returns every path that is part of the repository, as a set
@@ -1004,12 +1193,13 @@ func TestDetectorIsNotBlind(t *testing.T) {
 	// A lane with nothing left on the ledger to read has nothing to find, and
 	// its zero is then the migration being complete rather than the lane being
 	// blind: the identifier and text stem lanes read Go source alone, the other
-	// two every scanned file. A finished lane's teeth are proven by the planted
+	// three every scanned file. A finished lane's teeth are proven by the planted
 	// control ([TestDetectorFindsPlantedTurkish]), and a hit would be a file
 	// outside the ledger, which [TestNoTurkishOutsideLedger] reports. The ledger has
-	// been empty since 2026-10-03, and the migration complete since 2026-10-04,
-	// when the scan first read every file the ledger had been silent about
-	// (D227).
+	// been empty since 2026-10-03, and the migration was taken to be complete on
+	// 2026-10-04, when the scan first read every file the ledger had been silent
+	// about (D227); its last lines, which no lane could read, were found and
+	// translated on 2026-10-11 (D279).
 	ledger := loadLedger(t, turkishLedgerPath)
 	goLeft := false
 	for rel := range ledger {
@@ -1019,7 +1209,7 @@ func TestDetectorIsNotBlind(t *testing.T) {
 			break
 		}
 	}
-	for _, lane := range []string{laneDiacritic, laneWord, laneIdentifier, laneTextStem} {
+	for _, lane := range []string{laneDiacritic, laneWord, laneIdentifier, laneTextStem, laneSuffix} {
 		finished := len(ledger) == 0 || ((lane == laneIdentifier || lane == laneTextStem) && !goLeft)
 		if finished {
 			assert.Zero(t, perLane[lane],
@@ -1077,6 +1267,7 @@ func TestDetectorFindsPlantedTurkish(t *testing.T) {
 
 	cases := []struct {
 		name string
+		file string
 		src  string
 		lane string
 	}{
@@ -1125,13 +1316,51 @@ func TestDetectorFindsPlantedTurkish(t *testing.T) {
 			src:  "package p\n\nconst key = `{\"musteriName\":\"Ada\"}`\n",
 			lane: laneTextStem,
 		},
+		{
+			name: "a word the D279 sweep added to the stem floor",
+			src:  "package p\n\nconst code = \"BEDAVA\"\n",
+			lane: laneTextStem,
+		},
+		// D279: the comment that passed every other lane, as it stood.
+		{
+			name: "Turkish endings in a field comment",
+			src:  "package p\n\ntype R struct {\n\t// Status kaydedilen HTTP durum kodudur.\n\tStatus int\n}\n",
+			lane: laneSuffix,
+		},
+		{
+			name: "a Turkish ending in a string literal",
+			src:  "package p\n\nconst msg = \"httptest Hijack desteklemez\"\n",
+			lane: laneSuffix,
+		},
+		{
+			name: "a Turkish ending in an upper-case code",
+			src:  "package p\n\nconst code = \"TUKENMIS\"\n",
+			lane: laneSuffix,
+		},
+		{
+			name: "a Turkish ending inside a camelCase key",
+			src:  "package p\n\nconst key = `{\"kaydedilenStatus\":200}`\n",
+			lane: laneSuffix,
+		},
+		{
+			name: "a Turkish case ending after an apostrophe",
+			src:  "package p\n\n// See Abort'un contract.\nfunc F() {}\n",
+			lane: laneSuffix,
+		},
+		{
+			name: "a Turkish ending in Markdown",
+			file: "planted.md",
+			src:  "Folding it into one bucket is better than patlatmaktan.\n",
+			lane: laneSuffix,
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			hits, generated := scanSource("planted.go", []byte(tc.src), diacriticDataExemptions, nil)
+			file := cmp.Or(tc.file, "planted.go")
+			hits, generated := scanSource(file, []byte(tc.src), diacriticDataExemptions, nil)
 			require.False(t, generated)
 
 			lanes := make([]string, 0, len(hits))
@@ -1153,7 +1382,9 @@ func TestDetectorFindsPlantedTurkish(t *testing.T) {
 // as "rol", "reason" as "son", and the `x, ok` idiom that spells "yok" — and
 // the ones [laneTextStem] must pass: English words that begin like a stem
 // ("parade", "depot", "paragraph"), an escaped case-folding input, and a file
-// the path ledger lists, named in a comment.
+// the path ledger lists, named in a comment. [laneSuffix] must pass the words
+// that end the way the forms left off [turkishEndings] do, the city whose name
+// [suffixStemFloor] is set by, and the apostrophes English and French write.
 func TestDetectorPassesEnglishSource(t *testing.T) {
 	t.Parallel()
 
@@ -1174,6 +1405,11 @@ func Rollback(modules []string) error {
 const folded = "\u00c7OK-\u0130Y\u0130"
 
 // The architecture document is docs/mimari.md, named by its file name.
+
+// The mayor's surveyor keeps a souvenir in the basedir and the datadir, and the
+// dermis is not the epidermis. Ms Gomez and Mr Yilmaz ship to Bursa, don't they?
+// It's O'Brien's flag, set d'un coup.
+const shipped = "a parcel for Bursa"
 `
 
 	hits, generated := scanSource("english.go", []byte(src), diacriticDataExemptions, pathLedgerNames(t))
@@ -1246,21 +1482,31 @@ func TestDiacriticDataExemptionsAreHonest(t *testing.T) {
 		map[string][]string{"fixture.sql": {"Curaçao"}}, nil)
 	assert.Empty(t, hits, "with the exemption in place the fixture must pass: %v", hits)
 
+	// Outside Go the suffix lane takes the exemption too (D279): a record
+	// quoting a test's Turkish name quotes it as written.
+	const quoting = "The test was `TestKayitBayatlamiyor` until it was renamed.\n"
+	hits, _ = scanSource("quoting.md", []byte(quoting), nil, nil)
+	require.NotEmpty(t, hits, "without an exemption the quotation must be flagged")
+	hits, _ = scanSource("quoting.md", []byte(quoting),
+		map[string][]string{"quoting.md": {"`TestKayitBayatlamiyor`"}}, nil)
+	assert.Empty(t, hits, "with the exemption in place the quotation must pass: %v", hits)
+
 	// In Go the comment and literal lanes take the exemption too (ADR 0408):
 	// an external API's path is a name its provider chose, and so is a word
 	// quoted as the subject of a sentence.
 	const goFixture = "package p\n\n// Its \"yok\" is the subject here.\n" +
-		"const path = \"/odeme/api/get-token\"\n"
+		"const path = \"/odeme/api/get-token\"\n" +
+		"// The incident quoted \"izleme kuruldu\" as it was written.\n"
 	hits, _ = scanSource("fixture.go", []byte(goFixture), nil, nil)
 	lanes := make([]string, 0, len(hits))
 	for _, h := range hits {
 		lanes = append(lanes, h.lane)
 	}
-	require.ElementsMatch(t, []string{laneWord, laneTextStem}, lanes,
-		"without an exemption the Go fixture must be flagged in both lanes")
+	require.ElementsMatch(t, []string{laneWord, laneTextStem, laneSuffix}, lanes,
+		"without an exemption the Go fixture must be flagged in all three lanes")
 
 	hits, _ = scanSource("fixture.go", []byte(goFixture),
-		map[string][]string{"fixture.go": {`"yok"`, "/odeme/api/get-token"}}, nil)
+		map[string][]string{"fixture.go": {`"yok"`, "/odeme/api/get-token", `"izleme kuruldu"`}}, nil)
 	assert.Empty(t, hits, "with the exemption in place the Go fixture must pass: %v", hits)
 }
 
@@ -1284,6 +1530,25 @@ func TestThePathLedgerNamesAreNamesToTheTextStemLane(t *testing.T) {
 	hits, _ = scanSource("prose.go", []byte(prose), nil, names)
 	require.Len(t, hits, 1, "the stem outside the name still counts")
 	assert.Equal(t, laneTextStem, hits[0].lane)
+}
+
+// TestThePathLedgerNamesAreNamesToTheSuffixLane proves the same of
+// [laneSuffix], in the Markdown it reads: a link to a historical record spells
+// the record's Turkish file name, and the name is the path ledger's debt.
+func TestThePathLedgerNamesAreNamesToTheSuffixLane(t *testing.T) {
+	t.Parallel()
+
+	names := pathLedgerNames(t)
+	require.Contains(t, names, "0008-musteri-kimligi-guven-siniri.md",
+		"the fixture leans on a record the path ledger lists")
+
+	linked := "See [ADR 0008](0008-musteri-kimligi-guven-siniri.md).\n"
+	hits, _ := scanSource("linked.md", []byte(linked), nil, names)
+	assert.Empty(t, hits, "a ledgered record's file name is not prose: %v", hits)
+
+	hits, _ = scanSource("linked.md", []byte(linked), nil, nil)
+	require.Len(t, hits, 1, "without the ledger's names the link must be flagged")
+	assert.Equal(t, laneSuffix, hits[0].lane)
 }
 
 // TestRepoPathsAreEnglishOutsideLedger covers the one layer the content scan

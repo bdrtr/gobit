@@ -89,6 +89,17 @@ design. It is fixed with `1.0.0`.
 
 ### Fixed
 
+- **Turkish typed without its marks is read by its endings** (D279). **For
+  integrators:** the cart interop's refusal of a totals body it cannot parse
+  carries `cart_interop_totals_invalid`, the module's own prefix, where its
+  code carried a Turkish word, and the example plugin under `examples/plugin`
+  is `banktransfer`, its provider, route, job and error codes renamed with it.
+  **For operators:** the manual fulfillment provider's debug line for a
+  shipment already canceled names it under `shipment`, as its other line does.
+  **For contributors:** the language gate reads Go comments and literals and
+  every other file for Turkish inflectional endings and for a case ending after
+  an apostrophe, so a quotation of Turkish kept on purpose takes an entry in
+  `diacriticDataExemptions`.
 - **Every event's moment is the moment its record stores** (ADR 0437, D278).
   **For integrators:** `canceled_at` in `fulfillment.canceled` and
   `returned_at` in `fulfillment.returned` were the clock's nanoseconds and are

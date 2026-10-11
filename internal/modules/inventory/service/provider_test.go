@@ -165,12 +165,12 @@ func TestListUnknownFilterIsInvalid(t *testing.T) {
 	provider, _ := newTestProvider(t)
 
 	_, err := provider.List(context.Background(), query.ListOptions{
-		Filters: map[string]any{"renk": "kirmizi"},
+		Filters: map[string]any{"color": "red"},
 	})
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
-	assert.Contains(t, err.Error(), "renk")
+	assert.Contains(t, err.Error(), "color")
 }
 
 // TestListFilterTypeIsValidated proves the type of a filter value is checked.

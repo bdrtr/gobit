@@ -37,7 +37,7 @@ func disclosableInput(customerID, email string) service.CreateOrderInput {
 		SourceAddressID: "addr_SHIP",
 		FirstName:       "Ayse",
 		LastName:        "Yilmaz",
-		Company:         "Gobit Muhasebe",
+		Company:         "Gobit Accounting",
 		Address1:        "Ataturk Cad. 12",
 		Address2:        "Daire 3",
 		City:            "Istanbul",

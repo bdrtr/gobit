@@ -659,12 +659,12 @@ func TestCreateInventoryItemRequiresShippingByDefault(t *testing.T) {
 	svc, _ := newService(t)
 
 	item, err := svc.CreateInventoryItem(context.Background(), service.CreateInventoryItemInput{
-		SKU: " SKU-BOSLUKLU ",
+		SKU: " SKU-SPACED ",
 	})
 
 	require.NoError(t, err)
 	assert.True(t, item.RequiresShipping)
-	assert.Equal(t, "SKU-BOSLUKLU", item.SKU, "the spaces around the sku have to be trimmed")
+	assert.Equal(t, "SKU-SPACED", item.SKU, "the spaces around the sku have to be trimmed")
 	assert.Contains(t, item.ID, models.InventoryItemIDPrefix)
 }
 
@@ -675,7 +675,7 @@ func TestCreateInventoryItemShippingCanBeTurnedOff(t *testing.T) {
 	noShipping := false
 
 	item, err := svc.CreateInventoryItem(context.Background(), service.CreateInventoryItemInput{
-		SKU: "DIJITAL-1", RequiresShipping: &noShipping,
+		SKU: "DIGITAL-1", RequiresShipping: &noShipping,
 	})
 
 	require.NoError(t, err)

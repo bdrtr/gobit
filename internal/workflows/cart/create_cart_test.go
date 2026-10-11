@@ -51,12 +51,12 @@ func TestCreateCartGuestCarriesGivenEmail(t *testing.T) {
 
 	out, err := h.wf.CreateCart(context.Background(), CreateCartInput{
 		CountryCode: "TR",
-		Email:       " misafir@example.com ",
+		Email:       " guest@example.com ",
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, "misafir@example.com", out.Email)
-	assert.Equal(t, "misafir@example.com", (*seen)[3])
+	assert.Equal(t, "guest@example.com", out.Email)
+	assert.Equal(t, "guest@example.com", (*seen)[3])
 	assert.True(t, out.Guest)
 }
 
@@ -192,11 +192,11 @@ func TestOpenCartForCountryDerivesRegion(t *testing.T) {
 	seen := recordOpenCart(h.carts, testCartID)
 
 	cartID, err := NewInterop(h.wf).OpenCartForCountry(
-		context.Background(), "TR", "", "misafir@example.com", "", "usr_operator", nil)
+		context.Background(), "TR", "", "guest@example.com", "", "usr_operator", nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, testCartID, cartID)
-	assert.Equal(t, []string{testRegionID, testCurrency, "", "misafir@example.com"}, *seen,
+	assert.Equal(t, []string{testRegionID, testCurrency, "", "guest@example.com"}, *seen,
 		"the region and the currency must be derived FROM THE COUNTRY")
 	assert.Equal(t, "usr_operator", h.carts.openedBy,
 		"the operator the admin door names must reach the cart module (ADR 0296)")

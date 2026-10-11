@@ -278,7 +278,7 @@ func TestStorefrontUnknownCountryOpensNoCart(t *testing.T) {
 			reason: "the operator has not opened sales to that country; the client picks another",
 		},
 		"malformed country code": {
-			body: `{"country_code":"TURKIYE"}`, status: http.StatusUnprocessableEntity,
+			body: `{"country_code":"TURKEY"}`, status: http.StatusUnprocessableEntity,
 			reason: "a code that is not ISO 3166-1 alpha-2 is a body error",
 		},
 		"empty country code": {

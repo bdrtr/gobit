@@ -158,7 +158,7 @@ func setUpRouterNamed(t *testing.T, serviceName string) chi.Router {
 	r.Get("/store/v1/products/{id}", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	r.Get("/store/v1/patlat", func(w http.ResponseWriter, _ *http.Request) {
+	r.Get("/store/v1/explode", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 	r.Get("/store/v1/invalid", func(w http.ResponseWriter, _ *http.Request) {
@@ -228,7 +228,7 @@ func TestTelemetryAServerErrorMarksTheSpan(t *testing.T) {
 	r := setUpRouter(t)
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/store/v1/patlat", http.NoBody))
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/store/v1/explode", http.NoBody))
 	require.Equal(t, http.StatusInternalServerError, w.Code)
 
 	spans := recorder.Ended()
@@ -267,7 +267,7 @@ func TestTelemetryAnUnmatchedPathCollectsInASingleBucket(t *testing.T) {
 	recorder := setUpTracer(t)
 	r := setUpRouter(t)
 
-	for _, path := range []string{"/rastgele/1", "/rastgele/2", "/bambaska"} {
+	for _, path := range []string{"/random/1", "/random/2", "/elsewhere"} {
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, http.NoBody))
 		require.Equal(t, http.StatusNotFound, w.Code)
@@ -319,7 +319,7 @@ func TestTelemetryAnIncomingTraceContextIsContinued(t *testing.T) {
 // would change. This test keeps that link alive.
 func TestTelemetryTheServiceNameIsWrittenToTheSpan(t *testing.T) {
 	recorder := setUpTracer(t)
-	r := setUpRouterNamed(t, "gobit-magaza")
+	r := setUpRouterNamed(t, "gobit-shop")
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet,
@@ -328,7 +328,7 @@ func TestTelemetryTheServiceNameIsWrittenToTheSpan(t *testing.T) {
 
 	spans := recorder.Ended()
 	require.Len(t, spans, 1)
-	assert.Equal(t, "gobit-magaza",
+	assert.Equal(t, "gobit-shop",
 		attributeOf(t, spans[0], string(semconv.ServiceNameKey)).AsString())
 }
 
@@ -365,7 +365,7 @@ func TestTelemetryAnEmptyServiceNameWritesNoAttribute(t *testing.T) {
 // that changes per request been added, this assertion would break at once.
 func TestTelemetryTheServiceNameIsWrittenToTheMetricWithoutMultiplyingSeries(t *testing.T) {
 	reader := setUpMeter(t)
-	r := setUpRouterNamed(t, "gobit-magaza")
+	r := setUpRouterNamed(t, "gobit-shop")
 
 	for _, id := range []string{"prod_01", "prod_02", "prod_03"} {
 		w := httptest.NewRecorder()
@@ -383,7 +383,7 @@ func TestTelemetryTheServiceNameIsWrittenToTheMetricWithoutMultiplyingSeries(t *
 
 	value, ok := points[0].Attributes.Value(semconv.ServiceNameKey)
 	require.True(t, ok, "service.name has to be on the duration metric")
-	assert.Equal(t, "gobit-magaza", value.AsString())
+	assert.Equal(t, "gobit-shop", value.AsString())
 }
 
 // TestTelemetryTheInFlightCounterReturnsToZero verifies that the counter goes
@@ -395,7 +395,7 @@ func TestTelemetryTheServiceNameIsWrittenToTheMetricWithoutMultiplyingSeries(t *
 // requests are in flight" dashboard would never come back to the truth.
 func TestTelemetryTheInFlightCounterReturnsToZero(t *testing.T) {
 	reader := setUpMeter(t)
-	r := setUpRouterNamed(t, "gobit-magaza")
+	r := setUpRouterNamed(t, "gobit-shop")
 
 	for range 3 {
 		w := httptest.NewRecorder()
@@ -413,7 +413,7 @@ func TestTelemetryTheInFlightCounterReturnsToZero(t *testing.T) {
 
 	value, ok := points[0].Attributes.Value(semconv.ServiceNameKey)
 	require.True(t, ok, "service.name has to be on the in-flight request counter")
-	assert.Equal(t, "gobit-magaza", value.AsString())
+	assert.Equal(t, "gobit-shop", value.AsString())
 }
 
 // propagator is the W3C TraceContext propagator used in the tests.

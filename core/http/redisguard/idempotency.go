@@ -256,10 +256,10 @@ func (s *IdempotencyStore) Complete(
 //
 // Two CONSECUTIVE reservations cannot be told apart: A reserves the key, the TTL
 // expires, B reserves the same key and then A's Abort deletes B's reservation.
-// Closing that would need a random token per reservation, and the
-// Abort'un onu geri vermesini gerektirirdi; corehttp.IdempotencyStore'un
-// Abort(ctx, key) signature has no room for one; widening the interface for this
-// implementation alone would tie the abstraction to Redis. It is unnecessary in
+// Closing that would need a random token per reservation, handed back by
+// Abort, and corehttp.IdempotencyStore's Abort(ctx, key) signature has no room
+// for one; widening the interface for this implementation alone would tie the
+// abstraction to Redis. It is unnecessary in
 // practice too: for the case to arise the TTL (24 hours by default) has to expire
 // while ONE more request is still running.
 func (s *IdempotencyStore) Abort(ctx context.Context, key string) error {

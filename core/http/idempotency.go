@@ -77,7 +77,7 @@ var ErrIdempotencyKeyInFlight = errors.New("the idempotency key is in flight")
 
 // IdempotentResponse is the record of the response to be replayed.
 type IdempotentResponse struct {
-	// Status kaydedilen HTTP durum kodudur.
+	// Status is the recorded HTTP status code.
 	Status int
 	// Header holds the recorded response headers.
 	Header http.Header

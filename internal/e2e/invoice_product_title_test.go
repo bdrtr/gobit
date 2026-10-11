@@ -23,7 +23,7 @@ func TestAnInvoiceRowNamesTheProductItSold(t *testing.T) {
 	ctx := t.Context()
 
 	customerID, email := newCustomer(ctx, t)
-	variantID, _ := newStockedVariant(ctx, t, "1 kg / Filtre", map[string]int64{
+	variantID, _ := newStockedVariant(ctx, t, "1 kg / Filter", map[string]int64{
 		taxedCurrency: happyUnitPrice,
 	}, happyInitialStock)
 	variant, err := productSvc.GetVariant(ctx, variantID)
@@ -53,7 +53,7 @@ func TestAnInvoiceRowNamesTheProductItSold(t *testing.T) {
 	require.Len(t, detail.Items, 1)
 	assert.Equal(t, "E2E Roastery Blend", detail.Items[0].ProductTitle,
 		"the order keeps the product's title as it was sold")
-	assert.Equal(t, "1 kg / Filtre", detail.Items[0].Title)
+	assert.Equal(t, "1 kg / Filter", detail.Items[0].Title)
 
 	writeStoreProfile(t)
 	recorder, err := adminRequestWithBody(http.MethodPost,
@@ -69,7 +69,7 @@ func TestAnInvoiceRowNamesTheProductItSold(t *testing.T) {
 	var invoice invoiceDocumentResponse
 	require.NoError(t, json.Unmarshal(document.Body.Bytes(), &invoice))
 	require.NotEmpty(t, invoice.Data.Lines)
-	assert.Equal(t, "E2E Roastery Blend — 1 kg / Filtre", invoice.Data.Lines[0].Description)
+	assert.Equal(t, "E2E Roastery Blend — 1 kg / Filter", invoice.Data.Lines[0].Description)
 
 	line, err := adminRequestWithBody(http.MethodGet, "/admin/v1/orders/"+order.OrderID, nil)
 	require.NoError(t, err)

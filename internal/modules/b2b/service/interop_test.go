@@ -148,7 +148,7 @@ func TestTheRuleKEEPSAZeroLimit(t *testing.T) {
 func TestTheRuleForACustomerWhoIsNoEmployee(t *testing.T) {
 	svc, _, _ := newTestService(t)
 
-	rule := decodeRule(t, svc, "cust_BAGSIZ")
+	rule := decodeRule(t, svc, "cust_UNLINKED")
 	assert.False(t, rule.Limited)
 }
 
@@ -162,7 +162,7 @@ func TestTheRuleForACustomerWhoIsNoEmployee(t *testing.T) {
 func TestTheRuleIsUnlimitedForAnUnrecognizedID(t *testing.T) {
 	svc, _, _ := newTestService(t)
 
-	for _, id := range []string{"", "cus_ESKI_ONEK", "  "} {
+	for _, id := range []string{"", "cus_OLD_PREFIX", "  "} {
 		payload, err := NewInterop(svc).SpendingLimitJSON(t.Context(), id)
 		require.NoError(t, err, "id: %q", id)
 

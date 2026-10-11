@@ -219,7 +219,7 @@ func TestNoCrossModuleForeignKeys(t *testing.T) {
 func TestCampaignLifecycle(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
-	identifier := "KAMPANYA-" + uniqueCode()
+	identifier := "CAMPAIGN-" + uniqueCode()
 
 	campaign, err := svc.CreateCampaign(ctx, service.CampaignInput{
 		Name:               "Summer Sale",
@@ -340,7 +340,7 @@ func TestTheComputationRunsOnTheRealDatabase(t *testing.T) {
 
 	campaign, err := svc.CreateCampaign(ctx, service.CampaignInput{
 		Name:               "Summer",
-		CampaignIdentifier: "HESAP-" + uniqueCode(),
+		CampaignIdentifier: "ACCOUNT-" + uniqueCode(),
 		BudgetType:         models.BudgetSpend,
 		BudgetLimit:        ptr(int64(1_000_000)),
 		BudgetCurrencyCode: "TRY",
@@ -496,7 +496,7 @@ func TestConcurrentRedeemDoesNotExceedTheCampaignBudget(t *testing.T) {
 
 	campaign, err := svc.CreateCampaign(ctx, service.CampaignInput{
 		Name:               "Budgeted",
-		CampaignIdentifier: "BUTCE-" + uniqueCode(),
+		CampaignIdentifier: "BUDGET-" + uniqueCode(),
 		BudgetType:         models.BudgetSpend,
 		BudgetLimit:        ptr(int64(budget)),
 		BudgetCurrencyCode: "TRY",
@@ -553,8 +553,8 @@ func TestConcurrentReleaseDecrementsTheCounterOnce(t *testing.T) {
 
 	const contenders = 16
 	campaign, err := svc.CreateCampaign(ctx, service.CampaignInput{
-		Name:               "Telafi",
-		CampaignIdentifier: "TELAFI-" + uniqueCode(),
+		Name:               "Compensation",
+		CampaignIdentifier: "COMPENSATION-" + uniqueCode(),
 		BudgetType:         models.BudgetSpend,
 		BudgetLimit:        ptr(int64(10_000)),
 		BudgetCurrencyCode: "TRY",
@@ -920,7 +920,7 @@ func TestRedeemRefusesAPromotionThatIsNotLiveOnTheRealDatabase(t *testing.T) {
 		t.Run(string(status), func(t *testing.T) {
 			campaign, err := svc.CreateCampaign(ctx, service.CampaignInput{
 				Name:               "Summer",
-				CampaignIdentifier: "TASLAK-" + uniqueCode(),
+				CampaignIdentifier: "DRAFT-" + uniqueCode(),
 				BudgetType:         models.BudgetSpend,
 				BudgetLimit:        ptr(int64(1_000_000)),
 				BudgetCurrencyCode: "TRY",
@@ -965,7 +965,7 @@ func TestRedeemRefusesAClosedCampaignWindowOnTheRealDatabase(t *testing.T) {
 
 	campaign, err := svc.CreateCampaign(ctx, service.CampaignInput{
 		Name:               "Ended",
-		CampaignIdentifier: "PENCERE-" + uniqueCode(),
+		CampaignIdentifier: "WINDOW-" + uniqueCode(),
 		StartsAt:           ptr(now.Add(-48 * time.Hour)),
 		EndsAt:             ptr(now.Add(-24 * time.Hour)),
 		BudgetType:         models.BudgetSpend,
@@ -998,7 +998,7 @@ func TestRedeemRefusesAClosedCampaignWindowOnTheRealDatabase(t *testing.T) {
 func TestUpdateCampaignBudgetUnitLockIsInTheDatabase(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
-	identifier := "KILIT-" + uniqueCode()
+	identifier := "LOCK-" + uniqueCode()
 
 	campaign, err := svc.CreateCampaign(ctx, service.CampaignInput{
 		Name:               "Summer",
@@ -1441,7 +1441,7 @@ func TestUpdatingAPromotionChangesTheDefinitionAndLeavesTheUsageCounter(t *testi
 
 	campaign, err := svc.CreateCampaign(ctx, service.CampaignInput{
 		Name:               "Summer",
-		CampaignIdentifier: "GUNCELLEME-" + uniqueCode(),
+		CampaignIdentifier: "UPDATE-" + uniqueCode(),
 		BudgetType:         models.BudgetSpend,
 		BudgetLimit:        ptr(int64(1_000_000)),
 		BudgetCurrencyCode: "TRY",

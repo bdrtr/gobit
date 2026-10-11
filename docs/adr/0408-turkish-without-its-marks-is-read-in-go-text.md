@@ -3,7 +3,7 @@
 **Summary:** The language gate reads a Go comment or string literal for the stems it reads in names, and five more suffixed words.
 It costs an exemption with a reason for every Turkish word kept as data, and it still reads no Markdown or SQL text for stems.
 
-- **Status:** Accepted
+- **Status:** Accepted; its reading scope was widened by [D279](../gaps.md), whose suffix lane reads Markdown, SQL and templates too, so the consequence that they are read for letters and the word list only no longer holds
 - **Date:** 2026-10-06
 - **Amends:** [0012](0012-repository-language-and-solid.md), whose ratchet read prose for ten words only
 

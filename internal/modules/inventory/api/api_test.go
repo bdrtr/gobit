@@ -309,7 +309,7 @@ func TestListItemsFilters(t *testing.T) {
 func TestListItemsInvalidFilter(t *testing.T) {
 	router, _ := newRouter(t)
 
-	rec := sendRequestWithBody(t, router, http.MethodGet, "/admin/v1/inventory-items?requires_shipping=belki", "")
+	rec := sendRequestWithBody(t, router, http.MethodGet, "/admin/v1/inventory-items?requires_shipping=maybe", "")
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }

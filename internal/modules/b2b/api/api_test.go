@@ -125,8 +125,8 @@ func dataOf(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 func sampleCompany() models.Company {
 	return models.Company{
 		ID:                       "comp_01",
-		Name:                     "Acme Sanayi A.S.",
-		Email:                    "muhasebe@acme.example",
+		Name:                     "Acme Industries Ltd.",
+		Email:                    "accounting@acme.example",
 		CurrencyCode:             "TRY",
 		CountryCode:              "TR",
 		SpendingLimitResetPeriod: models.ResetMonthly,
@@ -217,7 +217,7 @@ func TestAdminEndpointsRequireAScope(t *testing.T) {
 		if !strings.HasPrefix(pattern, "/admin/v1") {
 			continue
 		}
-		path := pathParamRe.ReplaceAllString(pattern, "sahte_kimlik")
+		path := pathParamRe.ReplaceAllString(pattern, "fake_id")
 		for _, method := range methods {
 			count++
 			t.Run(method+" "+pattern, func(t *testing.T) {
@@ -242,7 +242,7 @@ func TestReadScopeDoesNotOpenWriteEndpoints(t *testing.T) {
 		},
 	}
 	r := newTestRouter(stub)
-	reader := corehttp.Principal{ID: "user_okuma", Kind: "user", Scopes: []string{api.ScopeRead}}
+	reader := corehttp.Principal{ID: "user_reader", Kind: "user", Scopes: []string{api.ScopeRead}}
 
 	rec := doAs(t, r, &reader, http.MethodGet, "/admin/v1/b2b/companies", "")
 	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -367,8 +367,8 @@ func TestCreateCompanyBodyReachesTheService(t *testing.T) {
 	r := newTestRouter(stub)
 
 	rec := do(t, r, http.MethodPost, "/admin/v1/b2b/companies", `{
-        "name": "Acme Sanayi A.S.",
-        "email": "muhasebe@acme.example",
+        "name": "Acme Industries Ltd.",
+        "email": "accounting@acme.example",
         "phone": "",
         "address": "",
         "city": "",
@@ -456,7 +456,7 @@ func TestNonNumericPagingIsRejected(t *testing.T) {
 	rec := do(t, r, http.MethodGet, "/admin/v1/b2b/companies?limit=abc", "")
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
 
-	rec = do(t, r, http.MethodGet, "/admin/v1/b2b/employees?is_company_admin=belki", "")
+	rec = do(t, r, http.MethodGet, "/admin/v1/b2b/employees?is_company_admin=maybe", "")
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
 }
 

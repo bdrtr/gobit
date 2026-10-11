@@ -24,7 +24,7 @@ const tracerName = "github.com/bdrtr/gobit/core/http"
 // produces a separate span name and a separate metric series for every id. With
 // a few thousand products the metric store grows to millions of series and
 // becomes unqueryable. Folding an unrecognized path into one bucket is better
-// patlatmaktan iyidir.
+// than letting the cardinality explode.
 const unknownRoute = "unknown"
 
 // Telemetry opens a span per request and records duration/count metrics.
@@ -67,8 +67,8 @@ func Telemetry(serviceName string) func(http.Handler) http.Handler {
 	// The increment and the decrement of the in-flight counter MUST use the SAME
 	// attribute set; if they drift apart two series appear, one stuck at +1 and
 	// the other at -1 forever, and the "how many requests are in flight"
-	// dashboard never returns to zero. Building the option once here makes that
-	// garantiler.
+	// dashboard never returns to zero. Building the option once here guarantees
+	// that by construction.
 	constantMeasurement := metric.WithAttributes(constantAttrs...)
 
 	// Build the metric instruments once. An error can only come from an invalid

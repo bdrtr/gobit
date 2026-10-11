@@ -25,7 +25,7 @@ func TestComputeDiscountsJSONMeetsTheSchema(t *testing.T) {
 	request := []byte(`{
 	  "currency_code": "TRY",
 	  "context": {"region_id": "reg_1"},
-	  "items": [{"id": "li_1", "amount": 25000, "unit_amount": 12500, "quantity": 2, "attributes": {"kategori": "giyim"}}],
+	  "items": [{"id": "li_1", "amount": 25000, "unit_amount": 12500, "quantity": 2, "attributes": {"category": "clothing"}}],
 	  "shipping_methods": [{"id": "sm_1", "amount": 4990, "attributes": {}}],
 	  "codes": ["summer20", "NOSUCHCODE"],
 	  "at": "2026-08-24T10:00:00Z"
@@ -126,7 +126,7 @@ func TestComputeDiscountsJSONMalformedBody(t *testing.T) {
 
 func TestComputeDiscountsJSONDoesNotCorruptLargeIntegers(t *testing.T) {
 	repo := newMemRepo()
-	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "YUZDE1", IsAutomatic: true},
+	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "PERCENT1", IsAutomatic: true},
 		percentageMethod("promo_1", 100, models.TargetItems, models.AllocationEach))
 
 	interop := NewInterop(newTestService(repo))
@@ -151,7 +151,7 @@ func TestComputeDiscountsJSONTimestampSelectsTheCampaignWindow(t *testing.T) {
 		StartsAt: ptr(testNow.Add(-48 * time.Hour)), EndsAt: ptr(testNow.Add(-time.Hour)),
 	}
 	seedPromotion(repo, models.Promotion{
-		ID: "promo_1", Code: "GECMIS", IsAutomatic: true, CampaignID: ptr("camp_1"),
+		ID: "promo_1", Code: "PAST", IsAutomatic: true, CampaignID: ptr("camp_1"),
 	}, percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationEach))
 
 	interop := NewInterop(newTestService(repo))

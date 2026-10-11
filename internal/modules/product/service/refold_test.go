@@ -23,7 +23,7 @@ func TestTheConvergenceFixesWhatTheSqlBackfillGotWrong(t *testing.T) {
 
 	store := newMemStore()
 	seedOptionValue(t, store, "v1", "o1", "K\u0131rm\u0131z\u0131", "k\u0131rm\u0131z\u0131")
-	seedOptionValue(t, store, "v2", "o1", "Mavi", "mavi")
+	seedOptionValue(t, store, "v2", "o1", "Blue", "blue")
 	// A non-ASCII value that is ALREADY right — it was written by Go rather than
 	// by the SQL backfill. It is in scope and must NOT be rewritten, which is what
 	// makes the pass idempotent and what lets it run on every boot.

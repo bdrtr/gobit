@@ -35,8 +35,8 @@ func newTestService(t *testing.T) (*Service, *memRepo, *memLinker) {
 // validCompanyInput is the tests' default company input.
 func validCompanyInput() CompanyInput {
 	return CompanyInput{
-		Name:                     "Acme Sanayi A.S.",
-		Email:                    "Muhasebe@Acme.example",
+		Name:                     "Acme Industries Ltd.",
+		Email:                    "Accounting@Acme.example",
 		CurrencyCode:             "try",
 		SpendingLimitResetPeriod: string(models.ResetMonthly),
 	}
@@ -75,7 +75,7 @@ func TestCreateCompanyValidatesItsInput(t *testing.T) {
 	cases := map[string]func(in *CompanyInput){
 		"empty name":             func(in *CompanyInput) { in.Name = "   " },
 		"empty e-mail":           func(in *CompanyInput) { in.Email = "" },
-		"malformed e-mail":       func(in *CompanyInput) { in.Email = "muhasebe@acme" },
+		"malformed e-mail":       func(in *CompanyInput) { in.Email = "accounting@acme" },
 		"empty currency":         func(in *CompanyInput) { in.CurrencyCode = "" },
 		"short currency":         func(in *CompanyInput) { in.CurrencyCode = "TR" },
 		"currency not letters":   func(in *CompanyInput) { in.CurrencyCode = "TR1" },
@@ -113,7 +113,7 @@ func TestCreateCompanyNormalizes(t *testing.T) {
 	company, err := svc.CreateCompany(t.Context(), in)
 	require.NoError(t, err)
 
-	assert.Equal(t, "muhasebe@acme.example", company.Email)
+	assert.Equal(t, "accounting@acme.example", company.Email)
 	assert.Equal(t, "TRY", company.CurrencyCode)
 	assert.Equal(t, "TR", company.CountryCode)
 	assert.Equal(t, models.ResetNever, company.SpendingLimitResetPeriod,
@@ -296,7 +296,7 @@ func TestMembershipReturnsOnlyTheirOwnCompany(t *testing.T) {
 	assert.Equal(t, beta.ID, membershipB.Company.ID,
 		"every customer has to see ONLY their own company")
 
-	_, err = svc.MembershipOfCustomer(t.Context(), "cust_YABANCI")
+	_, err = svc.MembershipOfCustomer(t.Context(), "cust_STRANGER")
 	assert.True(t, errors.IsNotFound(err),
 		"a customer bound to no company has to get a 404, got: %v", err)
 }
@@ -495,7 +495,7 @@ func TestTheCompanyFilterIsNormalized(t *testing.T) {
 	svc, _, _ := newTestService(t)
 	newTestCompany(t, svc)
 
-	wanted := "MUHASEBE@acme.EXAMPLE"
+	wanted := "ACCOUNTING@acme.EXAMPLE"
 	page, err := svc.ListCompanies(t.Context(), ListCompaniesInput{Email: &wanted})
 	require.NoError(t, err)
 	assert.Len(t, page.Items, 1)

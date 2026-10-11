@@ -890,7 +890,7 @@ func TestABrokenCatalogRecordIsRefused(t *testing.T) {
 	t.Parallel()
 
 	d, k := newFakeStore(), newFakeCatalog()
-	k.addProductRecord("prod_1", json.RawMessage(`{"title": "Kimliksiz"}`))
+	k.addProductRecord("prod_1", json.RawMessage(`{"title": "No identifier"}`))
 	m := testModule(d, k)
 
 	err := m.productWritten(t.Context(), event(eventProductCreated, "prod_1"))

@@ -247,7 +247,7 @@ func TestListEnvelopeShape(t *testing.T) {
 	catalog := &fakeCatalog{
 		listProducts: func(_ context.Context, opts service.ListProductsOptions) (service.ListResult[models.Product], error) {
 			return service.ListResult[models.Product]{
-				Items:  []models.Product{{ID: "prod_1", Handle: "tisort", Title: "T-shirt"}},
+				Items:  []models.Product{{ID: "prod_1", Handle: "t-shirt", Title: "T-shirt"}},
 				Count:  ptr(42),
 				Offset: opts.Offset,
 				Limit:  opts.Limit,
@@ -270,7 +270,7 @@ func TestListEnvelopeShape(t *testing.T) {
 	item, ok := data[0].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "prod_1", item["id"])
-	assert.Equal(t, "tisort", item["handle"])
+	assert.Equal(t, "t-shirt", item["handle"])
 }
 
 // TestEmptyListReturnsArrayNotNull verifies that an empty list comes back in
@@ -299,7 +299,7 @@ func TestCreateProductReturns201AndItemEnvelope(t *testing.T) {
 	catalog := &fakeCatalog{
 		createProduct: func(_ context.Context, in service.CreateProductInput) (models.Product, error) {
 			got = in
-			return models.Product{ID: "prod_1", Handle: "tisort", Title: in.Title}, nil
+			return models.Product{ID: "prod_1", Handle: "t-shirt", Title: in.Title}, nil
 		},
 	}
 
@@ -452,7 +452,7 @@ func TestListProductsParsesFilters(t *testing.T) {
 	}
 
 	rec := do(t, newRouter(catalog), http.MethodGet,
-		"/admin/v1/products?status=published&collection_id=pcol_1&q=tis&expand=true&limit=7&offset=3", "")
+		"/admin/v1/products?status=published&collection_id=pcol_1&q=shirt&expand=true&limit=7&offset=3", "")
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	require.NotNil(t, got.Status)
@@ -460,7 +460,7 @@ func TestListProductsParsesFilters(t *testing.T) {
 	require.NotNil(t, got.CollectionID)
 	assert.Equal(t, "pcol_1", *got.CollectionID)
 	require.NotNil(t, got.Search)
-	assert.Equal(t, "tis", *got.Search)
+	assert.Equal(t, "shirt", *got.Search)
 	assert.True(t, got.WithRelations)
 	assert.Equal(t, 7, got.Limit)
 	assert.Equal(t, 3, got.Offset)
@@ -545,7 +545,7 @@ func TestStoreListIncludesPriceAndInventory(t *testing.T) {
 		listStoreProducts: func(_ context.Context, opts service.StoreListOptions) (service.ListResult[service.StoreProduct], error) {
 			return service.ListResult[service.StoreProduct]{
 				Items: []service.StoreProduct{{
-					Product: models.Product{ID: "prod_1", Handle: "tisort", Title: "T-shirt"},
+					Product: models.Product{ID: "prod_1", Handle: "t-shirt", Title: "T-shirt"},
 					Variants: []service.StoreVariant{{
 						Variant:       models.Variant{ID: "variant_1", ProductID: "prod_1", Title: "S"},
 						PriceSet:      query.Record{"id": "pset_1", "amount": 19900, "currency_code": "try"},
@@ -598,9 +598,9 @@ func TestStoreGetProductAcceptsHandle(t *testing.T) {
 		},
 	}
 
-	rec := storeRequest(t, newRouter(catalog), storeProductPath+"tisort", nil)
+	rec := storeRequest(t, newRouter(catalog), storeProductPath+"t-shirt", nil)
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, "tisort", got)
+	assert.Equal(t, "t-shirt", got)
 }
 
 // TestStoreProductHidesEmbeddedVariants verifies that the variants field of the

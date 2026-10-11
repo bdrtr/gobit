@@ -258,7 +258,7 @@ func TestCreateSessionWritesNothingOnError(t *testing.T) {
 	svc, store, prov := newTestService(t)
 	ctx := context.Background()
 	col := openCollection(t, svc, testAmount)
-	prov.createErr = errors.Unavailable("saglayici_kapali", "the provider could not be reached")
+	prov.createErr = errors.Unavailable("provider_down", "the provider could not be reached")
 
 	_, err := svc.CreateSession(ctx, col.ID, testProviderID, service.CreateSessionInput{IdempotencyKey: "key-1"})
 
@@ -645,7 +645,7 @@ func TestCancelWritesNothingOnAProviderError(t *testing.T) {
 	ses := openPaymentSession(t, svc, col.ID, "key-1")
 	_, err := svc.AuthorizePayment(ctx, ses.ID)
 	require.NoError(t, err)
-	prov.cancelErr = errors.Unavailable("saglayici_kapali", "the provider could not be reached")
+	prov.cancelErr = errors.Unavailable("provider_down", "the provider could not be reached")
 
 	err = svc.CancelPayment(ctx, ses.ID)
 

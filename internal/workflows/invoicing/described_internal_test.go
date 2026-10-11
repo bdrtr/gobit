@@ -13,9 +13,9 @@ func TestARowIsDescribedByItsProductAndVariant(t *testing.T) {
 	t.Parallel()
 
 	for _, c := range []struct{ product, variant, want string }{
-		{"Kenya AA", "1 kg / Filtre", "Kenya AA — 1 kg / Filtre"},
-		{"", "1 kg / Filtre", "1 kg / Filtre"},
-		{"Chemex 6 Fincan", "Chemex 6 Fincan", "Chemex 6 Fincan"},
+		{"Kenya AA", "1 kg / Filter", "Kenya AA — 1 kg / Filter"},
+		{"", "1 kg / Filter", "1 kg / Filter"},
+		{"Chemex 6 Cup", "Chemex 6 Cup", "Chemex 6 Cup"},
 		{" Kenya AA ", " ", "Kenya AA"},
 	} {
 		assert.Equal(t, c.want, describedAs(c.product, c.variant), "%q, %q", c.product, c.variant)

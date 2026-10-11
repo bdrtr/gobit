@@ -282,7 +282,7 @@ func TestAQueryOfOnlyExclusionsWorks(t *testing.T) {
 	write(t, i,
 		document{productID: "prod_1", title: "Shirt"},
 		document{productID: "prod_2", title: "Blue shirt"},
-		document{productID: "prod_3", title: "Terlik"},
+		document{productID: "prod_3", title: "Slipper"},
 	)
 
 	ids, err := i.Search(t.Context(), "-blue", 10, 0)

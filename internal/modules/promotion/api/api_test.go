@@ -38,7 +38,7 @@ var adminPrincipal = corehttp.Principal{
 // narrowPrincipal is a narrowly scoped caller that carries only
 // [api.ScopeRead].
 var narrowPrincipal = corehttp.Principal{
-	ID:     "usr_dar",
+	ID:     "usr_narrow",
 	Kind:   "user",
 	Scopes: []string{api.ScopeRead},
 }
@@ -243,12 +243,12 @@ func TestAdminPromotionUpdateResetsFieldsAbsentFromTheBody(t *testing.T) {
 	  "metadata": {"channel": "email"}
 	}`)
 
-	rec := do(t, r, http.MethodPut, "/admin/v1/promotions/"+id, `{"code": "kis20"}`)
+	rec := do(t, r, http.MethodPut, "/admin/v1/promotions/"+id, `{"code": "winter20"}`)
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 
 	updated := decodeItem(t, rec)
 	assert.Equal(t, id, updated["id"], "an edit does not change the id")
-	assert.Equal(t, "KIS20", updated["code"], "the code has to be written converted to UPPER case")
+	assert.Equal(t, "WINTER20", updated["code"], "the code has to be written converted to UPPER case")
 	assert.Equal(t, false, updated["is_automatic"], "a flag absent from the body must NOT KEEP its old value")
 	assert.Nil(t, updated["usage_limit"], "a usage limit absent from the body has to go away")
 	// The metadata comes back as an EMPTY object, not as null: normalizeMetadata
@@ -263,7 +263,7 @@ func TestAdminPromotionUpdateResetsFieldsAbsentFromTheBody(t *testing.T) {
 	rec = do(t, r, http.MethodGet, "/admin/v1/promotions/"+id, "")
 	require.Equal(t, http.StatusOK, rec.Code)
 	readBack := decodeItem(t, rec)
-	assert.Equal(t, "KIS20", readBack["code"])
+	assert.Equal(t, "WINTER20", readBack["code"])
 	assert.Equal(t, string(models.PromotionDraft), readBack["status"])
 	assert.InDelta(t, 0, readBack["usage_count"], 0, "an edit does not touch the usage counter")
 
@@ -291,13 +291,13 @@ func TestAdminUpdatingAMissingPromotionReturns404(t *testing.T) {
 
 func TestAdminPromotionListCanBeFiltered(t *testing.T) {
 	r, _ := newTestRouter(t)
-	createPromotion(t, r, `{"code": "AKTIF", "status": "active"}`)
-	createPromotion(t, r, `{"code": "TASLAK", "status": "draft"}`)
+	createPromotion(t, r, `{"code": "ACTIVE", "status": "active"}`)
+	createPromotion(t, r, `{"code": "DRAFT", "status": "draft"}`)
 
 	data, count, _, _ := decodeList(t, do(t, r, http.MethodGet, "/admin/v1/promotions?status=active", ""))
 	require.Len(t, data, 1)
 	assert.Equal(t, int64(1), count)
-	assert.Equal(t, "AKTIF", data[0]["code"])
+	assert.Equal(t, "ACTIVE", data[0]["code"])
 
 	rec := do(t, r, http.MethodGet, "/admin/v1/promotions?status=nonexistent", "")
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "an undefined status filter is rejected")
@@ -483,13 +483,13 @@ func TestStoreCouponDoesNotDistinguishByStatus(t *testing.T) {
 
 	// A draft promotion; it has an application method too, so the only thing
 	// it lacks is its STATUS.
-	id := createPromotion(t, r, `{"code": "TASLAK", "status": "draft"}`)
+	id := createPromotion(t, r, `{"code": "DRAFT", "status": "draft"}`)
 	rec := do(t, r, http.MethodPut, "/admin/v1/promotions/"+id+"/application-method", `{
 	  "type": "percentage", "target_type": "items", "value": 2000
 	}`)
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	missingRec := do(t, r, http.MethodGet, "/store/v1/promotions/HICBOYLEBIRKODYOK", "")
+	missingRec := do(t, r, http.MethodGet, "/store/v1/promotions/NOSUCHCODEATALL", "")
 	missingCode, missingMessage := errorCodeAndMessage(t, missingRec)
 	require.Equal(t, http.StatusNotFound, missingRec.Code)
 
@@ -531,13 +531,13 @@ func TestStoreCouponDoesNotDistinguishByStatus(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.prepare()
 
-			rec := do(t, r, http.MethodGet, "/store/v1/promotions/TASLAK", "")
+			rec := do(t, r, http.MethodGet, "/store/v1/promotions/DRAFT", "")
 			code, message := errorCodeAndMessage(t, rec)
 
 			assert.Equal(t, missingRec.Code, rec.Code, tt.reason)
 			assert.Equal(t, missingCode, code, tt.reason)
 			assert.Equal(t,
-				strings.Replace(missingMessage, "HICBOYLEBIRKODYOK", "TASLAK", 1), message,
+				strings.Replace(missingMessage, "NOSUCHCODEATALL", "DRAFT", 1), message,
 				"the message only repeats the code the client already knows; it gives no reason")
 		})
 	}
@@ -572,8 +572,8 @@ func TestNarrowScopeDoesNotOpenWriteEndpoints(t *testing.T) {
 		{"create campaign", http.MethodPost, "/admin/v1/campaigns", `{"name":"X","campaign_identifier":"X","budget_type":"none"}`},
 		{"update campaign", http.MethodPut, "/admin/v1/campaigns/promocamp_1", `{"name":"X","campaign_identifier":"X","budget_type":"none"}`},
 		{"delete campaign", http.MethodDelete, "/admin/v1/campaigns/promocamp_1", ``},
-		{"create promotion", http.MethodPost, "/admin/v1/promotions", `{"code":"BEDAVA"}`},
-		{"update promotion", http.MethodPut, "/admin/v1/promotions/promo_1", `{"code":"BEDAVA"}`},
+		{"create promotion", http.MethodPost, "/admin/v1/promotions", `{"code":"FREE"}`},
+		{"update promotion", http.MethodPut, "/admin/v1/promotions/promo_1", `{"code":"FREE"}`},
 		{"delete promotion", http.MethodDelete, "/admin/v1/promotions/promo_1", ``},
 		{"write application method", http.MethodPut, "/admin/v1/promotions/promo_1/application-method",
 			`{"type":"percentage","target_type":"items","value":10000}`},
@@ -629,7 +629,7 @@ func TestStoreEndpointRequiresNoScope(t *testing.T) {
 	r, _ := newTestRouter(t)
 
 	unscoped := corehttp.Principal{ID: "pk_1", Kind: "api_key"}
-	rec := doAs(t, r, unscoped, http.MethodGet, "/store/v1/promotions/HICBOYLEBIRKODYOK", "")
+	rec := doAs(t, r, unscoped, http.MethodGet, "/store/v1/promotions/NOSUCHCODEATALL", "")
 	assert.Equal(t, http.StatusNotFound, rec.Code, "body: %s", rec.Body.String())
 }
 

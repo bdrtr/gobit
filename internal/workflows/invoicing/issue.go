@@ -477,7 +477,7 @@ type invoiceOrderItemTax struct {
 }
 
 // describedAs is what a row prints for an order line: its product and its
-// variant together (ADR 0365), "Kenya AA — 1 kg / Filtre". A line that kept no
+// variant together (ADR 0365), "Kenya AA — 1 kg / Filter". A line that kept no
 // product title prints its variant's, as every row did before, and a variant
 // whose title is its product's prints it once.
 func describedAs(productTitle, title string) string {

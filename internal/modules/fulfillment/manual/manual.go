@@ -389,7 +389,7 @@ func (p *Provider) Cancel(ctx context.Context, fulfillmentID string) error {
 		switch shipment.Status.CancelAction() {
 		case models.ActionNoop:
 			p.log.DebugContext(ctx, "the manual provider's shipment is already canceled",
-				"gonderi", fulfillmentID)
+				"shipment", fulfillmentID)
 			return nil
 		case models.ActionConflict:
 			return errors.Conflict(CodeInvalidState,

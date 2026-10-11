@@ -149,7 +149,7 @@ func assertInvariants(t *testing.T, in ComputeInput, res ComputeResult) {
 func TestComputeDiscountsPercentageEachRoundsDown(t *testing.T) {
 	repo := newMemRepo()
 	// 20% → 999 * 2000 / 10000 = 199.8 → 199 (DOWN).
-	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "YUZDE20", IsAutomatic: true},
+	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "PERCENT20", IsAutomatic: true},
 		percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationEach))
 
 	in := ComputeInput{
@@ -208,7 +208,7 @@ func TestComputeDiscountsPercentageEachIgnoresMaxQuantity(t *testing.T) {
 	repo := newMemRepo()
 	method := percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach)
 	method.MaxQuantity = ptr(int64(1))
-	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "YARIM", IsAutomatic: true}, method)
+	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "HALF", IsAutomatic: true}, method)
 
 	in := ComputeInput{
 		CurrencyCode: "TRY",
@@ -290,7 +290,7 @@ func TestComputeDiscountsAcrossPercentageRoundsOnce(t *testing.T) {
 	repo := newMemRepo()
 	// The base is 3 × 333 = 999; 20% → 199 (in one go). Computed per line, each
 	// line would get 66 and the total would be 198 — one cent lost.
-	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "YUZDE20", IsAutomatic: true},
+	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "PERCENT20", IsAutomatic: true},
 		percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationAcross))
 
 	in := ComputeInput{
@@ -316,15 +316,15 @@ func TestComputeDiscountsOrderTargetIsDistributedToAllItemsAndIgnoresTheTargetRu
 		percentageMethod("promo_1", 1000, models.TargetOrder, models.AllocationAcross),
 		models.PromotionRule{
 			ID: "prule_1", PromotionID: "promo_1", RuleType: models.RuleTarget,
-			Attribute: "kategori", Operator: models.OpEq, Values: []string{"elektronik"},
+			Attribute: "category", Operator: models.OpEq, Values: []string{"electronics"},
 		},
 	)
 
 	in := ComputeInput{
 		CurrencyCode: "TRY",
 		Items: []ComputeItem{
-			item("li_a", 6000, 1, map[string]string{"kategori": "elektronik"}),
-			item("li_b", 4000, 1, map[string]string{"kategori": "giyim"}),
+			item("li_a", 6000, 1, map[string]string{"category": "electronics"}),
+			item("li_b", 4000, 1, map[string]string{"category": "clothing"}),
 		},
 	}
 	res, err := newTestService(repo).ComputeDiscounts(context.Background(), in)
@@ -340,19 +340,19 @@ func TestComputeDiscountsOrderTargetIsDistributedToAllItemsAndIgnoresTheTargetRu
 func TestComputeDiscountsTargetRuleFiltersItems(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo,
-		models.Promotion{ID: "promo_1", Code: "ELEKTRONIK", IsAutomatic: true},
+		models.Promotion{ID: "promo_1", Code: "ELECTRONICS", IsAutomatic: true},
 		percentageMethod("promo_1", 1000, models.TargetItems, models.AllocationEach),
 		models.PromotionRule{
 			ID: "prule_1", PromotionID: "promo_1", RuleType: models.RuleTarget,
-			Attribute: "kategori", Operator: models.OpEq, Values: []string{"elektronik"},
+			Attribute: "category", Operator: models.OpEq, Values: []string{"electronics"},
 		},
 	)
 
 	in := ComputeInput{
 		CurrencyCode: "TRY",
 		Items: []ComputeItem{
-			item("li_a", 6000, 1, map[string]string{"kategori": "elektronik"}),
-			item("li_b", 4000, 1, map[string]string{"kategori": "giyim"}),
+			item("li_a", 6000, 1, map[string]string{"category": "electronics"}),
+			item("li_b", 4000, 1, map[string]string{"category": "clothing"}),
 			item("li_c", 3000, 1, nil),
 		},
 	}
@@ -493,7 +493,7 @@ func TestComputeDiscountsZeroAmountItemGetsNoDiscount(t *testing.T) {
 
 func TestComputeDiscountsNoDiscountWhenEveryItemIsZero(t *testing.T) {
 	repo := newMemRepo()
-	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "YUZDE50", IsAutomatic: true},
+	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "PERCENT50", IsAutomatic: true},
 		percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationAcross))
 
 	in := ComputeInput{
@@ -510,7 +510,7 @@ func TestComputeDiscountsNoDiscountWhenEveryItemIsZero(t *testing.T) {
 
 func TestComputeDiscountsCartWithoutItemsIsNotAnError(t *testing.T) {
 	repo := newMemRepo()
-	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "YUZDE50", IsAutomatic: true},
+	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "PERCENT50", IsAutomatic: true},
 		percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach))
 
 	in := ComputeInput{CurrencyCode: "TRY"}
@@ -524,7 +524,7 @@ func TestComputeDiscountsCartWithoutItemsIsNotAnError(t *testing.T) {
 
 func TestComputeDiscountsLargeAmountsDoNotOverflow(t *testing.T) {
 	repo := newMemRepo()
-	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "YUZDE100", IsAutomatic: true},
+	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "PERCENT100", IsAutomatic: true},
 		percentageMethod("promo_1", 10000, models.TargetItems, models.AllocationAcross))
 
 	// Both lines are half the maximum amount; the base comes to exactly
@@ -565,12 +565,12 @@ func TestComputeDiscountsSubtotalAboveTheBoundIsRejected(t *testing.T) {
 
 func TestComputeDiscountsEliminationBranches(t *testing.T) {
 	pastWindow := models.Campaign{
-		ID: "camp_gecmis", Name: "Past", CampaignIdentifier: "GECMIS",
+		ID: "camp_past", Name: "Past", CampaignIdentifier: "PAST",
 		BudgetType: models.BudgetNone,
 		EndsAt:     ptr(testNow.Add(-time.Hour)),
 	}
 	exhaustedBudget := models.Campaign{
-		ID: "camp_tukenmis", Name: "Exhausted", CampaignIdentifier: "TUKENMIS",
+		ID: "camp_exhausted", Name: "Exhausted", CampaignIdentifier: "EXHAUSTED",
 		BudgetType: models.BudgetSpend, BudgetLimit: ptr(int64(1000)),
 		BudgetUsed: 1000, BudgetCurrencyCode: "TRY",
 	}
@@ -584,7 +584,7 @@ func TestComputeDiscountsEliminationBranches(t *testing.T) {
 			name: "draft promotion",
 			setup: func(repo *memRepo) {
 				seedPromotion(repo, models.Promotion{
-					ID: "promo_1", Code: "TASLAK", IsAutomatic: true, Status: models.PromotionDraft,
+					ID: "promo_1", Code: "DRAFT", IsAutomatic: true, Status: models.PromotionDraft,
 				}, percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach))
 			},
 			reason: "a draft promotion produces no discount",
@@ -593,7 +593,7 @@ func TestComputeDiscountsEliminationBranches(t *testing.T) {
 			name: "inactive promotion",
 			setup: func(repo *memRepo) {
 				seedPromotion(repo, models.Promotion{
-					ID: "promo_1", Code: "PASIF", IsAutomatic: true, Status: models.PromotionInactive,
+					ID: "promo_1", Code: "INACTIVE", IsAutomatic: true, Status: models.PromotionInactive,
 				}, percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach))
 			},
 			reason: "an inactive promotion produces no discount",
@@ -619,7 +619,7 @@ func TestComputeDiscountsEliminationBranches(t *testing.T) {
 			name: "usage allowance used up",
 			setup: func(repo *memRepo) {
 				seedPromotion(repo, models.Promotion{
-					ID: "promo_1", Code: "BITMIS", IsAutomatic: true,
+					ID: "promo_1", Code: "ENDED", IsAutomatic: true,
 					UsageLimit: ptr(int64(2)), UsageCount: 2,
 				}, percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach))
 			},
@@ -630,7 +630,7 @@ func TestComputeDiscountsEliminationBranches(t *testing.T) {
 			setup: func(repo *memRepo) {
 				repo.campaigns[pastWindow.ID] = pastWindow
 				seedPromotion(repo, models.Promotion{
-					ID: "promo_1", Code: "GECMIS", IsAutomatic: true, CampaignID: ptr(pastWindow.ID),
+					ID: "promo_1", Code: "PAST", IsAutomatic: true, CampaignID: ptr(pastWindow.ID),
 				}, percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach))
 			},
 			reason: "the promotion of a campaign whose window has closed is not applied",
@@ -640,7 +640,7 @@ func TestComputeDiscountsEliminationBranches(t *testing.T) {
 			setup: func(repo *memRepo) {
 				repo.campaigns[exhaustedBudget.ID] = exhaustedBudget
 				seedPromotion(repo, models.Promotion{
-					ID: "promo_1", Code: "TUKENMIS", IsAutomatic: true, CampaignID: ptr(exhaustedBudget.ID),
+					ID: "promo_1", Code: "EXHAUSTED", IsAutomatic: true, CampaignID: ptr(exhaustedBudget.ID),
 				}, percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach))
 			},
 			reason: "a campaign whose budget is exhausted is not applied PARTIALLY either",
@@ -826,37 +826,37 @@ func TestComputeDiscountsSameCodeGivenTwiceAppliesOnce(t *testing.T) {
 func TestComputeDiscountsUnmatchedCodesAreReported(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo, models.Promotion{
-		ID: "promo_1", Code: "TASLAK", IsAutomatic: false, Status: models.PromotionDraft,
+		ID: "promo_1", Code: "DRAFT", IsAutomatic: false, Status: models.PromotionDraft,
 	}, percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationEach))
 
 	in := ComputeInput{
 		CurrencyCode: "TRY",
 		Items:        []ComputeItem{item("li_1", 10000, 1, nil)},
-		Codes:        []string{"TASLAK", "NOSUCHCODE"},
+		Codes:        []string{"DRAFT", "NOSUCHCODE"},
 	}
 	res, err := newTestService(repo).ComputeDiscounts(context.Background(), in)
 	require.NoError(t, err)
 
 	assertInvariants(t, in, res)
-	assert.Equal(t, []string{"TASLAK", "NOSUCHCODE"}, res.UnmatchedCodes,
+	assert.Equal(t, []string{"DRAFT", "NOSUCHCODE"}, res.UnmatchedCodes,
 		"a draft promotion and a nonexistent code are reported the SAME way; a distinction would be a leak")
 }
 
 func TestComputeDiscountsValidCodeThatProducesNoDiscountCountsAsMatched(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo,
-		models.Promotion{ID: "promo_1", Code: "ELEKTRONIK", IsAutomatic: false},
+		models.Promotion{ID: "promo_1", Code: "ELECTRONICS", IsAutomatic: false},
 		percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationEach),
 		models.PromotionRule{
 			ID: "prule_1", PromotionID: "promo_1", RuleType: models.RuleTarget,
-			Attribute: "kategori", Operator: models.OpEq, Values: []string{"elektronik"},
+			Attribute: "category", Operator: models.OpEq, Values: []string{"electronics"},
 		},
 	)
 
 	in := ComputeInput{
 		CurrencyCode: "TRY",
-		Items:        []ComputeItem{item("li_1", 10000, 1, map[string]string{"kategori": "giyim"})},
-		Codes:        []string{"ELEKTRONIK"},
+		Items:        []ComputeItem{item("li_1", 10000, 1, map[string]string{"category": "clothing"})},
+		Codes:        []string{"ELECTRONICS"},
 	}
 	res, err := newTestService(repo).ComputeDiscounts(context.Background(), in)
 	require.NoError(t, err)
@@ -942,7 +942,7 @@ func TestComputeDiscountsDoesNotModifyTheInput(t *testing.T) {
 		percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationEach))
 
 	codes := []string{"summer20"}
-	attrs := map[string]string{"kategori": "giyim"}
+	attrs := map[string]string{"category": "clothing"}
 	in := ComputeInput{
 		CurrencyCode: "try",
 		Items:        []ComputeItem{item("li_1", 10000, 1, attrs)},
@@ -953,7 +953,7 @@ func TestComputeDiscountsDoesNotModifyTheInput(t *testing.T) {
 
 	assert.Equal(t, []string{"summer20"}, codes, "the caller's code slice must not be modified")
 	assert.Equal(t, "try", in.CurrencyCode, "the caller's input must not change because of normalization")
-	assert.Equal(t, map[string]string{"kategori": "giyim"}, attrs)
+	assert.Equal(t, map[string]string{"category": "clothing"}, attrs)
 }
 
 func TestComputeDiscountsPropagatesTheRepositoryError(t *testing.T) {
@@ -1008,7 +1008,7 @@ func TestComputeDiscountsAcrossFullLineDoesNotHalveTheSecondPromotion(t *testing
 		percentageMethod("promo_1", 10000, models.TargetItems, models.AllocationEach),
 		models.PromotionRule{
 			ID: "prule_1", PromotionID: "promo_1", RuleType: models.RuleTarget,
-			Attribute: "kategori", Operator: models.OpEq, Values: []string{"a"},
+			Attribute: "category", Operator: models.OpEq, Values: []string{"a"},
 		},
 	)
 	seedPromotion(repo, models.Promotion{ID: "promo_2", Code: "ORDER", IsAutomatic: true},
@@ -1017,8 +1017,8 @@ func TestComputeDiscountsAcrossFullLineDoesNotHalveTheSecondPromotion(t *testing
 	in := ComputeInput{
 		CurrencyCode: "TRY",
 		Items: []ComputeItem{
-			item("li_1", 1000, 1, map[string]string{"kategori": "a"}),
-			item("li_2", 1000, 1, map[string]string{"kategori": "b"}),
+			item("li_1", 1000, 1, map[string]string{"category": "a"}),
+			item("li_2", 1000, 1, map[string]string{"category": "b"}),
 		},
 		Codes: []string{"KUPON"},
 	}
@@ -1104,7 +1104,7 @@ func TestComputeDiscountsEliminatesOnCampaignBudgetCurrency(t *testing.T) {
 			repo := newMemRepo()
 			repo.campaigns[tt.campaign.ID] = tt.campaign
 			seedPromotion(repo, models.Promotion{
-				ID: "promo_1", Code: "YUZDE20", IsAutomatic: true, CampaignID: ptr(tt.campaign.ID),
+				ID: "promo_1", Code: "PERCENT20", IsAutomatic: true, CampaignID: ptr(tt.campaign.ID),
 			}, percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationEach))
 
 			in := ComputeInput{
@@ -1276,7 +1276,7 @@ func listItem(id string, amount, quantity int64, lists map[string][]string) Comp
 // these categories".
 func categoryPromotion(repo *memRepo, operator models.RuleOperator, attribute string) {
 	seedPromotion(repo,
-		models.Promotion{ID: "promo_1", Code: "KATEGORI", IsAutomatic: true},
+		models.Promotion{ID: "promo_1", Code: "CATEGORY", IsAutomatic: true},
 		percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach),
 		models.PromotionRule{
 			ID: "prule_1", PromotionID: "promo_1", RuleType: models.RuleTarget,

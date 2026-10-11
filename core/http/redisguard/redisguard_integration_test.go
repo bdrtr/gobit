@@ -175,7 +175,7 @@ func TestTwoProcessesShareOneQuota(t *testing.T) {
 	assert.False(t, d3.Allowed, "the quota must not be multiplied by the instance count")
 }
 
-// --- Idempotency deposu ---
+// --- Idempotency store ---
 
 func TestBeginReturnsInFlightOnASecondCallWithTheSameKey(t *testing.T) {
 	store, err := redisguard.NewIdempotencyStore(redisClient(t), defaultPrefix, time.Hour)

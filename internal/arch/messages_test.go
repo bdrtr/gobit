@@ -48,9 +48,9 @@ var logAssertionHelpers = []string{"logContains", "waitForLog"}
 // either — the smoke tests sit behind a build tag. The break surfaces in CI,
 // after the push, in the slowest job.
 //
-// That is not hypothetical. Translating the observability package's "izleme
-// kuruldu" to "telemetry is set up" broke exactly this pair, and every local
-// gate stayed green.
+// That is not hypothetical. Translating the observability package's
+// "izleme kuruldu" to "telemetry is set up" broke exactly this pair, and every
+// local gate stayed green.
 //
 // # Why a text match and not a shared constant
 //

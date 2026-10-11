@@ -283,14 +283,14 @@ func TestGraphNestedExpansionTwoLevels(t *testing.T) {
 		Entity: "product",
 		Expand: []query.Expansion{{
 			Link:   "product_variant",
-			As:     "varyantlar",
+			As:     "variants",
 			Expand: []query.Expansion{{Link: "variant_price", As: "price"}},
 		}},
 	})
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 
-	first, ok := got[0]["varyantlar"].([]query.Record)
+	first, ok := got[0]["variants"].([]query.Record)
 	require.True(t, ok)
 	require.Len(t, first, 2)
 
@@ -299,7 +299,7 @@ func TestGraphNestedExpansionTwoLevels(t *testing.T) {
 	assert.Equal(t, 1990, price["amount"])
 	assert.Nil(t, first[1]["price"], "the price of a variant with no link has to be nil")
 
-	second, ok := got[1]["varyantlar"].([]query.Record)
+	second, ok := got[1]["variants"].([]query.Record)
 	require.True(t, ok)
 	require.Len(t, second, 1)
 	price, ok = second[0]["price"].(query.Record)
@@ -459,7 +459,7 @@ func TestGraphReturnsNotFoundAndNamesTheLookupWhenTheExpansionProviderIsMissing(
 	variants := newProvider("variant", query.Record{"id": "var_1"})
 	links := newLinks(variantPrice).connect("variant_price", "var_1", "pset_1")
 
-	// pricing.query bilerek kaydedilmiyor.
+	// pricing.query is left unregistered on purpose.
 	q := query.New(links, newContainer(t, variants), nil)
 
 	_, err := q.Graph(t.Context(), query.GraphSpec{
@@ -648,7 +648,7 @@ func TestGraphRefusesAnOverlyDeepExpansion(t *testing.T) {
 	for i := range 11 {
 		exp = query.Expansion{
 			Link:   "product_variant",
-			As:     fmt.Sprintf("seviye_%d", i),
+			As:     fmt.Sprintf("level_%d", i),
 			Expand: []query.Expansion{exp},
 		}
 	}
@@ -667,7 +667,7 @@ func TestGraphRefusesAnOverlyDeepExpansion(t *testing.T) {
 func TestGraphCannotExpandARootRecordWithNoID(t *testing.T) {
 	products := newProvider("product")
 	products.order = []string{""}
-	products.records = map[string]query.Record{"": {"title": "kimliksiz"}}
+	products.records = map[string]query.Record{"": {"title": "without_id"}}
 
 	links := newLinks(productVariant)
 	q := query.New(links, newContainer(t, products, newProvider("variant")), nil)
@@ -772,10 +772,10 @@ func TestGraphANestedOutputKeyCannotOverwriteTheID(t *testing.T) {
 
 func TestGraphARootRecordWithAnUnreadableIDIsNotSkippedSilently(t *testing.T) {
 	products := newProvider("product")
-	products.order = []string{"prod_1", "kimliksiz"}
+	products.order = []string{"prod_1", "without_id"}
 	products.records = map[string]query.Record{
-		"prod_1":    {"id": "prod_1", "title": "kimlikli"},
-		"kimliksiz": {"title": "kimliksiz"},
+		"prod_1":     {"id": "prod_1", "title": "with_id"},
+		"without_id": {"title": "without_id"},
 	}
 	variants := newProvider("variant", query.Record{"id": "var_1"})
 

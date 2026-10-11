@@ -166,7 +166,7 @@ func setUpCatalogFilter(ctx context.Context) (catalogFilter, error) {
 	if ground.soldOut, err = setUpFilterProduct(ctx, filterProductSpec{
 		collectionID: collection.ID,
 		name:         "sold-out",
-		color:        "Mavi",
+		color:        "Blue",
 		amount:       10000,
 		manage:       true,
 		stock:        ptrOf(int64(0)),
@@ -190,7 +190,7 @@ func setUpCatalogFilter(ctx context.Context) (catalogFilter, error) {
 	if ground.unmanaged, err = setUpFilterProduct(ctx, filterProductSpec{
 		collectionID: collection.ID,
 		name:         "unmanaged",
-		color:        "Yesil",
+		color:        "Green",
 		amount:       90000,
 		manage:       false,
 		stock:        nil,
@@ -484,7 +484,7 @@ func TestTheStorefrontMatchesAnOptionValueAcrossItsSpellings(t *testing.T) {
 	assert.Equal(t, verbatim.ids(), folded.ids(),
 		"the match is on the folded form, so the spelling of the REQUEST does not matter")
 
-	other := filteredCatalogOf(t, ground, url.Values{"option_value": {"mavi"}})
+	other := filteredCatalogOf(t, ground, url.Values{"option_value": {"blue"}})
 	assert.Equal(t, []string{ground.soldOut.id}, other.ids(),
 		"a different value must not be merged into the first")
 

@@ -17,13 +17,13 @@ import (
 func providerRepo() *memRepo {
 	repo := newMemRepo()
 	seedPromotion(repo, models.Promotion{
-		ID: "promo_1", Code: "AKTIF", Status: models.PromotionActive, IsAutomatic: true,
+		ID: "promo_1", Code: "ACTIVE", Status: models.PromotionActive, IsAutomatic: true,
 	}, nil)
 	seedPromotion(repo, models.Promotion{
-		ID: "promo_2", Code: "TASLAK", Status: models.PromotionDraft,
+		ID: "promo_2", Code: "DRAFT", Status: models.PromotionDraft,
 	}, nil)
 	seedPromotion(repo, models.Promotion{
-		ID: "promo_3", Code: "PASIF", Status: models.PromotionInactive,
+		ID: "promo_3", Code: "INACTIVE", Status: models.PromotionInactive,
 	}, nil)
 	return repo
 }
@@ -44,7 +44,7 @@ func TestQueryProviderListsOnlyActivePromotions(t *testing.T) {
 
 	require.Len(t, records, 1, "draft and inactive promotions do NOT leak through the read surface")
 	assert.Equal(t, "promo_1", records[0]["id"])
-	assert.Equal(t, "AKTIF", records[0]["code"])
+	assert.Equal(t, "ACTIVE", records[0]["code"])
 }
 
 func TestQueryProviderFetchByIDsAppliesTheSameFilter(t *testing.T) {
@@ -78,7 +78,7 @@ func TestQueryProviderFieldSelection(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 
-	assert.Equal(t, "AKTIF", records[0]["code"])
+	assert.Equal(t, "ACTIVE", records[0]["code"])
 	assert.Contains(t, records[0], "id",
 		"Query joins records by id; the id is added even when it is not requested")
 	assert.NotContains(t, records[0], "status")
@@ -115,7 +115,7 @@ func TestQueryProviderUnsupportedFilter(t *testing.T) {
 	provider := NewQueryProvider(newTestService(providerRepo()))
 
 	_, err := provider.List(context.Background(), query.ListOptions{
-		Filters: map[string]any{"code": "AKTIF"},
+		Filters: map[string]any{"code": "ACTIVE"},
 	})
 
 	require.Error(t, err)
