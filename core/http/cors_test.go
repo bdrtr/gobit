@@ -3,6 +3,7 @@ package http_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -52,6 +53,23 @@ func TestABrowserStorefrontCanAskPermission(t *testing.T) {
 	assert.Contains(t, rec.Header().Get("Access-Control-Allow-Headers"), "If-None-Match",
 		"a script revalidating a catalog read sends If-None-Match, and a preflight that "+
 			"does not allow it stops the request before the key is read (ADR 0391)")
+	assert.False(t, *reached, "a preflight must not reach the real handler")
+}
+
+// TestABrowserMayChangeAQuantity: a cart's line item is changed with PATCH,
+// and a preflight that does not allow it stops the request before the key is
+// read (D287). Every method a store route binds is the integration lane's
+// (internal/app TestEveryStoreMethodPassesABrowsersPreflight).
+func TestABrowserMayChangeAQuantity(t *testing.T) {
+	h, reached := corsHandler([]string{testOrigin})
+	req := preflight(testOrigin)
+	req.Header.Set("Access-Control-Request-Method", http.MethodPatch)
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusNoContent, rec.Code)
+	assert.Contains(t, strings.Split(rec.Header().Get("Access-Control-Allow-Methods"), ", "), http.MethodPatch)
 	assert.False(t, *reached, "a preflight must not reach the real handler")
 }
 

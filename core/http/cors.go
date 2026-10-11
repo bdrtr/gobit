@@ -71,9 +71,14 @@ const OrderTokenHeader = "X-Order-Token"
 // says when to send the completion again with (ADR 0438).
 var corsExposedHeaders = []string{requestIDHeader, "ETag", retryAfterHeader}
 
-// corsAllowedMethods are the methods the store surface answers.
+// corsAllowedMethods are the methods the store surface answers. A method a
+// store route binds and this list leaves out is a route a browser storefront
+// cannot call, since its preflight is answered without it: PATCH on a cart's
+// line item was one (D287). internal/app's
+// TestEveryStoreMethodPassesABrowsersPreflight walks every installation the
+// tree ships for such a method.
 var corsAllowedMethods = []string{
-	http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions,
+	http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions,
 }
 
 // CORS answers browser preflights and stamps allowed responses.

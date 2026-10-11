@@ -176,6 +176,13 @@ design. It is fixed with `1.0.0`.
 
 ### Fixed
 
+- **A browser storefront can change a line's quantity** (D287). The store
+  surface's CORS preflight now allows PATCH, which
+  `PATCH /store/v1/carts/{id}/line-items/{line_item_id}` takes; a storefront
+  calling gobit from the browser had its preflight answered without the method,
+  so the browser never sent the request. **For contributors:** an integration
+  test walks every store route of the default installation and of one with
+  every plugin and asks a browser's permission for each method it binds.
 - **Turkish typed without its marks is read by its endings** (D279). **For
   integrators:** the cart interop's refusal of a totals body it cannot parse
   carries `cart_interop_totals_invalid`, the module's own prefix, where its
