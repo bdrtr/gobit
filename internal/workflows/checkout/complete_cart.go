@@ -162,6 +162,27 @@ type CompleteCartInput struct {
 	// It is NOT written into the execution record; for the rationale see
 	// [checkoutPlan].
 	PaymentData json.RawMessage
+	// PaymentSessionID is a payment session the storefront opened for this
+	// cart before completing it ([Workflows.OpenPayment]); it is optional, and
+	// REQUIRED for a provider whose customer pays on its own page (ADR 0438).
+	//
+	// When set, the completion opens no collection and no session: it
+	// authorizes this one. It is refused before anything is done when it was
+	// opened for another cart or at another provider, for an amount or a
+	// currency the cart no longer has, when it is already closed, and when the
+	// provider has not reported the customer's payment yet — the last one
+	// leaves the session open, so the same completion may be sent again. A
+	// session that pays first beside a gift card or a balance is refused too:
+	// the session was opened for the whole total. PaymentData is neither sent
+	// to the provider nor checked: the session was opened with its own, and
+	// the refusals known in advance were asked then.
+	PaymentSessionID string
+	// CompletionSecret is the secret the opening of that payment handed the
+	// storefront ([OpenPaymentResult.CompletionSecret]). It is read only when
+	// the session was taken by an order and the storefront asks for the
+	// order's token: the provider's report completed the cart, and the secret,
+	// spent once, answers with that order (ADR 0438, ADR 0439).
+	CompletionSecret string
 	// GiftCardCode is a gift card that pays FIRST; it is optional (ADR 0209).
 	//
 	// The card pays what it holds, up to the whole amount, and the provider
@@ -329,9 +350,31 @@ func (w *Workflows) CompleteCart(ctx context.Context, in CompleteCartInput) (Com
 	if err := in.normalize(); err != nil {
 		return CompleteCartResult{}, err
 	}
+	// A session an order already took answers with that order: the
+	// provider's report completes the cart on the server, and the storefront
+	// that completes after it is told the same order rather than refused
+	// (ADR 0438).
+	if in.PaymentSessionID != "" {
+		done, found, err := w.completedBy(ctx, in)
+		if err != nil {
+			return CompleteCartResult{}, err
+		}
+		if found {
+			return w.answerTaken(ctx, in, done)
+		}
+	}
 
 	plan, err := w.prepare(ctx, in)
+	if err == nil {
+		// The payment the storefront opened is held to the plan BEFORE the
+		// saga, so a refusal takes nothing back (ADR 0438).
+		err = w.checkPayment(ctx, in, plan)
+	}
 	if err != nil {
+		if in.PaymentSessionID != "" {
+			return w.afterRefusal(ctx, in, err)
+		}
+
 		return CompleteCartResult{}, err
 	}
 
@@ -346,10 +389,29 @@ func (w *Workflows) CompleteCart(ctx context.Context, in CompleteCartInput) (Com
 		}, RecoveryOptions()...)...,
 	)
 	if err != nil {
+		// The same session's completion running elsewhere — the report's
+		// on the server, or the storefront's — is "not yet", answered as
+		// the provider's silence is: the completion is sent again, and then
+		// answers with the order (ADR 0438).
+		if plan.PaymentSessionID != "" && errors.CodeOf(err) == workflow.CodeExecutionRunning {
+			return CompleteCartResult{}, errors.Conflict(CodePaymentPending,
+				"a completion of payment session %s is running; the same completion may be sent again",
+				plan.PaymentSessionID)
+		}
+
 		return CompleteCartResult{}, err
 	}
+	// The engine answers a key it already completed with that execution's
+	// output, whatever this input was: a second paid session of the cart is
+	// not the order's, and is told so rather than handed the first one's
+	// order (ADR 0438).
+	if plan.PaymentSessionID != "" && out.PaymentSessionID != plan.PaymentSessionID {
+		return CompleteCartResult{}, errors.Conflict(CodeCartCompleted,
+			"cart %s was completed with another payment; payment session %s is not its order's",
+			plan.CartID, plan.PaymentSessionID)
+	}
 	if in.IssueOrderToken {
-		out.OrderToken = w.issueOrderToken(ctx, out.OrderID)
+		out.OrderToken = w.answerToken(ctx, in, plan, out.OrderID)
 	}
 
 	w.log.InfoContext(ctx, "cart turned into an order",
@@ -357,6 +419,56 @@ func (w *Workflows) CompleteCart(ctx context.Context, in CompleteCartInput) (Com
 		"amount", out.Amount, "currency_code", out.CurrencyCode,
 		"warnings", len(out.Warnings))
 	return out, nil
+}
+
+// answerTaken answers the completion of a session an order took with that
+// order. The storefront's — the one that asks for the order's token — is
+// answered when it presents the session's completion secret, which the
+// opening handed it, and once: the secret is spent before the token is
+// issued. The cart's id and the session's id are ids, which logs and pages
+// carry, and open nothing (ADR 0439). A caller that asks for no token is told
+// the order without one.
+func (w *Workflows) answerTaken(ctx context.Context, in CompleteCartInput, done CompleteCartResult) (CompleteCartResult, error) {
+	if !in.IssueOrderToken {
+		return done, nil
+	}
+	claimed, err := w.payments.ClaimSessionAnswer(ctx, done.PaymentSessionID, in.CompletionSecret)
+	if err != nil {
+		return CompleteCartResult{}, err
+	}
+	if !claimed {
+		return CompleteCartResult{}, errors.Conflict(CodePaymentAnswered,
+			"the completion of payment session %s was answered already", done.PaymentSessionID)
+	}
+	done.OrderToken = w.issueOrderToken(ctx, done.OrderID)
+
+	return done, nil
+}
+
+// answerToken issues the order's access token for the storefront's completion
+// the saga answers (ADR 0439). A completion paid with an opened session gets
+// it only for that session's completion secret, spent here: the cart's id and
+// the session's id are read off logs while the cart is still open — a report
+// whose completion waits for stock — and would otherwise hand whoever holds
+// them the shopper's order. Without the secret the order is placed and
+// answered without a token, and the order mail carries one.
+func (w *Workflows) answerToken(ctx context.Context, in CompleteCartInput, plan *checkoutPlan, orderID string) string {
+	if plan.PaymentSessionID == "" {
+		return w.issueOrderToken(ctx, orderID)
+	}
+	claimed, err := w.payments.ClaimSessionAnswer(ctx, plan.PaymentSessionID, in.CompletionSecret)
+	if err != nil {
+		w.log.ErrorContext(ctx, "the order was placed and its payment's completion secret could not be read; "+
+			"the completion answers without a token",
+			"order_id", orderID, "error", err)
+
+		return ""
+	}
+	if !claimed {
+		return ""
+	}
+
+	return w.issueOrderToken(ctx, orderID)
 }
 
 // issueOrderToken asks the order module for an access token for the placed
@@ -377,6 +489,100 @@ func (w *Workflows) issueOrderToken(ctx context.Context, orderID string) string 
 	}
 
 	return token
+}
+
+// afterRefusal answers a completion naming an opened session that the
+// preparation refused, when the refusal may be another completion's work
+// (ADR 0438).
+//
+// The storefront's completion and the provider's report complete the same
+// cart with the same session, and the one that comes second is prepared while
+// the first runs: the first spent the promotion's last use, so the second's
+// totals no longer match, or stamped the cart, so the second meets a completed
+// cart. Acting on that refusal — refunding the session, telling the storefront
+// to cancel it — would undo the order being placed. So a completion of the
+// cart still running answers "not yet", one that placed the order with this
+// session answers with that order, and only a refusal with neither is the
+// answer.
+func (w *Workflows) afterRefusal(ctx context.Context, in CompleteCartInput, refusal error) (CompleteCartResult, error) {
+	running, err := w.completionRunning(ctx, in.CartID)
+	if err != nil {
+		return CompleteCartResult{}, err
+	}
+	if running {
+		return CompleteCartResult{}, errors.Conflict(CodePaymentPending,
+			"a completion of cart %s is running; the same completion may be sent again", in.CartID)
+	}
+	done, found, err := w.completedBy(ctx, in)
+	if err != nil {
+		return CompleteCartResult{}, err
+	}
+	if found {
+		return w.answerTaken(ctx, in, done)
+	}
+
+	return CompleteCartResult{}, refusal
+}
+
+// completionRunning reports whether a completion of the cart is running now:
+// an execution under the cart's saga key that has not finished and whose
+// lease ([ExecutionLease]) has not run out (ADR 0438). A record past its lease
+// is the engine's abandoned execution: it holds no promotion or hold a live
+// completion is about to use, and treating it as running would answer "not
+// yet" for good to a session nothing will ever complete.
+func (w *Workflows) completionRunning(ctx context.Context, cartID string) (bool, error) {
+	if w.executions == nil {
+		return false, nil
+	}
+	exec, err := w.executions.FindByIdempotencyKey(ctx, WorkflowName, IdempotencyKeyPrefix+cartID)
+	switch {
+	case errors.IsNotFound(err):
+		return false, nil
+	case err != nil:
+		return false, errors.Wrap(err, errors.KindOf(err), CodeCompletionUnreadable,
+			"whether a completion of cart %s is running could not be read", cartID)
+	}
+
+	return exec.Status == workflow.StatusRunning && time.Since(exec.UpdatedAt) < ExecutionLease, nil
+}
+
+// completedBy answers a completion naming a session an order already took with
+// that order (ADR 0438).
+//
+// The session must be this cart's, at the named provider, and captured, and
+// its collection bound to exactly one order; anything else is left to the
+// preparation, which refuses it as before. The answer carries the order, its
+// currency and its money from the collection, and none of the step reports a
+// saga run writes: none ran.
+func (w *Workflows) completedBy(ctx context.Context, in CompleteCartInput) (CompleteCartResult, bool, error) {
+	facts, err := w.paymentSession(ctx, in.PaymentSessionID)
+	if err != nil {
+		return CompleteCartResult{}, false, err
+	}
+	if facts.Status != SessionCaptured || facts.Collection.Reference != in.CartID ||
+		facts.ProviderID != in.PaymentProviderID {
+		return CompleteCartResult{}, false, nil
+	}
+
+	orders, err := w.links.ListManyByTo(ctx, LinkOrderPayment, []string{facts.Collection.ID})
+	if err != nil {
+		return CompleteCartResult{}, false, errors.Wrap(err, errors.KindOf(err), CodeLinkReadFailed,
+			"the order of payment collection %s could not be read", facts.Collection.ID)
+	}
+	bound := orders[facts.Collection.ID]
+	if len(bound) != 1 {
+		return CompleteCartResult{}, false, nil
+	}
+
+	return CompleteCartResult{
+		CartID:              in.CartID,
+		OrderID:             bound[0],
+		PaymentCollectionID: facts.Collection.ID,
+		PaymentSessionID:    facts.ID,
+		CurrencyCode:        facts.CurrencyCode,
+		Amount:              facts.Collection.Amount,
+		Outstanding:         facts.Collection.Amount - facts.Collection.CapturedAmount,
+	}, true, nil
 }
 
 // sagaSteps builds the saga's step sequence.
@@ -550,6 +756,22 @@ func (in *CompleteCartInput) normalize() error {
 	if err := validatePayFirstWith(in.PayFirstWith, in.PaymentProviderID); err != nil {
 		return err
 	}
+	if in.PaymentSessionID != "" {
+		if err := requireID("payment_session_id", in.PaymentSessionID, maxIDLen); err != nil {
+			return err
+		}
+		if err := refuseBalanceOpenedFirst(in.PaymentProviderID); err != nil {
+			return err
+		}
+		// The session was opened for the cart's whole total, so nothing can
+		// pay before it; a tender that did would leave the provider holding
+		// more than the rest it is owed (ADR 0438).
+		if in.GiftCardCode != "" || len(in.PayFirstWith) > 0 {
+			return errors.Invalid(CodeInvalidInput,
+				"payment_session_id pays the whole total, so it cannot be combined with gift_card_code "+
+					"or pay_first_with; open the payment session without them")
+		}
+	}
 	if in.ExpectedTotal < 0 {
 		return errors.Invalid(CodeInvalidInput,
 			"expected_total cannot be negative: %d", in.ExpectedTotal)
@@ -564,6 +786,27 @@ func (in *CompleteCartInput) normalize() error {
 		return errors.Invalid(CodeInvalidInput,
 			"email can be at most %d bytes: %d", maxIDLen, len(in.Email))
 	}
+	return nil
+}
+
+// refuseBalanceOpenedFirst refuses a payment opened before the completion at
+// one of the shop's own balances — a gift card, store credit, loyalty points —
+// which pay through gift_card_code and pay_first_with instead (ADR 0438).
+//
+// A balance shows the customer no page, so opening it first buys nothing, and
+// it would cost a check: a balance is refused before the order when it can
+// never pay — an expired or closed card — and that refusal is asked with the
+// data the session was opened with, which the completion does not resend. The
+// completion of an opened session does not ask again, so it must not be a
+// balance's.
+func refuseBalanceOpenedFirst(providerID string) error {
+	switch providerID {
+	case GiftCardProviderID, StoreCreditProviderID, LoyaltyPointsProviderID:
+		return errors.Invalid(CodeInvalidInput,
+			"%q is one of the shop's own balances; it pays through gift_card_code or pay_first_with "+
+				"at the completion and is not opened before it", providerID)
+	}
+
 	return nil
 }
 

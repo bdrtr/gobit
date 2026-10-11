@@ -1204,3 +1204,33 @@ func mountPluginRoute(t *testing.T, path string) error {
 
 	return coreplugin.NewRegistry(log).MountRoutes(chi.NewRouter(), h)
 }
+
+// takenReports keeps the reports it is handed.
+type takenReports struct{ got []string }
+
+func (r *takenReports) PaymentReported(_ context.Context, providerID, sessionID string) error {
+	r.got = append(r.got, providerID+":"+sessionID)
+
+	return nil
+}
+
+// TestThePaymentReportsDoorResolvesWhenItIsUsed: a plugin takes the door at
+// Setup, before the checkout behind it exists; a report made while nothing is
+// registered is an error the provider can answer, and one made after the
+// checkout is registered reaches it (ADR 0438).
+func TestThePaymentReportsDoorResolvesWhenItIsUsed(t *testing.T) {
+	t.Parallel()
+
+	c, _, h := newHost(t, nil)
+	door := h.PaymentReports()
+
+	err := door.PaymentReported(t.Context(), "paytr", "OID1")
+	require.Error(t, err)
+	assert.Equal(t, coreerrors.KindUnavailable, coreerrors.KindOf(err))
+
+	taken := &takenReports{}
+	require.NoError(t, c.Provide(coreplugin.PaymentReportsName, taken))
+
+	require.NoError(t, door.PaymentReported(t.Context(), "paytr", "OID1"))
+	assert.Equal(t, []string{"paytr:OID1"}, taken.got)
+}

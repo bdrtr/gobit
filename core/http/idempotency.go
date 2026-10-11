@@ -128,6 +128,15 @@ type IdempotencyStore interface {
 // retrying is exactly what we want. Replaying a stuck 500 for 24 hours would turn
 // a self-healing fault into a permanent one.
 //
+// Nor is a REFUSAL that carries Retry-After, a 4xx saying the condition it
+// reports is expected to pass and when to ask again: it is not the request's
+// answer. A checkout refused because the payment provider has not reported the
+// customer's payment yet is answered 409 with Retry-After, and recording it
+// would replay "not yet" to the very retry it asked for (ADR 0438). A success
+// that carries the header — a 202 that started a job and says when to look —
+// did the work, and it is recorded as any success is, so a retry does not
+// start the job twice.
+//
 // This guard looks only at the STATUS CODE, and that is the only thing it can
 // look at: deciding from the body would mean teaching this middleware the error
 // shape of every surface — the rule leaves a single place at that moment and every
@@ -295,6 +304,10 @@ func idempotency(store IdempotencyStore, proof IdempotencyProofFunc) func(http.H
 	}
 }
 
+// retryAfterHeader is the header a response names the moment to ask again in;
+// a refusal carrying it is not recorded (see [Idempotency]).
+const retryAfterHeader = "Retry-After"
+
 // record runs the handler and buffers the response, then writes it to the store.
 //
 // It is a separate function so that the defer undoing the reservation on a panic
@@ -330,7 +343,8 @@ func record(
 
 	next.ServeHTTP(rec, r)
 
-	if rec.status >= http.StatusInternalServerError {
+	if rec.status >= http.StatusInternalServerError ||
+		(rec.status >= http.StatusBadRequest && rec.Header().Get(retryAfterHeader) != "") {
 		return
 	}
 

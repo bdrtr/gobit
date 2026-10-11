@@ -17,6 +17,7 @@ import (
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/module"
+	coreplugin "github.com/bdrtr/gobit/core/plugin"
 )
 
 // dbServiceName is the core pool's name in the container.
@@ -77,6 +78,10 @@ type paytrModule struct {
 	log   *slog.Logger
 	store *store
 	prov  *provider
+	// reports is where a successful payment is reported, so the checkout
+	// completes its cart without the storefront (ADR 0438); nil reports
+	// nothing.
+	reports coreplugin.PaymentReports
 }
 
 // The core's module contract is satisfied at compile time.
@@ -124,9 +129,9 @@ func (m *paytrModule) Register(ctx context.Context, c *container.Container) erro
 
 // reportStuck makes the pending report once, at startup.
 //
-// It is the startup counterpart of `gobit stuck`: a payment left pending is
-// money that may have been taken with nothing following it, and nothing else in
-// the system will ever mention it. A failure to count is not a startup failure
+// It is the startup counterpart of `gobit stuck`: a payment PayTR never
+// reported on is either a page nobody paid on or a callback that never
+// arrived, and only this report tells the two apart from nothing at all. A failure to count is not a startup failure
 // — refusing to boot over a diagnostic query would trade a visible problem for
 // a bigger one.
 //
@@ -311,22 +316,35 @@ func (m *paytrModule) handleCallback(w http.ResponseWriter, r *http.Request) {
 		// is unknown. Both are acknowledged: retrying would not change either.
 		m.log.InfoContext(ctx, "a PayTR callback changed nothing; it was already recorded or the id is unknown",
 			"merchant_oid", oid, "status", outcome)
-		answer(w, http.StatusOK, "OK")
-
-		return
+	} else {
+		m.log.InfoContext(ctx, "a PayTR payment was reported",
+			"merchant_oid", oid, "status", outcome, "amount", paid)
 	}
 
-	m.log.InfoContext(ctx, "a PayTR payment was reported",
-		"merchant_oid", oid, "status", outcome, "amount", paid)
+	// A payment is reported to the checkout, which completes the cart its
+	// session was opened for: the shopper who paid may never come back to the
+	// storefront (ADR 0438). A callback PayTR sends again is answered from
+	// the callback ring's record where one is kept; where none is, it reports
+	// again, which changes nothing for a report already settled. A report the
+	// checkout could not take is logged and still acknowledged: the money's
+	// record is written, and the checkout's sweep finds the payment by asking
+	// this provider.
+	if outcome == statusSuccess && m.reports != nil {
+		if err := m.reports.PaymentReported(ctx, ProviderID, oid); err != nil {
+			m.log.ErrorContext(ctx, "a PayTR payment could not be reported to the checkout; its sweep finds it",
+				"merchant_oid", oid, "error", err)
+		}
+	}
 
 	answer(w, http.StatusOK, "OK")
 }
 
 // handlePending lists payments PayTR never reported on.
 //
-// This is the operator's view of the one gap this plugin cannot close by
-// itself: a customer who paid and closed the browser. The rows here are where
-// money may have moved with nothing following it.
+// The rows are payment pages PayTR posted no outcome for, older than
+// [pendingGrace] (see [store.pending] for what they are). A payment PayTR
+// reported and no order took is reported by the payment module's
+// reconciliation instead (ADR 0438).
 func (m *paytrModule) handlePending(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -337,17 +355,44 @@ func (m *paytrModule) handlePending(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items := make([]map[string]any, 0, len(stuck))
+	items := make([]pendingPayment, 0, len(stuck))
 	for _, p := range stuck {
-		items = append(items, map[string]any{
-			"merchant_oid":  p.MerchantOID,
-			"amount":        p.Amount,
-			"currency_code": p.CurrencyCode,
-			"status":        p.Status,
+		items = append(items, pendingPayment{
+			MerchantOID:  p.MerchantOID,
+			Amount:       p.Amount,
+			CurrencyCode: p.CurrencyCode,
+			Status:       p.Status,
 		})
 	}
 
-	corehttp.WriteJSON(ctx, w, http.StatusOK, map[string]any{"pending": items})
+	corehttp.WriteJSON(ctx, w, http.StatusOK, pendingResponse{Data: items, Pending: items})
+}
+
+// pendingResponse is the body of [PendingPath].
+//
+// The list is under "data", the envelope every other endpoint answers with,
+// which the schema gate holds every described endpoint to (ADR 0438). It
+// answered under "pending" alone before it was described, and it still carries
+// the same list there, deprecated, so a script reading the old key keeps
+// working until it moves.
+type pendingResponse struct {
+	// Data are the payments, oldest first, at most two hundred.
+	Data []pendingPayment `json:"data"`
+	// Pending is Data under its old name; it is deprecated.
+	Pending []pendingPayment `json:"pending"`
+}
+
+// pendingPayment is one payment PayTR never reported on.
+type pendingPayment struct {
+	// MerchantOID is the order id PayTR knows the payment by, the one its
+	// merchant panel searches for.
+	MerchantOID string `json:"merchant_oid"`
+	// Amount is what the payment page asked for, in minor units.
+	Amount int64 `json:"amount"`
+	// CurrencyCode is the payment's ISO 4217 code.
+	CurrencyCode string `json:"currency_code"`
+	// Status is the row's status, always "pending" here.
+	Status string `json:"status"`
 }
 
 // answer writes PayTR's protocol: a bare token, no JSON envelope.

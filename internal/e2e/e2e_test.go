@@ -545,7 +545,8 @@ func runWithPostgres(m *testing.M) int {
 // The names are read off config.Config's env tags rather than listed here: a
 // list would miss the next setting, and the setting it missed is the one a
 // developer's shell or a runner's environment would then decide for the ground.
-// Plugin settings need nothing: the plugins on the ground read none.
+// Plugin settings are not cleared: the one plugin on the ground that reads any,
+// PayTR, is given every one it reads by [groundEnvironment].
 func clearConfigEnvironment() error {
 	names := envTagNames(reflect.TypeFor[config.Config]())
 	if len(names) == 0 {
@@ -579,8 +580,8 @@ func envTagNames(t reflect.Type) []string {
 }
 
 // groundEnvironment is the configuration the ground runs under, on top of a
-// cleared environment.
-func groundEnvironment(dsn string) map[string]string {
+// cleared environment; paytrURL is where the fake PayTR listens.
+func groundEnvironment(dsn, paytrURL string) map[string]string {
 	return map[string]string{
 		"DATABASE_URL": dsn,
 		// The shared profile: what staging and production run, less the one
@@ -609,6 +610,15 @@ func groundEnvironment(dsn string) map[string]string {
 		// server.
 		"ADMIN_BOOTSTRAP_EMAIL":    adminEmail,
 		"ADMIN_BOOTSTRAP_PASSWORD": adminPassword,
+		// Every setting the PayTR plugin reads, the address PayTR answers at
+		// included, so nothing a shell exported decides it (ADR 0438).
+		"PAYTR_MERCHANT_ID":   paytrMerchantID,
+		"PAYTR_MERCHANT_KEY":  paytrKey,
+		"PAYTR_MERCHANT_SALT": paytrSalt,
+		"PAYTR_SUCCESS_URL":   "https://shop.example.test/checkout/done",
+		"PAYTR_FAILURE_URL":   "https://shop.example.test/checkout/failed",
+		"PAYTR_TEST_MODE":     "true",
+		"PAYTR_BASE_URL":      paytrURL,
 	}
 }
 
@@ -620,19 +630,30 @@ func setUpHarness(ctx context.Context, dsn string) (func(), error) {
 	if err := clearConfigEnvironment(); err != nil {
 		return nil, err
 	}
-	for name, value := range groundEnvironment(dsn) {
+	// The fake PayTR is up before the installation opens, because the
+	// plugin is configured with its address (paytr_checkout_test.go).
+	fakePayTRServer = newFakePayTR()
+	for name, value := range groundEnvironment(dsn, fakePayTRServer.URL) {
 		if err := os.Setenv(name, value); err != nil {
+			fakePayTRServer.Close()
+
 			return nil, fmt.Errorf("could not set %s: %w", name, err)
 		}
 	}
 
-	opened, stop, err := app.Open(ctx, app.Options{
+	opened, closeInstallation, err := app.Open(ctx, app.Options{
 		Version: "e2e",
 		Modules: []module.Module{identityModule{}},
 		Plugins: []coreplugin.Plugin{carrierSpyPlugin{}, observersPlugin{}},
 	})
 	if err != nil {
+		fakePayTRServer.Close()
+
 		return nil, fmt.Errorf("could not open the installation: %w", err)
+	}
+	stop := func() {
+		closeInstallation()
+		fakePayTRServer.Close()
 	}
 	installation = opened
 	ctr, testRouter, testModules = opened.Container, opened.Router, opened.Modules

@@ -68,6 +68,19 @@ func TestABrowserMayReadTheTag(t *testing.T) {
 		"a browser hides every response header the origin does not expose")
 }
 
+// TestABrowserMayReadWhenToAskAgain: a storefront in a browser reads the
+// Retry-After a checkout refused because its payment is not reported yet
+// answers with (ADR 0438).
+func TestABrowserMayReadWhenToAskAgain(t *testing.T) {
+	h, _ := corsHandler([]string{testOrigin})
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, simpleRequest(testOrigin))
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Header().Get("Access-Control-Expose-Headers"), "Retry-After")
+}
+
 // TestCredentialsAreNEVERAllowed is the CSRF decision, asserted.
 //
 // The store surface authenticates from a HEADER, which a browser does not

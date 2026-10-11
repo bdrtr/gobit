@@ -136,10 +136,13 @@ func (s *store) addRefund(ctx context.Context, merchantOID string, amount int64)
 
 // pending lists payments PayTR has not reported on.
 //
-// This is the operator's view of the gap that has no automatic answer: a
-// customer who paid and then closed the browser leaves a row here with money
-// taken and no order. gobit already has the vocabulary for that class of
-// half-finished work (ADR 0016/0017) and this list is what points at it.
+// A row here is a payment page that was opened and that PayTR never posted an
+// outcome for: most often a customer who opened the page and did not pay, and
+// otherwise a callback that never reached this server — a callback address set
+// wrongly at PayTR leaves every payment here while the money is taken. A
+// payment PayTR DID report as paid and that no order took is not here: its row
+// says success, and the payment module's reconciliation reports it from its
+// pending session (ADR 0438).
 func (s *store) pending(ctx context.Context, olderThan time.Duration, limit int) ([]payment, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT merchant_oid, amount, currency_code, status, paid_amount,

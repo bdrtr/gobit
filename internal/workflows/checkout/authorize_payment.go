@@ -106,7 +106,9 @@ func (s *authorizePaymentStep) Restore(sc *workflow.StepContext, output json.Raw
 	return nil
 }
 
-// Invoke opens the collection, opens the session and has the amount held.
+// Invoke opens the collection, opens the session and has the amount held; a
+// session the storefront opened before the completion is authorized instead
+// (see [authorizePaymentStep.authorizeOpened], ADR 0438).
 //
 // # THE FULL PAYMENT RULE
 //
@@ -118,7 +120,8 @@ func (s *authorizePaymentStep) Restore(sc *workflow.StepContext, output json.Raw
 //
 // # The half-finished step
 //
-// If the authorization blows up or falls short, the session is canceled HERE;
+// If the authorization blows up or falls short, the session the saga opened is
+// canceled HERE;
 // otherwise a partially held amount would stay dangling on the customer's card,
 // and the engine does not compensate a step that fails on its single attempt. If
 // the cancellation blows up as well, the error is wrapped with
@@ -139,6 +142,10 @@ func (s *authorizePaymentStep) Restore(sc *workflow.StepContext, output json.Raw
 // could not find the session", or to compensation quietly falling through to a
 // no-op.
 func (s *authorizePaymentStep) Invoke(ctx context.Context, sc *workflow.StepContext) (any, error) {
+	if s.plan.PaymentSessionID != "" {
+		return s.authorizeOpened(ctx, sc)
+	}
+
 	// The cart's customer travels with the collection, and it is EMPTY on a guest
 	// order. What needs it is a tender whose funds belong to a person — store
 	// credit — because the provider may not take the owner from the client's own
@@ -208,6 +215,68 @@ func (s *authorizePaymentStep) Invoke(ctx context.Context, sc *workflow.StepCont
 	out.SessionID, out.Status, out.Authorized = sessionID, status, out.Authorized+authorized
 
 	return out, nil
+}
+
+// authorizeOpened authorizes the session the storefront opened before the
+// completion, and binds the order to its collection once the amount is held
+// (ADR 0438).
+//
+// # The session is the storefront's
+//
+// Nothing is opened: the collection and the session were opened for the
+// cart's whole total, and the preparation held both to the plan. When the
+// provider's customer pays on its own page, an authorization that fails leaves
+// the session as it was — the preparation already refused one the provider
+// has not reported on or reported refused, so what is left is a fault on the
+// way — because canceling it would close the page the customer is paying on,
+// and a payment the provider reports after the cancel would arrive at a closed
+// session. A driven provider's session is released, as the saga releases its
+// own: an authorization that failed on the way may have left a hold. What is
+// released for both is a hold the completion can never use: one that falls
+// short of the total, and one whose order cannot be bound to it.
+//
+// # The binding comes AFTER the authorization here
+//
+// The saga's own collection is new on every attempt, so binding it before the
+// money is held costs nothing. This one outlives an attempt, and the binding is
+// one to one: bound before an authorization that failed, the collection would
+// stay bound to a canceled order and the next completion could never bind it
+// again.
+func (s *authorizePaymentStep) authorizeOpened(ctx context.Context, sc *workflow.StepContext) (any, error) {
+	collectionID, sessionID := s.plan.PaymentCollectionID, s.plan.PaymentSessionID
+	if collectionID == "" {
+		return nil, errors.Internal(CodeEmptyIdentifier,
+			"the plan names payment session %s with no collection: %s", sessionID, s.plan.CartID)
+	}
+	sc.Shared[sharedCollectionID] = collectionID
+
+	status, authorized, err := s.w.payments.Authorize(ctx, sessionID)
+	if err != nil {
+		if !s.plan.CustomerAuthorizes {
+			return nil, s.releaseHold(ctx, err, sessionID)
+		}
+
+		return nil, err
+	}
+	// From here the session holds money for this order, so the compensation
+	// of a later step cancels it, as it cancels a session the saga opened.
+	sc.Shared[sharedSessionID] = sessionID
+	if authorized < s.plan.Amount {
+		return nil, s.releaseHold(ctx, errors.Conflict(CodePaymentUnderauthorized,
+			"the amount held does not cover what must be collected: %d < %d (session %s, status %q)",
+			authorized, s.plan.Amount, sessionID, status), sessionID)
+	}
+	if err := s.linkOrderToCollection(ctx, sc, collectionID); err != nil {
+		return nil, s.releaseHold(ctx, err, sessionID)
+	}
+
+	s.w.log.InfoContext(ctx, "the opened payment authorized",
+		"cart_id", s.plan.CartID, "collection_id", collectionID, "session_id", sessionID,
+		"authorized", authorized, "amount", s.plan.Amount)
+
+	return authorizeOutput{
+		CollectionID: collectionID, SessionID: sessionID, Status: status, Authorized: authorized,
+	}, nil
 }
 
 // authorizeFirst opens the session of a tender that pays before the provider,
@@ -306,11 +375,14 @@ func (s *authorizePaymentStep) releaseHold(ctx context.Context, cause error, ses
 //
 // # Why a failure fails the STEP
 //
-// This runs before the authorization, so nothing has been held on the
-// customer's card yet and the only cost of failing is a reservation that gets
-// rolled back — the same cheap breaking point the empty-identifier checks use.
-// Carrying on without the link would produce exactly the state this call
-// exists to end: a paid order with no way back to its payment.
+// For the collection the saga opens this runs before the authorization, so
+// nothing has been held on the customer's card yet and the only cost of failing
+// is a reservation that gets rolled back — the same cheap breaking point the
+// empty-identifier checks use. For a collection the storefront opened it runs
+// after, and a failure releases the hold (see
+// [authorizePaymentStep.authorizeOpened]). Carrying on without the link would
+// produce exactly the state this call exists to end: a paid order with no way
+// back to its payment.
 //
 // # Why the compensation does not remove it
 //

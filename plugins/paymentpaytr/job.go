@@ -16,10 +16,12 @@ import (
 //
 // [paytrModule.reportStuck] runs inside Register, so an installation is told
 // about payments PayTR never reported on at the instant it boots and never
-// again. The class it names is money that may have been taken with no order
-// behind it (see the package documentation and the migration's own comment),
-// and that class does not arrive at startup — it accumulates in a process that
-// has been up for a week. Before this job, a long-lived process watched it
+// again. The class it names is a payment page PayTR posted no outcome for —
+// mostly a customer who did not pay, and otherwise a callback that never
+// arrived, while the money was taken (see [store.pending]) — and that class
+// does not arrive at startup — it accumulates in a process that has been up for
+// a week. A payment PayTR reported and no order took is the payment module's
+// reconciliation's to report (ADR 0438). Before this job, a long-lived process watched it
 // accumulate in complete silence, and the only other way to see it was for
 // somebody to think of calling GET /admin/v1/paytr/pending.
 //
@@ -164,8 +166,8 @@ func runPendingWatch(ctx context.Context, rows pendingLister, log *slog.Logger) 
 		return nil
 	}
 
-	log.WarnContext(ctx, "PayTR payments are still pending; PayTR never reported on them "+
-		"and any money taken has no order behind it",
+	log.WarnContext(ctx, "PayTR payments are still pending; PayTR never reported on them, "+
+		"so either the customer did not pay or the callback never reached this server",
 		"pending", len(stuck),
 		// Hit means "this many OR MORE". It is a separate key rather than a
 		// suffix on the count so that a log search can filter on it.

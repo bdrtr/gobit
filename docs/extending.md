@@ -65,6 +65,7 @@ The plugins show four different ways of extending:
 | Plugin | What it does | Which extension points |
 |---|---|---|
 | `payment-stripe` | **skeleton** — registration and lifecycle work in full, no Stripe API calls have been made, and every money-moving method returns an explicit "not implemented" error | a MODULE's provider registration |
+| `payment-paytr` | **real feature** — takes payments through PayTR's iframe: the storefront opens the payment before the completion and shows the iframe, and PayTR's signed callback records the outcome and reports a payment through `core/plugin`'s `Host.PaymentReports`, which completes the cart on the server (ADR 0438) | a MODULE's provider registration, a module and a migration of its own, a guarded inbound callback, a scheduled job |
 | `search-pg` | **real feature** — listens to the product events, keeps a PostgreSQL full-text index fresh, opens the `GET /store/v1/sales-channels/{sales_channel_id}/search` and `POST /admin/v1/search/reindex` endpoints | a module and a migration of its own, an event subscription, routes of its own |
 | `error-sentry` | **real feature** — reports server faults to Sentry (or to a Sentry-compatible collector) | a slot the CORE owns; it needs no module at all |
 | `error-otlp` | **real feature** — reports the same faults to an OpenTelemetry collector as a LOG RECORD | the same slot, a SECOND implementation |

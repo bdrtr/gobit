@@ -455,6 +455,7 @@ core/plugin Host.AdminPages
 core/plugin Host.Container
 core/plugin Host.Jobs
 core/plugin Host.Logger
+core/plugin Host.PaymentReports
 core/plugin Host.RegisterAIProvider
 core/plugin Host.RegisterAdminPage
 core/plugin Host.RegisterCallback
@@ -474,6 +475,9 @@ core/plugin NewHost
 core/plugin NewRegistry
 core/plugin NotificationProvidersName
 core/plugin PaymentProvidersName
+core/plugin PaymentReports
+core/plugin PaymentReports.PaymentReported
+core/plugin PaymentReportsName
 core/plugin Plugin
 core/plugin Plugin.Name
 core/plugin Plugin.Setup

@@ -111,6 +111,12 @@ func (h *Handler) Routes(r chi.Router) {
 	// here as well; the composition root only sets the flow up and leaves it to
 	// the container (see [Handler.storeCompleteCart]).
 	r.Post("/store/v1/carts/{id}/complete", h.storeCompleteCart)
+	// The payment a provider whose customer pays on its own page needs opened
+	// BEFORE the completion, so the storefront can show that page (ADR 0438).
+	// It is under the cart for /complete's reason: the totals it collects are
+	// the cart's, and only this module's flow can recompute them.
+	r.Post("/store/v1/carts/{id}/payment-sessions", h.storeOpenPayment)
+	r.Post("/store/v1/carts/{id}/payment-sessions/{payment_session_id}/cancel", h.storeCancelPayment)
 
 	// --- Admin API (administration) ---
 	//

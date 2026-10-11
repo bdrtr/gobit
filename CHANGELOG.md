@@ -43,7 +43,10 @@ design. It is fixed with `1.0.0`.
     its option list and every write, the completion included — answers
     `404 cart_not_found`, as an unknown cart does; a write no longer answers
     `409 cart_completed`. Forget the cart once its completion answers; a
-    retried completion learns it ran from its `Idempotency-Key` replay.
+    retried completion learns it ran from its `Idempotency-Key` replay. The
+    one exception is the completion that presents a cart payment's
+    `completion_secret`, answered once after the provider's report completed
+    the cart (ADR 0438, below).
   - `POST /store/v1/carts` with `adds_to_order_id` answers `404 order_not_found`
     for a body naming no customer or another customer than the order's;
     `order_addition_needs_customer` and `order_addition_customer_mismatch` no
@@ -61,7 +64,8 @@ design. It is fixed with `1.0.0`.
   - `GET /store/v1/payment-collections/{id}`,
     `POST /store/v1/payment-collections/{id}/payment-sessions` and
     `POST /store/v1/payment-sessions/{id}/cancel` are gone from the storefront;
-    a storefront pays through the cart's completion. The admin routes stay.
+    a storefront pays through the cart's completion, or opens the payment and
+    cancels it under the cart (ADR 0438, below). The admin routes stay.
   - `X-Order-Token` is in the CORS allow-list, as `corehttp.OrderTokenHeader`.
     Regenerate a client from `/openapi.json` for the header and the records.
   An order placed before the upgrade issued no token: a guest's no longer
@@ -183,6 +187,48 @@ design. It is fixed with `1.0.0`.
   every other file for Turkish inflectional endings and for a case ending after
   an apostrophe, so a quotation of Turkish kept on purpose takes an entry in
   `diacriticDataExemptions`.
+- **A PayTR checkout places an order, with or without the storefront** (ADR
+  0438, D284, D285, D286). **For integrators:** a storefront opens the cart's
+  payment with `POST /store/v1/carts/{id}/payment-sessions`
+  (`payment_provider_id`, `payment_data`, `expected_total`) and shows PayTR's
+  iframe with the answer's `data.iframe_token`. PayTR's callback then completes
+  the cart on the server, so a shopper who closes the browser after paying has
+  the order and its mail the order's token. The storefront's
+  `POST /store/v1/carts/{id}/complete` naming the answer's
+  `payment_session_id` and the opening's `completion_secret` answers with that
+  order and a new `order_token` once, and as the unknown cart's 404 without
+  the secret or after that (ADR 0439); a completion paid with an opened
+  session is given the order's token only for that secret, or with 409
+  `checkout_workflow_payment_pending` and
+  `Retry-After` while the order has not landed, to be sent again under the
+  same `Idempotency-Key`: a refusal
+  carrying `Retry-After` is no longer recorded under its key, and CORS exposes
+  the header. A completion naming `paytr` without a session, the one call that
+  used to answer 503 `paytr_not_authorized` after minting a token, is refused
+  with 409 `checkout_workflow_payment_session_required`; a session of another
+  cart, provider or customer, for a total the cart no longer has, already
+  closed, or beside `gift_card_code` or `pay_first_with` is refused before
+  anything is done. A payment the cart no longer matches is canceled under the
+  cart, with `POST /store/v1/carts/{id}/payment-sessions/{payment_session_id}/cancel`,
+  which answers 409 `checkout_workflow_payment_pending` while a completion of
+  the cart runs, and one PayTR reports for a cart that changed, was completed
+  another way or is gone is refunded by the server. A payment made on PayTR's
+  page after its session was canceled completes nothing; it is logged at ERROR
+  and reported by reconciliation. Any provider but the shop's own balances
+  may be opened first. A payment in installments places the order for its
+  total; the installment difference stays on the plugin's row and on the
+  session's data and is never captured or refunded by gobit. **For operators:**
+  a completion that fails after PayTR reported is retried by the new
+  `payment-reports` job (five minutes, doubling, six attempts), whose line in
+  `gobit jobs` counts what it completed, refunded and gave up; a payment held
+  with no order is reported by payment reconciliation for a day, and is
+  completed through the storefront's completion naming its session or refunded
+  with `POST /admin/v1/payment-sessions/{id}/cancel`. A second PayTR session
+  opened on a collection PayTR already reported refused or refunded is refused
+  with 409 `paytr_order_id_taken`. Payment migration 000017 adds the report
+  queue and a partial index. **For plugin authors:** `core/plugin` publishes
+  `PaymentReportsName`, `PaymentReports` and `Host.PaymentReports`, the door a
+  provider whose customer pays on its own page reports a payment through.
 - **Every event's moment is the moment its record stores** (ADR 0437, D278).
   **For integrators:** `canceled_at` in `fulfillment.canceled` and
   `returned_at` in `fulfillment.returned` were the clock's nanoseconds and are
@@ -193,6 +239,10 @@ design. It is fixed with `1.0.0`.
 
 ### Deprecated
 
+- **The `pending` key of `GET /admin/v1/paytr/pending`** (ADR 0438). **For
+  operators:** the list is now under `data`, the envelope every other endpoint
+  answers with, and `pending` carries the same list until a later release
+  removes it; a script reading `.pending` moves to `.data`.
 - **`plugins/webhookout`'s signature names are aliases of `core/webhook`'s**
   (ADR 0435). `SignatureVersion`, the five `Header…` constants,
   `SignedFields`, `Sign` and `VerifySignature` still compile and mean the

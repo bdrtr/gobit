@@ -11,6 +11,30 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimSessionAnswer = `-- name: ClaimSessionAnswer :execrows
+UPDATE payment_session_answers
+SET answered_at = now()
+WHERE session_id = $1
+  AND secret_digest = $2
+  AND answered_at IS NULL
+`
+
+type ClaimSessionAnswerParams struct {
+	SessionID    string
+	SecretDigest []byte
+}
+
+// ClaimSessionAnswer spends the secret: it marks the session answered when the
+// digest is its own and it was never answered, and touches no row otherwise
+// (ADR 0438, ADR 0439).
+func (q *Queries) ClaimSessionAnswer(ctx context.Context, arg ClaimSessionAnswerParams) (int64, error) {
+	result, err := q.db.Exec(ctx, claimSessionAnswer, arg.SessionID, arg.SecretDigest)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countPaymentSessionStates = `-- name: CountPaymentSessionStates :one
 SELECT
     COUNT(*) FILTER (WHERE status IN ('pending', 'authorized')) AS live_count,
@@ -169,6 +193,68 @@ func (q *Queries) GetPaymentSessionByIdempotencyKey(ctx context.Context, arg Get
 	return i, err
 }
 
+const getSessionReport = `-- name: GetSessionReport :one
+SELECT session_id, reported_at, attempts, next_attempt_at, last_failure, outcome, settled_at FROM payment_session_reports WHERE session_id = $1
+`
+
+// GetSessionReport returns one report.
+func (q *Queries) GetSessionReport(ctx context.Context, sessionID string) (PaymentSessionReport, error) {
+	row := q.db.QueryRow(ctx, getSessionReport, sessionID)
+	var i PaymentSessionReport
+	err := row.Scan(
+		&i.SessionID,
+		&i.ReportedAt,
+		&i.Attempts,
+		&i.NextAttemptAt,
+		&i.LastFailure,
+		&i.Outcome,
+		&i.SettledAt,
+	)
+	return i, err
+}
+
+const listDueSessionReports = `-- name: ListDueSessionReports :many
+SELECT session_id, reported_at, attempts, next_attempt_at, last_failure, outcome, settled_at FROM payment_session_reports
+WHERE outcome = '' AND next_attempt_at <= $1
+ORDER BY next_attempt_at, session_id
+LIMIT $2
+`
+
+type ListDueSessionReportsParams struct {
+	DueBy    pgtype.Timestamptz
+	RowLimit int32
+}
+
+// ListDueSessionReports returns the open reports whose next attempt is due,
+// soonest first.
+func (q *Queries) ListDueSessionReports(ctx context.Context, arg ListDueSessionReportsParams) ([]PaymentSessionReport, error) {
+	rows, err := q.db.Query(ctx, listDueSessionReports, arg.DueBy, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PaymentSessionReport{}
+	for rows.Next() {
+		var i PaymentSessionReport
+		if err := rows.Scan(
+			&i.SessionID,
+			&i.ReportedAt,
+			&i.Attempts,
+			&i.NextAttemptAt,
+			&i.LastFailure,
+			&i.Outcome,
+			&i.SettledAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOverdueOfflineSessions = `-- name: ListOverdueOfflineSessions :many
 SELECT id, payment_collection_id, provider_id, external_id, status, amount, authorized_amount, currency_code, data, idempotency_key, decline_reason, created_at, updated_at FROM payment_sessions s
 WHERE s.status = 'authorized'
@@ -281,6 +367,137 @@ func (q *Queries) ListPaymentSessionsByCollection(ctx context.Context, paymentCo
 	return items, nil
 }
 
+const listPendingSessionsForReconciliation = `-- name: ListPendingSessionsForReconciliation :many
+SELECT id, payment_collection_id, provider_id, external_id, status, amount, authorized_amount, currency_code, data, idempotency_key, decline_reason, created_at, updated_at FROM payment_sessions
+WHERE status IN ('pending', 'canceled')
+  AND updated_at < $1
+  AND updated_at >= $2
+  AND provider_id = ANY($3::text[])
+ORDER BY updated_at DESC
+LIMIT $4
+`
+
+type ListPendingSessionsForReconciliationParams struct {
+	UnchangedSince pgtype.Timestamptz
+	SettledAfter   pgtype.Timestamptz
+	ProviderIds    []string
+	RowLimit       int32
+}
+
+// ListPendingSessionsForReconciliation returns the PENDING and CANCELED
+// sessions of the providers whose customer pays on the provider's own page
+// (ADR 0438) that settled — were last written before unchanged_since — no
+// earlier than settled_after, newest first.
+//
+// # Why pending, for these providers only
+//
+// ListSessionsForReconciliation leaves pending out because before an
+// authorization no money has moved. That premise holds for a provider the
+// module drives and fails for one whose customer pays on its page: the session
+// is opened before the cart is completed, the money moves when the customer
+// pays, and the session stays pending here until a completion authorizes it. A
+// customer who pays and closes the browser leaves money taken, a pending
+// session and no order, and this is the only read that reaches it. Canceled
+// too, because such a provider cannot void the page it handed out: a customer
+// who pays after the session was canceled leaves money taken on a canceled
+// session, which nothing else reads.
+//
+// # Why a window, newest first
+//
+// Most of these sessions are a checkout the shopper left without paying, and
+// they stay pending for good. Read with no lower bound, oldest first, the page
+// would fill with them and never reach a payment made today; newest first with
+// a fixed page, a burst of abandoned pages would push a paid one off the page
+// before any pass reached it. Read as the window of the last settled day, every
+// session in it is asked about on every pass for that day, and a window larger
+// than the page is reported as truncated rather than read in part in silence.
+func (q *Queries) ListPendingSessionsForReconciliation(ctx context.Context, arg ListPendingSessionsForReconciliationParams) ([]PaymentSession, error) {
+	rows, err := q.db.Query(ctx, listPendingSessionsForReconciliation,
+		arg.UnchangedSince,
+		arg.SettledAfter,
+		arg.ProviderIds,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PaymentSession{}
+	for rows.Next() {
+		var i PaymentSession
+		if err := rows.Scan(
+			&i.ID,
+			&i.PaymentCollectionID,
+			&i.ProviderID,
+			&i.ExternalID,
+			&i.Status,
+			&i.Amount,
+			&i.AuthorizedAmount,
+			&i.CurrencyCode,
+			&i.Data,
+			&i.IdempotencyKey,
+			&i.DeclineReason,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSessionsByExternalID = `-- name: ListSessionsByExternalID :many
+SELECT id, payment_collection_id, provider_id, external_id, status, amount, authorized_amount, currency_code, data, idempotency_key, decline_reason, created_at, updated_at FROM payment_sessions
+WHERE provider_id = $1 AND external_id = $2
+ORDER BY created_at, id
+`
+
+type ListSessionsByExternalIDParams struct {
+	ProviderID string
+	ExternalID string
+}
+
+// ListSessionsByExternalID returns the sessions a provider knows by one id of
+// its own: what a provider's report names (ADR 0438). A PayTR order id is a
+// collection's, so more than one session may carry it.
+func (q *Queries) ListSessionsByExternalID(ctx context.Context, arg ListSessionsByExternalIDParams) ([]PaymentSession, error) {
+	rows, err := q.db.Query(ctx, listSessionsByExternalID, arg.ProviderID, arg.ExternalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PaymentSession{}
+	for rows.Next() {
+		var i PaymentSession
+		if err := rows.Scan(
+			&i.ID,
+			&i.PaymentCollectionID,
+			&i.ProviderID,
+			&i.ExternalID,
+			&i.Status,
+			&i.Amount,
+			&i.AuthorizedAmount,
+			&i.CurrencyCode,
+			&i.Data,
+			&i.IdempotencyKey,
+			&i.DeclineReason,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSessionsForReconciliation = `-- name: ListSessionsForReconciliation :many
 SELECT id, payment_collection_id, provider_id, external_id, status, amount, authorized_amount, currency_code, data, idempotency_key, decline_reason, created_at, updated_at FROM payment_sessions
 WHERE status = 'authorized'
@@ -308,11 +525,14 @@ type ListSessionsForReconciliationParams struct {
 // difference is visible from nowhere else (see
 // internal/workflows/checkout/doc.go, "REMAINING RISK").
 //
-// 'pending' is LEFT OUT, and that is deliberate: before a session is authorized
-// no money has moved, so there is no amount that could diverge either. Widening
-// the scope to there would mean asking the provider about every cart that was
-// ever opened and abandoned — that is, putting the noise in front of the row
-// that has to be looked at.
+// 'pending' is LEFT OUT, and that is deliberate: before a session of a driven
+// provider is authorized no money has moved, so there is no amount that could
+// diverge either. Widening the scope to there would mean asking the provider
+// about every cart that was ever opened and abandoned — that is, putting the
+// noise in front of the row that has to be looked at. A provider whose customer
+// pays on its own page moves money while the session is pending, and its
+// pending sessions are read by ListPendingSessionsForReconciliation, on a page
+// of their own, so they cannot crowd this one (ADR 0438).
 //
 // $2 is a WAITING PERIOD, not an optional threshold: a capture in flight stands
 // in exactly this state for seconds at a time, and counting that as a
@@ -387,6 +607,93 @@ func (q *Queries) LockPaymentSession(ctx context.Context, id string) (PaymentSes
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const recordSessionAnswer = `-- name: RecordSessionAnswer :exec
+INSERT INTO payment_session_answers (session_id, secret_digest)
+VALUES ($1, $2)
+`
+
+type RecordSessionAnswerParams struct {
+	SessionID    string
+	SecretDigest []byte
+}
+
+// RecordSessionAnswer keeps the digest of the secret an opened payment hands
+// its storefront (ADR 0438).
+func (q *Queries) RecordSessionAnswer(ctx context.Context, arg RecordSessionAnswerParams) error {
+	_, err := q.db.Exec(ctx, recordSessionAnswer, arg.SessionID, arg.SecretDigest)
+	return err
+}
+
+const recordSessionReport = `-- name: RecordSessionReport :execrows
+INSERT INTO payment_session_reports (session_id, next_attempt_at)
+VALUES ($1, $2)
+ON CONFLICT (session_id) DO NOTHING
+`
+
+type RecordSessionReportParams struct {
+	SessionID string
+	FirstDue  pgtype.Timestamptz
+}
+
+// RecordSessionReport opens the report of a session once, first due at the
+// given moment; a second report of the same session changes nothing, and says
+// so by touching no row (ADR 0438).
+func (q *Queries) RecordSessionReport(ctx context.Context, arg RecordSessionReportParams) (int64, error) {
+	result, err := q.db.Exec(ctx, recordSessionReport, arg.SessionID, arg.FirstDue)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordSessionReportAttempt = `-- name: RecordSessionReportAttempt :execrows
+UPDATE payment_session_reports
+SET attempts = attempts + 1,
+    next_attempt_at = $1,
+    last_failure = $2
+WHERE session_id = $3 AND outcome = ''
+`
+
+type RecordSessionReportAttemptParams struct {
+	NextAttemptAt pgtype.Timestamptz
+	LastFailure   string
+	SessionID     string
+}
+
+// RecordSessionReportAttempt counts a failed attempt of an open report and
+// sets when the next one is due.
+func (q *Queries) RecordSessionReportAttempt(ctx context.Context, arg RecordSessionReportAttemptParams) (int64, error) {
+	result, err := q.db.Exec(ctx, recordSessionReportAttempt, arg.NextAttemptAt, arg.LastFailure, arg.SessionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const settleSessionReport = `-- name: SettleSessionReport :execrows
+UPDATE payment_session_reports
+SET outcome = $1,
+    settled_at = now(),
+    last_failure = $2
+WHERE session_id = $3 AND outcome = ''
+`
+
+type SettleSessionReportParams struct {
+	Outcome   string
+	Note      string
+	SessionID string
+}
+
+// SettleSessionReport closes an open report with its outcome; a settled report
+// is not settled again.
+func (q *Queries) SettleSessionReport(ctx context.Context, arg SettleSessionReportParams) (int64, error) {
+	result, err := q.db.Exec(ctx, settleSessionReport, arg.Outcome, arg.Note, arg.SessionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const sumLiveSessionAmounts = `-- name: SumLiveSessionAmounts :one

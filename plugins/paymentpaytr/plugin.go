@@ -19,16 +19,49 @@
 //
 // # What it does NOT do
 //
-// The callback records the outcome and acknowledges. It does NOT complete the
-// cart. Turning a paid cart into an order is the checkout workflow's job, and
-// having a payment plugin reach into it would put the order flow in two places.
+// The callback records the outcome, reports a payment to the core through
+// [coreplugin.Host.PaymentReports], and acknowledges. It does NOT complete the
+// cart: the checkout does, from that report, because a customer who pays and
+// then closes the browser never brings the storefront back to complete it
+// (ADR 0438). Having a payment plugin reach into the order flow would put the
+// flow in two places; the plugin says what PayTR said, and the checkout
+// decides.
 //
-// The gap that leaves is real and is named rather than hidden: a customer who
-// pays and then closes the browser has money taken and no order. The row stays
-// `pending`-turned-`success` with nothing following it, and
-// [store.pending] is what lists that class. gobit already has the vocabulary
-// for half-finished work — `gobit stuck` and `gobit recover` (ADR 0016, 0017) —
-// and this is the same shape of problem, not a new one.
+// A completion the report could not make is tried again by the checkout's
+// sweep, and one it can never make — the cart changed or was completed with
+// another payment — is refunded. A payment still held with no order is
+// reported by the payment module's reconciliation, and is completed through
+// the storefront's own POST /store/v1/carts/{id}/complete naming the session,
+// or canceled with POST /admin/v1/payment-sessions/{id}/cancel, which here is
+// the refund. [store.pending] lists the other class: payments PayTR never
+// reported on at all.
+//
+// # The call order a storefront makes
+//
+// The customer pays inside PayTR's iframe, so the payment is opened BEFORE the
+// cart is completed (ADR 0438):
+//
+//  1. POST /store/v1/carts/{id}/payment-sessions with payment_provider_id
+//     "paytr", payment_data carrying the customer's email and user_ip, and the
+//     expected_total; the answer's data.iframe_token opens the iframe.
+//  2. The customer pays; PayTR posts the outcome to [CallbackPath].
+//  3. On PAYTR_SUCCESS_URL, POST /store/v1/carts/{id}/complete naming the
+//     answer's payment_session_id. Until PayTR's callback has arrived it is
+//     refused with 409 checkout_workflow_payment_pending and Retry-After and
+//     changes nothing, so it is sent again; once the callback has completed
+//     the cart, it answers with that order. A shopper who never reaches the
+//     page has the order all the same: the callback completed the cart.
+//
+// A completion naming paytr without a session is refused with 409
+// checkout_workflow_payment_session_required, before anything is opened.
+//
+// # Installments
+//
+// PayTR's callback signs the customer's total, which carries the installment
+// difference when the customer pays in installments. The session is authorized
+// and captured for its own amount, the order's; the difference is the cost of
+// the installments, not the shop's money, and it is kept on the payment row and
+// the session's data (see [shopsPart]).
 //
 // # No new dependency
 //
@@ -141,6 +174,7 @@ func (p *Plugin) Setup(_ context.Context, h *coreplugin.Host) error {
 	}
 
 	p.mod = newModule(cfg, log.With("module", ModuleName))
+	p.mod.reports = h.PaymentReports()
 	h.AddModule(p.mod)
 
 	// The provider and the module share one store, and the module builds it in

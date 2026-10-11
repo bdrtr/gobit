@@ -70,6 +70,27 @@ const FulfillmentProvidersName = "fulfillment.providers"
 // registry.
 const NotificationProvidersName = "notification.providers"
 
+// PaymentReportsName is the container name of the door a payment provider
+// reports through when its customer paid on the provider's own page and the
+// provider was told so — by a callback, say (ADR 0438).
+//
+// The composition root registers the checkout there, which completes the cart
+// the reported session was opened for. A provider reaches it through
+// [Host.PaymentReports] rather than by this name, so a plugin set up before the
+// checkout is built still holds a door that works once it is.
+const PaymentReportsName = "payment.reports"
+
+// PaymentReports is what is registered under [PaymentReportsName]: the
+// provider names the session by ITS OWN id, the one its CreateSession returned
+// (ADR 0438).
+type PaymentReports interface {
+	// PaymentReported says the customer paid the provider's session. An error
+	// means the report was not taken, and the provider should be asked to
+	// send it again; once it is taken, what the checkout does with it is the
+	// checkout's.
+	PaymentReported(ctx context.Context, providerID, sessionID string) error
+}
+
 // CallbacksName is the container name of the inbound-callback registry.
 //
 // It is PUBLISHED, unlike the infrastructure names ("core.db" and the rest),
@@ -578,6 +599,33 @@ func (h *Host) RegisterAdminPage(p AdminPage) {
 //
 // The slice is a copy, for [Host.Jobs]'s reason.
 func (h *Host) AdminPages() []AdminPage { return slices.Clone(h.adminPages) }
+
+// PaymentReports returns the door a payment provider reports its customer's
+// payment through (ADR 0438).
+//
+// It resolves [PaymentReportsName] when it is called rather than now: at Setup
+// the checkout behind it is not built yet. A report made where nothing is
+// registered is an error the provider can answer by asking to be sent the
+// report again.
+func (h *Host) PaymentReports() PaymentReports { return paymentReports{c: h.c} }
+
+// paymentReports is [Host.PaymentReports]'s door.
+type paymentReports struct{ c *container.Container }
+
+// PaymentReported forwards the report to what is registered now.
+func (p paymentReports) PaymentReported(ctx context.Context, providerID, sessionID string) error {
+	if p.c == nil || !p.c.Has(PaymentReportsName) {
+		return coreerrors.Unavailable(codeSinkMissing,
+			"nothing takes payment reports; %q is not registered", PaymentReportsName)
+	}
+	reports, err := container.Resolve[PaymentReports](p.c, PaymentReportsName)
+	if err != nil {
+		return coreerrors.Wrap(err, coreerrors.KindInternal, codeSinkUnusable,
+			"%q does not take payment reports", PaymentReportsName)
+	}
+
+	return reports.PaymentReported(ctx, providerID, sessionID)
+}
 
 // RegisterPaymentProvider adds a payment provider to the payment module.
 //

@@ -70,9 +70,14 @@ installation actually wants: the rate lives where the jurisdiction does.
 The block completes the cart with the `manual` provider, which ships with the
 framework and records an outcome the caller names. It is what a first run has:
 an installation with no Stripe account can still take an order end to end and
-see the amounts. A real provider replaces this one call and nothing else — the
-cart, the totals and the order are the same records. Because it pays for
-nothing, it is not registered when `APP_ENV=production` (ADR 0283).
+see the amounts. A provider the server drives, a card gateway, replaces this
+one call and nothing else — the cart, the totals and the order are the same
+records. A provider whose customer pays on its own page, PayTR, adds one call
+before it: `POST /store/v1/carts/{id}/payment-sessions` opens the payment and
+answers with what that page needs; PayTR's report of the payment completes the
+cart, and the storefront's completion naming the `payment_session_id` answers
+with that order (ADR 0438). Because `manual` pays
+for nothing, it is not registered when `APP_ENV=production` (ADR 0283).
 
 ## The block
 

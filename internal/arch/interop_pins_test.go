@@ -45,8 +45,10 @@ import (
 
 	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/link"
+	coreplugin "github.com/bdrtr/gobit/core/plugin"
 	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/adminui"
+	"github.com/bdrtr/gobit/internal/jobs/paymentreports"
 	"github.com/bdrtr/gobit/internal/modules/auth"
 	authsvc "github.com/bdrtr/gobit/internal/modules/auth/service"
 	b2bsvc "github.com/bdrtr/gobit/internal/modules/b2b/service"
@@ -102,6 +104,11 @@ var (
 	_ taxsvc.RateTrialFlow        = (*cartwf.Interop)(nil)
 	_ cartapi.CartOpening         = (*cartwf.Interop)(nil)
 	_ cartapi.CartCompletion      = (*checkoutwf.Interop)(nil)
+
+	// A payment provider's report and the job that retries it reach the
+	// checkout by name too (ADR 0438).
+	_ coreplugin.PaymentReports = (*checkoutwf.Interop)(nil)
+	_ paymentreports.Completer  = (*checkoutwf.Interop)(nil)
 
 	_ orderapi.ReturnReceiving = (*returnswf.Interop)(nil)
 	_ orderapi.Invoicing       = (*invoicingwf.Interop)(nil)

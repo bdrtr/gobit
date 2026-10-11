@@ -780,6 +780,24 @@ func (p *cartCompletion) CompleteCartJSON(ctx context.Context, request json.RawM
 	return p.svc.CompleteCartJSON(ctx, request)
 }
 
+// OpenPaymentJSON opens the cart's payment before it is completed (ADR 0438).
+func (p *cartCompletion) OpenPaymentJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error) {
+	p.once.Do(func() { p.resolve(ctx) })
+	if p.err != nil {
+		return nil, p.err
+	}
+	return p.svc.OpenPaymentJSON(ctx, request)
+}
+
+// CancelPaymentJSON cancels a payment opened for the cart (ADR 0438).
+func (p *cartCompletion) CancelPaymentJSON(ctx context.Context, request json.RawMessage) error {
+	p.once.Do(func() { p.resolve(ctx) })
+	if p.err != nil {
+		return p.err
+	}
+	return p.svc.CancelPaymentJSON(ctx, request)
+}
+
 // resolve resolves the flow from the container; it stores the result once.
 //
 // The rationale for not inheriting the error kind from the container is in the

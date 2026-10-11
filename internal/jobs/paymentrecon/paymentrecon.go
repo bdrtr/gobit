@@ -55,8 +55,12 @@
 // The class this job covers is the one where a local row EXISTS and disagrees.
 //
 // Refund amounts are likewise out of scope. The suspect set is authorized
-// sessions, where the divergence destroys an order; a refund that differs is an
-// accounting difference on an order that already survived.
+// sessions, where the divergence destroys an order, and the pending sessions of
+// a provider whose customer pays on its own page, where it is money taken with
+// no order at all (ADR 0438) — the payment-reports job completes such a cart or
+// gives its money back first, and this job reports what that one could not; a
+// refund that differs is an accounting difference on an order that already
+// survived.
 package paymentrecon
 
 import (
@@ -97,7 +101,10 @@ const Every = time.Hour
 // The database side is not the cost: the listing is a partial-index scan
 // measured on 2026-09-06 at 0.04 ms and 52 buffers over a 200,000-session
 // fixture, against 12.7 ms and 3,703 buffers for the same query with the index
-// dropped. The cost is [limit] sequential provider round trips.
+// dropped. The cost is the provider round trips: [limit] at most on the
+// authorized page, and up to the service's largest pass on the page of pending
+// payment pages, whose one provider today, PayTR, answers from its own table
+// rather than over the network (ADR 0438).
 //
 // # The fixture, and what it replaces
 //
@@ -168,14 +175,18 @@ const MaxRun = 5 * time.Minute
 // authorization is normal and only a captured-there amount is a finding.
 const settleWithin = 15 * time.Minute
 
-// limit caps one pass, and the cap is a provider budget rather than a database
-// one.
+// limit caps each of the pass's two pages, and the cap is a provider budget
+// rather than a database one.
 //
-// It is deliberately small. A hit cap is REPORTED as hit, and it has a
-// consequence worth stating: the listing is oldest-first, so a permanently
-// oversized suspect set means the same oldest sessions are examined every pass
-// and newer ones are never reached. An installation in that state needs its
-// operator, not a bigger number chosen here.
+// It is deliberately small. A hit cap on the authorized page is REPORTED as
+// hit, and it has a consequence worth stating: that listing is oldest-first, so
+// a permanently oversized suspect set means the same oldest sessions are
+// examined every pass and newer ones are never reached. An installation in that
+// state needs its operator, not a bigger number chosen here. The second page,
+// the pending sessions of a provider whose customer pays on its page, is the
+// service's own: the last settled day of them, up to the service's largest
+// pass, and a page that cannot reach back over one interval of this job is
+// reported apart (ADR 0438).
 const limit = 50
 
 // codeReconcileFailed reports that the pass could not be made at all.
@@ -270,6 +281,14 @@ func run(ctx context.Context, r reconciler, log *slog.Logger) error {
 			"limit", limit, "examined", report.Examined)
 	}
 
+	if report.UnreportedTruncated {
+		// A paid session with no order is found only on this page, so a page
+		// that could not hold the day is a gap in exactly what it looks for.
+		log.WarnContext(ctx, "more payment pages settled within a pass's interval than one pass reads, "+
+			"so some were never asked whether they were paid with no order behind them",
+			"page", paymentsvc.MaxReconcileLimit, "interval", paymentsvc.UnreportedCoverage.String())
+	}
+
 	return nil
 }
 
@@ -312,6 +331,10 @@ func summarize(report paymentsvc.ReconciliationReport) string {
 	}
 	if report.Truncated {
 		line += fmt.Sprintf("; the limit of %d was filled, so the newest were not reached", limit)
+	}
+	if report.UnreportedTruncated {
+		line += fmt.Sprintf("; more than %d payment pages settled within %s, so some were never asked",
+			paymentsvc.MaxReconcileLimit, paymentsvc.UnreportedCoverage)
 	}
 
 	return line

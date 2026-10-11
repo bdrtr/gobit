@@ -43,3 +43,38 @@ func (r *Repository) ListSessionsForReconciliation(
 
 	return out, nil
 }
+
+// ListPendingSessionsForReconciliation returns the pending sessions of the
+// given providers last written in [settledAfter, unchangedSince), newest first:
+// the sessions of a provider whose customer pays on its own page, where money
+// can move while this module still holds the session pending (ADR 0438). See
+// the query's documentation for why it reads a window.
+func (r *Repository) ListPendingSessionsForReconciliation(
+	ctx context.Context,
+	unchangedSince, settledAfter time.Time,
+	providerIDs []string,
+	limit int32,
+) ([]models.PaymentSession, error) {
+	if len(providerIDs) == 0 {
+		// No provider's customer pays on its page, so no pending session can
+		// hold money; the query is not made.
+		return []models.PaymentSession{}, nil
+	}
+	rows, err := r.queries(ctx).ListPendingSessionsForReconciliation(ctx,
+		paymentdb.ListPendingSessionsForReconciliationParams{
+			UnchangedSince: fromTime(unchangedSince),
+			SettledAfter:   fromTime(settledAfter),
+			ProviderIds:    providerIDs,
+			RowLimit:       limit,
+		})
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "the pending sessions to reconcile could not be listed")
+	}
+
+	out := make([]models.PaymentSession, 0, len(rows))
+	for i := range rows {
+		out = append(out, toSession(rows[i]))
+	}
+
+	return out, nil
+}

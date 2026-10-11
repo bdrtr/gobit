@@ -138,6 +138,12 @@ func registerWorkflows(c *container.Container, log *slog.Logger) error {
 	if err := c.Provide(checkoutwf.InteropName, checkoutwf.NewInterop(checkoutWorkflow)); err != nil {
 		return err
 	}
+	// The checkout is also the door a payment provider reports its customer's
+	// payment through, which completes the cart without the storefront
+	// (ADR 0438).
+	if err := c.Provide(coreplugin.PaymentReportsName, checkoutwf.NewInterop(checkoutWorkflow)); err != nil {
+		return err
+	}
 
 	// The invoicing flow, on the same container and for the same reason. It is
 	// what turns an order into a document: the invoice module knows no orders

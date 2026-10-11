@@ -434,8 +434,11 @@ var diacriticDataExemptions = map[string][]string{
 	},
 	"internal/rig/rig.go": {"buyuk-<n>", "urun-<n>"},
 	// PayTR's API paths are the provider's contract, not this repository's
-	// prose; a translated path would reach no endpoint.
-	"plugins/paymentpaytr/provider.go": {`"/odeme/api/get-token"`, `"/odeme/iade"`},
+	// prose; a translated path would reach no endpoint. The ground's fake PayTR
+	// answers at the same two paths, which is what makes it PayTR's stand-in
+	// (ADR 0438).
+	"plugins/paymentpaytr/provider.go":    {`"/odeme/api/get-token"`, `"/odeme/iade"`},
+	"internal/e2e/paytr_checkout_test.go": {`"/odeme/api/get-token"`, `"/odeme/iade"`},
 	// The incident this gate exists for quotes the Makefile's selector as it
 	// was written, and the matcher's own probe replays it.
 	"internal/arch/build_files_test.go": {"TestTemelYukAltindaDogruKalir"},

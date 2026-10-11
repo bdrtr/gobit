@@ -67,9 +67,13 @@ type interopSnapshot struct {
 	AddsToOrderID string `json:"adds_to_order_id,omitempty"`
 	// SalesChannelID is the sales channel the cart was opened in; absent when
 	// it names none. Every price and promotion round asks in it (ADR 0397).
-	SalesChannelID  string                  `json:"sales_channel_id,omitempty"`
-	Revision        int64                   `json:"revision"`
-	Completed       bool                    `json:"completed"`
+	SalesChannelID string `json:"sales_channel_id,omitempty"`
+	Revision       int64  `json:"revision"`
+	Completed      bool   `json:"completed"`
+	// Email is the cart's contact address, absent when it has none. It
+	// crosses because an order a provider's report completes, with no
+	// storefront behind it, still has to say where to write (ADR 0438).
+	Email           string                  `json:"email,omitempty"`
 	Items           []interopItem           `json:"items"`
 	ShippingMethods []interopShippingMethod `json:"shipping_methods"` // ShippingAddress and BillingAddress are the addresses the cart carries.
 	// They are nil when the cart has none.
@@ -268,6 +272,7 @@ func (i *Interop) CartSnapshotJSON(ctx context.Context, cartID string) (json.Raw
 		SalesChannelID:  detail.SalesChannelID,
 		Revision:        detail.Revision,
 		Completed:       detail.Completed(),
+		Email:           detail.Email,
 		Items:           make([]interopItem, 0, len(detail.Items)),
 		ShippingMethods: make([]interopShippingMethod, 0, len(detail.ShippingMethods)),
 		ShippingAddress: toInteropAddress(detail.ShippingAddress),

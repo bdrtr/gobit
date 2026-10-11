@@ -26,8 +26,10 @@ import (
 //
 // The surface is DELIBERATELY narrow and was picked according to the saga's
 // need: check that a payment can be made at all, open a collection, open a
-// session, authorize, capture, cancel (compensate), refund and read the status. Every method added here raises the
-// cost of pulling payment out into a separate service.
+// session, read back a session the storefront opened and what its provider was
+// told (ADR 0438), authorize, capture, cancel (compensate), refund and read the
+// status. Every method added here raises the cost of pulling payment out into a
+// separate service.
 //
 // # The surface carries the AMOUNT
 //
@@ -73,6 +75,164 @@ func (i *Interop) CheckTender(
 // capturing it (ADR 0284). A provider that is not registered is refused.
 func (i *Interop) CapturesLater(_ context.Context, providerID string) (bool, error) {
 	return i.svc.CapturesLater(providerID)
+}
+
+// CustomerAuthorizes reports whether a provider's customer authorizes the
+// payment on the provider's own page, so the checkout opens its session before
+// it completes the cart and refuses a completion that names none (ADR 0438). A
+// provider that is not registered is refused.
+func (i *Interop) CustomerAuthorizes(_ context.Context, providerID string) (bool, error) {
+	return i.svc.CustomerAuthorizes(providerID)
+}
+
+// checkoutSessionJSON is one session and its collection, as
+// [Interop.CheckoutSessionJSON] answers with.
+type checkoutSessionJSON struct {
+	ID               string          `json:"id"`
+	ProviderID       string          `json:"provider_id"`
+	Status           string          `json:"status"`
+	Amount           int64           `json:"amount"`
+	AuthorizedAmount int64           `json:"authorized_amount"`
+	CurrencyCode     string          `json:"currency_code"`
+	Data             json.RawMessage `json:"data,omitempty"`
+	// IdempotencyKey is the key the session was opened with, which says who
+	// opened it: the checkout opens a cart's payment under a prefix of its own.
+	IdempotencyKey string `json:"idempotency_key"`
+	// Collection is the collection the session was opened on.
+	Collection checkoutCollectionJSON `json:"collection"`
+}
+
+// checkoutCollectionJSON is the collection half of [checkoutSessionJSON].
+type checkoutCollectionJSON struct {
+	ID               string `json:"id"`
+	Reference        string `json:"reference"`
+	CustomerID       string `json:"customer_id,omitempty"`
+	Amount           int64  `json:"amount"`
+	CurrencyCode     string `json:"currency_code"`
+	AuthorizedAmount int64  `json:"authorized_amount"`
+	CapturedAmount   int64  `json:"captured_amount"`
+}
+
+// CheckoutSessionJSON returns a session and its collection as one JSON object,
+// for a checkout handed the session to complete a cart with (ADR 0438).
+//
+// It is JSON for the reason every composite answer on this surface is: the
+// consumer cannot name a type of this package (ADR 0006), and eleven positional
+// results would let two of the same type be swapped unseen. The session's data
+// is the provider's own, as it came back when the session was opened — the
+// iframe token a storefront opens the provider's page with.
+func (i *Interop) CheckoutSessionJSON(ctx context.Context, sessionID string) (json.RawMessage, error) {
+	ses, col, err := i.svc.CheckoutSession(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(checkoutSessionJSON{
+		ID:               ses.ID,
+		ProviderID:       ses.ProviderID,
+		Status:           ses.Status.String(),
+		Amount:           ses.Amount,
+		AuthorizedAmount: ses.AuthorizedAmount,
+		CurrencyCode:     ses.CurrencyCode,
+		Data:             ses.Data,
+		IdempotencyKey:   ses.IdempotencyKey,
+		Collection: checkoutCollectionJSON{
+			ID:               col.ID,
+			Reference:        col.Reference,
+			CustomerID:       col.CustomerID,
+			Amount:           col.Amount,
+			CurrencyCode:     col.CurrencyCode,
+			AuthorizedAmount: col.AuthorizedAmount,
+			CapturedAmount:   col.CapturedAmount,
+		},
+	})
+}
+
+// ReportedStatus returns what a customer-authorizing provider's own ledger says
+// about one of its sessions: "pending" while the customer has not paid,
+// "captured" once they have, "failed" when the payment was refused (ADR 0438).
+// It moves nothing; a session of any other provider is refused.
+func (i *Interop) ReportedStatus(ctx context.Context, sessionID string) (string, error) {
+	status, err := i.svc.ReportedStatus(ctx, sessionID)
+	if err != nil {
+		return "", err
+	}
+
+	return string(status), nil
+}
+
+// RecordSessionReport opens the report of every session still open here that a
+// provider whose customer pays on its page knows by externalID, and returns
+// their ids (ADR 0438).
+func (i *Interop) RecordSessionReport(ctx context.Context, providerID, externalID string) ([]string, error) {
+	return i.svc.RecordSessionReport(ctx, providerID, externalID)
+}
+
+// OpenSessionAnswer makes an opened session's completion secret and returns
+// its only copy (ADR 0438).
+func (i *Interop) OpenSessionAnswer(ctx context.Context, sessionID string) (string, error) {
+	return i.svc.OpenSessionAnswer(ctx, sessionID)
+}
+
+// ClaimSessionAnswer spends a session's completion secret once (ADR 0438).
+func (i *Interop) ClaimSessionAnswer(ctx context.Context, sessionID, secret string) (bool, error) {
+	return i.svc.ClaimSessionAnswer(ctx, sessionID, secret)
+}
+
+// DiscoverReportedSessions opens the report of every pending session settled in
+// the last day that its provider says it took money for and that has none,
+// and returns the ids of the reports it opened (ADR 0438).
+func (i *Interop) DiscoverReportedSessions(ctx context.Context, now time.Time) ([]string, error) {
+	return i.svc.DiscoverReportedSessions(ctx, now)
+}
+
+// dueReportJSON is one open report of [Interop.DueSessionReportsJSON].
+type dueReportJSON struct {
+	SessionID  string    `json:"session_id"`
+	Attempts   int       `json:"attempts"`
+	ReportedAt time.Time `json:"reported_at"`
+}
+
+// DueSessionReportsJSON returns the open reports due by the moment, soonest
+// first, as a JSON array (ADR 0438).
+func (i *Interop) DueSessionReportsJSON(ctx context.Context, dueBy time.Time, limit int) (json.RawMessage, error) {
+	reports, err := i.svc.DueSessionReports(ctx, dueBy, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]dueReportJSON, 0, len(reports))
+	for idx := range reports {
+		out = append(out, dueReportJSON{
+			SessionID: reports[idx].SessionID, Attempts: reports[idx].Attempts,
+			ReportedAt: reports[idx].ReportedAt.UTC(),
+		})
+	}
+
+	return json.Marshal(out)
+}
+
+// SessionReportAttempts returns how many attempts a session's open report has
+// counted; NotFound when the session has no report.
+func (i *Interop) SessionReportAttempts(ctx context.Context, sessionID string) (int, error) {
+	report, err := i.svc.SessionReport(ctx, sessionID)
+	if err != nil {
+		return 0, err
+	}
+
+	return report.Attempts, nil
+}
+
+// RecordSessionReportAttempt counts a failed attempt and sets the next one.
+func (i *Interop) RecordSessionReportAttempt(
+	ctx context.Context, sessionID, failure string, next time.Time,
+) error {
+	return i.svc.RecordSessionReportAttempt(ctx, sessionID, failure, next)
+}
+
+// SettleSessionReport closes an open report with its outcome.
+func (i *Interop) SettleSessionReport(ctx context.Context, sessionID, outcome, note string) error {
+	return i.svc.SettleSessionReport(ctx, sessionID, outcome, note)
 }
 
 // IssueSoldGiftCard issues the gift card a sale made and returns its id and

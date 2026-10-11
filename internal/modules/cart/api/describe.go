@@ -189,6 +189,21 @@ func Describe(d *openapi.Doc) {
 			"An offline method the shop names in PAYMENT_OFFLINE_METHODS — a bank transfer, cash on " +
 			"delivery — is authorized and not captured: the order is placed owing its part, which " +
 			"outstanding reports, and the shop captures it when the money arrives (ADR 0284). " +
+			"payment_session_id names the payment opened with POST /store/v1/carts/{id}/payment-sessions, " +
+			"which is authorized rather than a new one opened, and which a provider whose customer pays " +
+			"on its own page (paytr) requires: without it such a provider is refused with 409 " +
+			"checkout_workflow_payment_session_required. While that provider has not reported the " +
+			"customer's payment the completion is refused with 409 checkout_workflow_payment_pending " +
+			"and Retry-After, does nothing, and may be sent again under the same Idempotency-Key. Such " +
+			"a provider's report completes the cart itself. A completion naming an opened session gets " +
+			"the order's order_token only by presenting the completion_secret the opening answered with, " +
+			"once: without it the order is answered with no token, and a cart the report completed " +
+			"answers the unknown cart's 404. " +
+			"A session opened for another cart or provider (409 " +
+			"checkout_workflow_payment_session_foreign), for a total the cart no longer has (409 " +
+			"checkout_workflow_payment_session_stale) or already closed (409 " +
+			"checkout_workflow_payment_session_closed) is refused before anything is done, and so is " +
+			"payment_session_id beside gift_card_code or pay_first_with (422) (ADR 0438). " +
 			"\n\n" +
 			"The answer carries \"order_token\", the order's access token: send it in the " +
 			"\"X-Order-Token\" header to GET /store/v1/orders/{id}, its timeline and its return " +
@@ -200,6 +215,39 @@ func Describe(d *openapi.Doc) {
 		RequestBody: d.RequestBody(completeCartRequest{}),
 		Responses: map[string]any{
 			"200": openapi.Response("The resulting order, its total and what it still owes", d.Item(completeCartDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodPost, "/store/v1/carts/{id}/payment-sessions", openapi.Operation{
+		Summary: "Opens the cart's payment before it is completed: a collection for the total and a session at the provider.",
+		Description: "The totals are recomputed and the cart is checked as the completion checks it, and " +
+			"expected_total is compared with the total; then a payment collection is opened for the " +
+			"total and a session at payment_provider_id, with payment_data handed to the provider as " +
+			"it is. The answer carries the session and the provider's data: for paytr, data.iframe_token " +
+			"opens PayTR's iframe, where the customer pays, and payment_data has to carry the " +
+			"customer's email and user_ip. The cart is then completed with " +
+			"POST /store/v1/carts/{id}/complete naming payment_session_id. A cart changed after its " +
+			"payment was opened refuses that completion; cancel the session with " +
+			"POST /store/v1/carts/{id}/payment-sessions/{payment_session_id}/cancel — at paytr a paid " +
+			"session's cancel is a refund — and open a new one. Each call opens a new payment, so a " +
+			"repeat is sent with the same Idempotency-Key. The shop's own balances, gift_card, " +
+			"store_credit and loyalty_points, pay at the completion and are not opened here (ADR 0438).",
+		RequestBody: d.RequestBody(openPaymentRequest{}),
+		Responses: map[string]any{
+			"201": openapi.Response("The opened payment session and the provider's data", d.Item(openPaymentDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodPost, "/store/v1/carts/{id}/payment-sessions/{payment_session_id}/cancel", openapi.Operation{
+		Summary: "Cancels a payment opened for the cart; at a provider that already took the money it is the refund.",
+		Description: "The session must have been opened for this cart, which must still be open: a " +
+			"session of another cart is refused with 409 checkout_workflow_payment_session_foreign, " +
+			"a completed cart is the unknown cart's 404 (ADR 0439), and while a completion of the cart " +
+			"runs the cancel is refused with 409 checkout_workflow_payment_pending and Retry-After. A " +
+			"session an order captured cannot be canceled; a second cancel changes nothing. For paytr, " +
+			"the cancel of a paid session sends what was paid back, up to the cart's total (ADR 0438).",
+		Responses: map[string]any{
+			"204": emptyResponse("The payment session was canceled"),
 		},
 	})
 

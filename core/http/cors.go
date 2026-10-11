@@ -66,8 +66,10 @@ var corsAllowedHeaders = []string{
 const OrderTokenHeader = "X-Order-Token"
 
 // corsExposedHeaders are the response headers a browser may read: the request
-// id, and the ETag that is the response half of the validator pair (ADR 0391).
-var corsExposedHeaders = []string{requestIDHeader, "ETag"}
+// id, the ETag that is the response half of the validator pair (ADR 0391), and
+// the Retry-After a checkout refused because its payment is not reported yet
+// says when to send the completion again with (ADR 0438).
+var corsExposedHeaders = []string{requestIDHeader, "ETag", retryAfterHeader}
 
 // corsAllowedMethods are the methods the store surface answers.
 var corsAllowedMethods = []string{

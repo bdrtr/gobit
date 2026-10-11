@@ -13,7 +13,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/bdrtr/gobit/core/container"
 	corehttp "github.com/bdrtr/gobit/core/http"
+	coreplugin "github.com/bdrtr/gobit/core/plugin"
 	"github.com/bdrtr/gobit/internal/adminui"
 	"github.com/bdrtr/gobit/internal/app"
 )
@@ -99,7 +101,31 @@ const (
 	surfaceOpen     = "open"
 	// surfacePanel is the admin panel's tree, guarded by the panel's own ring.
 	surfacePanel = "panel"
+	// surfaceCallback is an inbound provider callback, authenticated by the
+	// signature over its body rather than by a credential (ADR 0028).
+	surfaceCallback = "callback"
 )
+
+// callbackRoutes are the paths the installation's callback ring binds.
+//
+// They are read off the ring rather than listed here: a callback is bound by
+// the ring and nowhere else, so the ring is the population, and a plugin that
+// registers one tomorrow is classified the day it does. Until PayTR stood on
+// this ground there was none, and its callback was the route this test said
+// belonged to no surface (ADR 0438).
+func callbackRoutes(t *testing.T) map[string]bool {
+	t.Helper()
+
+	ring, err := container.Resolve[*corehttp.CallbackRegistry](ctr, coreplugin.CallbacksName)
+	require.NoError(t, err, "the callback ring is not in the container")
+
+	paths := map[string]bool{}
+	for _, path := range ring.Routes() {
+		paths[path] = true
+	}
+
+	return paths
+}
 
 // customerRoutes are the storefront endpoints that name a person.
 //
@@ -140,6 +166,7 @@ func matrixRoutes(t *testing.T) []matrixRoute {
 	t.Helper()
 
 	var routes []matrixRoute
+	callbacks := callbackRoutes(t)
 
 	err := chi.Walk(testRouter, func(
 		method, pattern string, handler http.Handler, _ ...func(http.Handler) http.Handler,
@@ -171,6 +198,8 @@ func matrixRoutes(t *testing.T) []matrixRoute {
 			if _, named := customerRoutes[pattern]; named {
 				route.surface = surfaceCustomer
 			}
+		case callbacks[pattern]:
+			route.surface = surfaceCallback
 		default:
 			if _, open := openRoutes[pattern]; !open {
 				t.Errorf("%s %s belongs to no surface this matrix knows.\n"+
@@ -226,7 +255,7 @@ func TestTheAuthorizationMatrixHoldsForEveryEndpoint(t *testing.T) {
 	// number it produced would be wrong in a way that looked like a finding.
 	var admin, store, panel int
 
-	customer, open := map[string]bool{}, map[string]bool{}
+	customer, open, callback := map[string]bool{}, map[string]bool{}, map[string]bool{}
 
 	for _, route := range routes {
 		switch route.surface {
@@ -240,6 +269,8 @@ func TestTheAuthorizationMatrixHoldsForEveryEndpoint(t *testing.T) {
 			customer[route.pattern] = true
 		case surfaceOpen:
 			open[route.pattern] = true
+		case surfaceCallback:
+			callback[route.pattern] = true
 		}
 	}
 
@@ -256,6 +287,11 @@ func TestTheAuthorizationMatrixHoldsForEveryEndpoint(t *testing.T) {
 	require.Equal(t, len(openRoutes), len(open),
 		"the open routes walked do not match the ones declared; one was added or removed "+
 			"without the decision being written down")
+	require.NotEmpty(t, callback,
+		"no callback route was walked although PayTR stands on this ground; the ring's "+
+			"population and the router disagree, or the classification has gone blind")
+	require.Len(t, callback, len(callbackRoutes(t)),
+		"a path the callback ring registered is not bound on the router")
 
 	for _, route := range routes {
 		t.Run(route.surface+" "+route.method+" "+route.pattern, func(t *testing.T) {
@@ -270,8 +306,41 @@ func TestTheAuthorizationMatrixHoldsForEveryEndpoint(t *testing.T) {
 				assertCustomerRow(t, route)
 			case surfaceOpen:
 				assertOpenRow(t, route)
+			case surfaceCallback:
+				assertCallbackRow(t, route)
 			}
 		})
+	}
+}
+
+// assertCallbackRow: who may reach an inbound provider callback.
+//
+// The provider carries no credential of gobit's, so the API's identity ring
+// must not stand in front of it: a 401 here is every report the provider sends
+// refused, and every payment left unreported while the provider retries. And a
+// credential is not a signature: a request that is not signed is refused by
+// the ring's verification whoever sends it, the storefront's key and an admin
+// key included.
+func assertCallbackRow(t *testing.T, route matrixRoute) {
+	t.Helper()
+
+	for name, decorate := range map[string]func(*http.Request){
+		"an anonymous caller": nil,
+		"a publishable key": func(r *http.Request) {
+			r.Header.Set(corehttp.PublishableKeyHeader, publishableKey)
+		},
+		"an admin key": func(r *http.Request) {
+			r.Header.Set("Authorization", "Bearer "+secretKey)
+		},
+	} {
+		code := request(t, route, decorate)
+
+		assert.NotEqual(t, http.StatusUnauthorized, code,
+			"%s was asked for an identity at %s; the provider has none to give, so every "+
+				"callback it sends would be refused", name, route.pattern)
+		assert.GreaterOrEqual(t, code, http.StatusBadRequest,
+			"%s had an UNSIGNED request handled at %s; a callback is authenticated by its "+
+				"signature, and a credential is not one", name, route.pattern)
 	}
 }
 

@@ -214,4 +214,5 @@ truth: a report says what was true on the day it was taken.
 | [What a receiver had to spell — measured 2026-10-10](0435-what-a-receiver-had-to-spell.md) | 393 |
 | [When a webhook goes out — measured 2026-10-10](0436-when-a-webhook-goes-out.md) | 421 |
 | [What the marketplace could not hear — measured 2026-10-11](0437-what-the-marketplace-could-not-hear.md) | 255 |
+| [What PayTR could not complete — measured 2026-10-11](0438-what-paytr-could-not-complete.md) | 458 |
 | [What a receiver could open — measured 2026-10-11](0439-what-a-receiver-could-open.md) | 285 |

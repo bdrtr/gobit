@@ -50,6 +50,9 @@ const (
 	codeRefundFailed   = "paytr_refund_failed"
 	codeCannotCancel   = "paytr_cannot_cancel"
 	codeAmountMismatch = "paytr_amount_mismatch"
+	// codeOrderIDTaken refuses a session whose order id PayTR already reported
+	// on, or that an earlier opening asked a different amount for.
+	codeOrderIDTaken = "paytr_order_id_taken"
 )
 
 // The keys the caller may put in [coreprovider.CreateSessionInput.Data].
@@ -72,9 +75,26 @@ const (
 // DataKeyIframeToken is the key the iframe token is returned under in
 // [coreprovider.Session.Data].
 //
-// The storefront reads it and opens PayTR's iframe with it. It is short lived
-// and is NOT stored anywhere by this plugin.
+// The storefront reads it from the answer of
+// POST /store/v1/carts/{id}/payment-sessions, which opens this session before
+// the cart is completed, and opens PayTR's iframe with it (ADR 0438). It is
+// short lived and this plugin keeps no copy of it.
 const DataKeyIframeToken = "iframe_token"
+
+// The keys of the data [provider.Authorize] returns once PayTR reported a
+// payment, which the payment module keeps on the session.
+//
+// DataKeyPaidAmount is what PayTR said the customer paid, in minor units, and
+// DataKeyInstallmentDifference is the part of it above the session's amount:
+// the cost of paying in installments, which PayTR adds to the customer's total
+// (its total_amount) and which is not the shop's money. The order, the
+// collection and every capture and refund hold the session's amount; the
+// difference is recorded here and in the plugin's row, and nowhere is it
+// counted as revenue (ADR 0438).
+const (
+	DataKeyPaidAmount            = "paid_amount"
+	DataKeyInstallmentDifference = "installment_difference"
+)
 
 // provider is the [coreprovider.PaymentProvider] implementation over PayTR.
 type provider struct {
@@ -86,6 +106,17 @@ type provider struct {
 
 // The core contract is satisfied at compile time.
 var _ coreprovider.PaymentProvider = (*provider)(nil)
+
+// CustomerAuthorizes reports that PayTR's customer authorizes the payment in
+// PayTR's own iframe, which PayTR then reports by posting back.
+//
+// The payment module finds it by a type assertion, and it is what makes the
+// checkout open this provider's session BEFORE the cart is completed and
+// refuse a completion that names no session (ADR 0438): opened inside the
+// completion, the iframe token never left the server and the customer could
+// never pay. A plugin cannot import the module's interface, so the pin that
+// this method still answers is at the composition root.
+func (p *provider) CustomerAuthorizes() bool { return true }
 
 // The OPTIONAL reconciliation capability is pinned at compile time too.
 //
@@ -106,6 +137,20 @@ func (p *provider) ID() string { return ProviderID }
 // reference is normalized. The normalized value is what comes back in the
 // callback and what [provider.Authorize] is later asked about, so it — not the
 // original — is the session id.
+//
+// # One order id is one payment
+//
+// The reference is the payment collection, so a second session opened on the
+// same collection reaches the same order id and the same row. While that row
+// is pending it is the same payment page asked again, for the same amount. A
+// row PayTR reported paid and nothing gave back is a payment no live session
+// holds — the payment module opens a second session on a collection only when
+// the first was closed and nothing was captured — so the new session adopts
+// it, which is how a payment made after its session was canceled reaches an
+// order. A row PayTR reported refused, or paid and given back, is money that
+// never stayed, and a session reading it would place an order on it; such a
+// session is refused, and the cart's payment is opened anew, on a collection
+// of its own (ADR 0438).
 func (p *provider) CreateSession(
 	ctx context.Context, in coreprovider.CreateSessionInput,
 ) (coreprovider.Session, error) {
@@ -113,6 +158,14 @@ func (p *provider) CreateSession(
 	if oid == "" {
 		return coreprovider.Session{}, coreerrors.Invalid(codeSessionFailed,
 			"the payment reference has no letters or digits; PayTR needs an alphanumeric order id")
+	}
+
+	// The form is built, and the customer's details checked, BEFORE the row is
+	// written: a request PayTR could never accept leaves no row behind to be
+	// listed as a payment PayTR never reported on.
+	form, err := p.getTokenForm(oid, in)
+	if err != nil {
+		return coreprovider.Session{}, err
 	}
 
 	// The row is written BEFORE the call to PayTR. If it were written after, a
@@ -126,10 +179,15 @@ func (p *provider) CreateSession(
 	}); err != nil {
 		return coreprovider.Session{}, err
 	}
-
-	form, err := p.getTokenForm(oid, in)
+	rec, err := p.store.get(ctx, oid)
 	if err != nil {
 		return coreprovider.Session{}, err
+	}
+	reusable := rec.Status == statusPending || (rec.Status == statusSuccess && rec.RefundedAmount == 0)
+	if !reusable || rec.Amount != in.Amount || rec.CurrencyCode != in.CurrencyCode {
+		return coreprovider.Session{}, coreerrors.Conflict(codeOrderIDTaken,
+			"PayTR order id %s is already a %s payment of %d %s; open the cart's payment anew",
+			oid, rec.Status, rec.Amount, rec.CurrencyCode)
 	}
 
 	token, err := p.requestToken(ctx, form)
@@ -252,7 +310,10 @@ func (p *provider) requestToken(ctx context.Context, form url.Values) (string, e
 //
 // A payment PayTR has not reported on is NOT an error and NOT a failure. It is
 // Unavailable — "ask again" — because that is exactly the state: the customer
-// may still be typing their card number.
+// may still be typing their card number. The checkout asks
+// [provider.InspectSession] first and does not start while the answer is
+// pending (ADR 0438), so this answer is met only by a caller that skipped that
+// question.
 func (p *provider) Authorize(ctx context.Context, sessionID string) (coreprovider.AuthResult, error) {
 	rec, err := p.store.get(ctx, sessionID)
 	if err != nil {
@@ -261,14 +322,37 @@ func (p *provider) Authorize(ctx context.Context, sessionID string) (coreprovide
 
 	switch rec.Status {
 	case statusSuccess:
+		// A payment given back, wholly or in part, holds nothing an order can
+		// be placed on: the only refund before an order is a cancel, which
+		// returns all of it (ADR 0438). And a report of nothing paid is not a
+		// hold of nothing — the payment module reads zero as "all of it".
+		if rec.RefundedAmount > 0 || shopsPart(rec) <= 0 {
+			return coreprovider.AuthResult{Status: coreprovider.SessionFailed},
+				coreerrors.Invalid(codeNotAuthorized,
+					"the PayTR payment holds nothing to authorize: %d paid, %d refunded",
+					rec.PaidAmount, rec.RefundedAmount)
+		}
+
 		// PayTR takes the money at the moment it authorizes; there is no
 		// separate hold. The status returned is Authorized rather than Captured
 		// because the core's saga expects to capture next, and reporting
 		// Captured here would make it skip a step it uses for its own
 		// bookkeeping. What Capture then does is documented on that method.
+		//
+		// The amount held is the SHOP's part of what was paid (see
+		// [shopsPart]): a customer paying in installments pays more than the
+		// session asked, and reporting that would be a hold above the session,
+		// which the payment module refuses as a contract violation and the
+		// saga answers with a full refund (ADR 0438).
+		data, err := paidData(rec)
+		if err != nil {
+			return coreprovider.AuthResult{}, err
+		}
+
 		return coreprovider.AuthResult{
 			Status:           coreprovider.SessionAuthorized,
-			AuthorizedAmount: rec.PaidAmount,
+			AuthorizedAmount: shopsPart(rec),
+			Data:             data,
 		}, nil
 
 	case statusFailed:
@@ -305,13 +389,54 @@ func (p *provider) Capture(ctx context.Context, sessionID string, amount int64) 
 		return coreerrors.Invalid(codeNotAuthorized,
 			"the payment cannot be captured because PayTR did not report it as successful")
 	}
-	if amount > 0 && amount > rec.PaidAmount {
+	// What can be captured is the shop's part less what was given back; zero
+	// asks for all of it, and all of nothing is refused too.
+	left := shopsPart(rec) - rec.RefundedAmount
+	if left <= 0 || amount > left {
 		return coreerrors.Invalid(codeAmountMismatch,
-			"the capture is larger than what PayTR collected: %d requested, %d paid",
-			amount, rec.PaidAmount)
+			"the capture is larger than what PayTR collected for the order: %d requested, %d paid "+
+				"of %d asked, %d refunded", amount, rec.PaidAmount, rec.Amount, rec.RefundedAmount)
 	}
 
 	return nil
+}
+
+// shopsPart is the shop's part of what PayTR reported the customer paid: what
+// was paid, up to what the session asked.
+//
+// # The installment difference is not the shop's
+//
+// PayTR's callback signs total_amount, the customer's total, and when the
+// customer pays in installments that total carries the installment difference
+// on top of the order (PayTR documents it so; payment_amount, the order's own
+// figure, is not signed and is not read). The difference is the cost of the
+// installments, collected from the customer by PayTR, and the shop sold the
+// order for the session's amount. So the session is authorized and captured for
+// that amount, the order and the collection say so, and a refund through gobit
+// gives back at most that amount; the row keeps what PayTR said was paid, and
+// [provider.Authorize] puts both figures on the session (ADR 0438).
+//
+// Paid below the session's amount, the part is what was paid, and the full
+// payment rule refuses the order and refunds it.
+func shopsPart(rec payment) int64 {
+	return min(rec.PaidAmount, rec.Amount)
+}
+
+// paidData is the data a reported payment puts on its session: what PayTR said
+// was paid, and the installment difference when there is one.
+func paidData(rec payment) (json.RawMessage, error) {
+	paid := map[string]int64{DataKeyPaidAmount: rec.PaidAmount}
+	if difference := rec.PaidAmount - rec.Amount; difference > 0 {
+		paid[DataKeyInstallmentDifference] = difference
+	}
+
+	data, err := json.Marshal(paid)
+	if err != nil {
+		return nil, coreerrors.Wrap(err, coreerrors.KindInternal, codeSessionFailed,
+			"the reported payment could not be encoded")
+	}
+
+	return data, nil
 }
 
 // Refund sends money back through PayTR.
@@ -329,10 +454,12 @@ func (p *provider) Refund(ctx context.Context, sessionID string, amount int64) e
 			"a payment PayTR did not report as successful cannot be refunded")
 	}
 
+	// What can be refunded is the shop's part of the payment, never the
+	// installment difference: the shop did not take it (see [shopsPart]).
 	if amount <= 0 {
-		amount = rec.PaidAmount
+		amount = shopsPart(rec)
 	}
-	if remaining := rec.PaidAmount - rec.RefundedAmount; amount > remaining {
+	if remaining := shopsPart(rec) - rec.RefundedAmount; amount > remaining {
 		// PayTR has no "how much is left to refund" query, so this check is the
 		// only thing standing between a retried compensation and sending the
 		// money back twice.
@@ -403,13 +530,13 @@ func (p *provider) Cancel(ctx context.Context, sessionID string) error {
 
 	switch rec.Status {
 	case statusSuccess:
-		if rec.RefundedAmount >= rec.PaidAmount {
+		if rec.RefundedAmount >= shopsPart(rec) {
 			// Already fully returned. A second compensation is a no-op rather
 			// than a second refund.
 			return nil
 		}
 
-		return p.Refund(ctx, sessionID, rec.PaidAmount-rec.RefundedAmount)
+		return p.Refund(ctx, sessionID, shopsPart(rec)-rec.RefundedAmount)
 
 	case statusFailed, statusPending:
 		// Nothing was taken, so nothing is undone. This is a SUCCESSFUL
@@ -555,10 +682,17 @@ func (p *provider) InspectSession(
 		// PayTR takes the money at the moment it authorizes; there is no
 		// separate hold, so a successful payment is both authorized AND
 		// captured. Reporting only one of the two would make the reconciler
-		// read every PayTR payment as a divergence.
+		// read every PayTR payment as a divergence. The amount is the shop's
+		// part, the one the module's ledger holds (see [shopsPart]). A payment
+		// given back whole is reported canceled, its amounts kept: the money
+		// went back, and a completion asking about it must not proceed as if
+		// it were held (ADR 0438).
 		inspection.Status = coreprovider.SessionCaptured
-		inspection.AuthorizedAmount = rec.PaidAmount
-		inspection.CapturedAmount = rec.PaidAmount
+		if rec.RefundedAmount >= shopsPart(rec) {
+			inspection.Status = coreprovider.SessionCanceled
+		}
+		inspection.AuthorizedAmount = shopsPart(rec)
+		inspection.CapturedAmount = shopsPart(rec)
 	case statusFailed:
 		inspection.Status = coreprovider.SessionFailed
 	default:

@@ -35,7 +35,8 @@ type Divergence struct {
 	ExternalID string
 
 	// LocalStatus and LocalAuthorized are what this module believes: an amount
-	// on hold, and nothing drawn.
+	// on hold, or a session still pending at a provider whose customer pays on
+	// its page (ADR 0438), and nothing drawn.
 	LocalStatus     models.SessionStatus
 	LocalAuthorized int64
 	// ProviderStatus and ProviderCaptured are what the provider says.
@@ -82,14 +83,41 @@ type ReconciliationReport struct {
 	// Truncated reports that the suspect set filled the limit, so there may be
 	// more waiting for the next pass.
 	Truncated bool
+	// UnreportedTruncated reports that more pending sessions of a provider
+	// whose customer pays on its page settled in the last
+	// [UnreportedCoverage] than one pass reads, so some of them were never
+	// asked about (ADR 0438). A day larger than the page that the page still
+	// covers back over that stretch is not reported: each of its sessions is
+	// asked about at least on its first pass.
+	UnreportedTruncated bool
 }
+
+// UnreportedWindow is how long a pending session of a provider whose customer
+// pays on its own page stays on the reconciliation's second page once it has
+// settled (ADR 0438).
+//
+// A day of hourly passes asks about a paid session with no order some
+// twenty-four times, which is what makes it hard to miss; past the window it
+// leaves the page, because the abandoned payment pages it would sit among
+// never leave pending, and a page that read them all would grow with every
+// checkout the installation ever had. The page itself holds
+// [MaxReconcileLimit], since a session is on it for only that day.
+const UnreportedWindow = 24 * time.Hour
+
+// UnreportedCoverage is the stretch of settled time the pending page must
+// reach back over for every session in it to have met at least one pass: the
+// reconciliation job's interval, which internal/jobs/paymentrecon holds below
+// it (ADR 0438).
+const UnreportedCoverage = time.Hour
 
 // Clean reports whether the pass found nothing needing a human.
 //
-// A pass that could not ask is NOT clean. That is the point.
+// A pass that could not ask is NOT clean. That is the point. Nor is one whose
+// page of pending payment pages could not hold the day: a payment taken with
+// no order is found only there (ADR 0438).
 func (r ReconciliationReport) Clean() bool {
 	return len(r.Divergences) == 0 &&
-		r.Unaskable == 0 && r.Unreachable == 0 && r.Unknown == 0
+		r.Unaskable == 0 && r.Unreachable == 0 && r.Unknown == 0 && !r.UnreportedTruncated
 }
 
 // Reconcile compares this module's ledger against each provider's own, for the
@@ -117,7 +145,11 @@ func (r ReconciliationReport) Clean() bool {
 //
 // unchangedFor is the settling window: a session that has been authorized for
 // less than this is presumed to be a capture still in flight, not a
-// divergence. limit bounds the pass.
+// divergence, and one pending at a provider whose customer pays on its page a
+// completion still on its way. limit bounds the authorized sessions, read
+// oldest first; those pending sessions, and the canceled ones a customer may
+// have paid on after the cancel, are a second page, the ones settled in the
+// last [UnreportedWindow], newest first, up to [MaxReconcileLimit] (ADR 0438).
 func (s *Service) Reconcile(
 	ctx context.Context, unchangedFor time.Duration, limit int,
 ) (ReconciliationReport, error) {
@@ -151,9 +183,42 @@ func (s *Service) Reconcile(
 		suspects = suspects[:limit]
 	}
 
+	// The pending sessions of a provider whose customer pays on its own page
+	// are a page of their OWN (ADR 0438). Money moves there while the session
+	// is still pending, and a customer who pays and closes the browser leaves
+	// it pending with no order behind it; a customer who pays on a page whose
+	// session was canceled meanwhile leaves the money on a canceled one, which
+	// the page reads too, since such a provider cannot void a page it handed
+	// out. Most of those sessions are a
+	// checkout left unpaid and stay pending for good, so the page never shares
+	// the one above — mixed into it, they would fill every page with old
+	// abandoned checkouts — and it reads the window of the last settled day
+	// rather than a fixed count, newest first: every session in the window is
+	// asked about on every pass while it is among the newest the page holds,
+	// and a page that cannot reach back over the last [UnreportedCoverage],
+	// where a session meets its first pass, is reported.
+	settled := time.Now().UTC().Add(-unchangedFor)
+	unreported, err := s.store.ListPendingSessionsForReconciliation(
+		ctx, settled, settled.Add(-UnreportedWindow), s.customerAuthorizing(), MaxReconcileLimit+1)
+	if err != nil {
+		return ReconciliationReport{}, errors.Wrap(err, errors.KindOf(err),
+			CodeReconcileFailed, "the pending sessions to reconcile could not be listed")
+	}
+	unreportedTruncated := false
+	if len(unreported) > MaxReconcileLimit {
+		unreported = unreported[:MaxReconcileLimit]
+		// Newest first, so the last one kept is the oldest asked about. A page
+		// that reaches back past the last stretch between passes asked about
+		// every session settled in it, each at least on its first pass; one
+		// that does not left some never asked at all.
+		unreportedTruncated = unreported[len(unreported)-1].UpdatedAt.After(settled.Add(-UnreportedCoverage))
+	}
+	suspects = append(suspects, unreported...)
+
 	report := ReconciliationReport{
-		Examined:  len(suspects),
-		Truncated: truncated,
+		Examined:            len(suspects),
+		Truncated:           truncated,
+		UnreportedTruncated: unreportedTruncated,
 	}
 	for i := range suspects {
 		s.reconcileOne(ctx, suspects[i], &report)
@@ -205,11 +270,21 @@ func (s *Service) reconcileOne(
 		return
 	}
 
-	if inspection.CapturedAmount == 0 {
-		// Every session in the suspect set is locally authorized, which means
-		// this module believes NOTHING has been drawn. So the comparison is
-		// narrow on purpose: the provider reporting nothing captured IS
-		// agreement, whatever it calls the status.
+	// On the page of pending and canceled sessions what counts is money kept:
+	// a payment the provider took and gave back whole holds nothing an order
+	// is missing, and one taken on a canceled session is money nothing else
+	// reads (ADR 0438).
+	taken := inspection.CapturedAmount
+	if ses.Status == models.SessionPending || ses.Status == models.SessionCanceled {
+		taken -= inspection.RefundedAmount
+	}
+	if taken <= 0 {
+		// Every session in the suspect set is locally authorized, or pending at
+		// a provider whose customer pays on its page, which means this module
+		// believes NOTHING has been drawn. So the comparison is narrow on
+		// purpose: the provider reporting nothing captured IS agreement,
+		// whatever it calls the status. A pending session the provider reports
+		// captured is money taken with no order behind it (ADR 0438).
 		//
 		// That includes a provider calling the authorization dead — expired,
 		// canceled — while this module still holds it. No money moved, so

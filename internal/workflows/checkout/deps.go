@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"time"
 
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/errors"
@@ -59,6 +60,9 @@ const (
 	// ServiceWorkflow is the core's saga engine; execution state is written to
 	// pgstore.
 	ServiceWorkflow = "core.workflow"
+	// ServiceWorkflowStore is the engine's record of executions, read to tell
+	// whether a completion of a cart is running (ADR 0438).
+	ServiceWorkflowStore = "core.workflow.store"
 )
 
 // The payment module's gift card provider and the key its code travels under
@@ -174,6 +178,42 @@ const (
 	// CodeOfflineMethodRequired reports a completion that may only be paid
 	// later naming a provider the checkout would capture (ADR 0286).
 	CodeOfflineMethodRequired = "checkout_workflow_offline_method_required"
+	// CodePaymentSessionRequired reports a completion naming a provider whose
+	// customer pays on its own page and no payment session the storefront
+	// opened for it (ADR 0438).
+	CodePaymentSessionRequired = "checkout_workflow_payment_session_required"
+	// CodePaymentPending reports a completion whose payment session's provider
+	// has not reported the customer's payment yet; nothing is done, and the
+	// same completion may be sent again (ADR 0438).
+	CodePaymentPending = "checkout_workflow_payment_pending"
+	// CodePaymentReportedDeclined reports a completion whose payment session's
+	// provider reported the customer's payment as refused (ADR 0438).
+	CodePaymentReportedDeclined = "checkout_workflow_payment_reported_declined"
+	// CodePaymentSessionForeign reports a payment session opened for another
+	// cart or at another provider than the completion names (ADR 0438).
+	CodePaymentSessionForeign = "checkout_workflow_payment_session_foreign"
+	// CodePaymentSessionStale reports a payment session opened for an amount or
+	// a currency the cart no longer has (ADR 0438).
+	CodePaymentSessionStale = "checkout_workflow_payment_session_stale"
+	// CodePaymentSessionClosed reports a payment session already captured,
+	// canceled or declined, or on a collection that captured (ADR 0438).
+	CodePaymentSessionClosed = "checkout_workflow_payment_session_closed"
+	// CodePaymentAnswerInvalid reports an answer of the payment module about a
+	// session that could not be read; the module broke its contract.
+	CodePaymentAnswerInvalid = "checkout_workflow_payment_answer_invalid"
+	// CodePaymentAnswered refuses the storefront's completion of a session an
+	// order took when it does not present the session's completion secret, or
+	// the secret was spent (ADR 0438, ADR 0439). The storefront answers it as
+	// it answers any completed cart.
+	CodePaymentAnswered = "checkout_workflow_payment_answered"
+	// CodeCompletionUnreadable reports that whether a completion of a cart is
+	// running could not be read (ADR 0438).
+	CodeCompletionUnreadable = "checkout_workflow_completion_unreadable"
+	// CodeReportedSessionClosed is the payment module's answer to a report
+	// that names only sessions already closed: a payment made after its
+	// session was canceled (ADR 0438). It is the payment module's code,
+	// repeated for [LinkOrderPayment]'s reason.
+	CodeReportedSessionClosed = "payment_report_session_closed"
 	// CodeSnapshotInvalid reports that the cart snapshot could not be read.
 	CodeSnapshotInvalid = "checkout_workflow_snapshot_invalid"
 	// CodeTotalsInvalid reports that the totals do not cover the lines of the
@@ -539,6 +579,46 @@ type Payments interface {
 	// capture to the operator (ADR 0284). An unregistered provider is refused.
 	CapturesLater(ctx context.Context, providerID string) (bool, error)
 
+	// CustomerAuthorizes reports whether a provider's customer authorizes the
+	// payment on the provider's own page, so its session is opened before the
+	// cart is completed and a completion that names none is refused (ADR
+	// 0438). An unregistered provider is refused.
+	CustomerAuthorizes(ctx context.Context, providerID string) (bool, error)
+
+	// CheckoutSessionJSON returns a session and its collection as one JSON
+	// object, in the [paymentSessionFacts] schema (ADR 0438).
+	CheckoutSessionJSON(ctx context.Context, sessionID string) (json.RawMessage, error)
+
+	// ReportedStatus returns what a customer-authorizing provider's own ledger
+	// says about one of its sessions — "pending" while the customer has not
+	// paid — and moves nothing (ADR 0438).
+	ReportedStatus(ctx context.Context, sessionID string) (string, error)
+
+	// RecordSessionReport opens the report of every session still open that a
+	// provider whose customer pays on its page knows by externalID, and returns
+	// their ids (ADR 0438).
+	RecordSessionReport(ctx context.Context, providerID, externalID string) ([]string, error)
+	// DiscoverReportedSessions opens the report of every pending session of
+	// such a provider settled in the last day that the provider says it took
+	// money for and that has none, and returns the ids of those it opened.
+	DiscoverReportedSessions(ctx context.Context, now time.Time) ([]string, error)
+	// DueSessionReportsJSON returns the open reports due by the moment, soonest
+	// first, in the [dueReport] schema.
+	DueSessionReportsJSON(ctx context.Context, dueBy time.Time, limit int) (json.RawMessage, error)
+	// SessionReportAttempts returns how many failed attempts a session's open
+	// report counted.
+	SessionReportAttempts(ctx context.Context, sessionID string) (int, error)
+	// RecordSessionReportAttempt counts a failed attempt and sets the next one.
+	RecordSessionReportAttempt(ctx context.Context, sessionID, failure string, next time.Time) error
+	// SettleSessionReport closes an open report with its outcome.
+	SettleSessionReport(ctx context.Context, sessionID, outcome, note string) error
+	// OpenSessionAnswer makes the completion secret of a session opened for a
+	// cart, keeps its digest, and returns the only copy (ADR 0438).
+	OpenSessionAnswer(ctx context.Context, sessionID string) (string, error)
+	// ClaimSessionAnswer spends the session's completion secret when secret is
+	// it and it was not spent, and reports whether it did.
+	ClaimSessionAnswer(ctx context.Context, sessionID, secret string) (bool, error)
+
 	// CreateCollection opens a payment collection for a reference and returns its
 	// identifier. The amount must be POSITIVE.
 	//
@@ -695,8 +775,22 @@ type Deps struct {
 	// protection then stays within the process boundary and two replicas can
 	// order the same cart at the same time.
 	Executor workflow.Executor
+	// Executions is the engine's record, read to tell whether a completion of
+	// a cart is running (ADR 0438). [FromContainer] always resolves it; left
+	// nil, as some tests build the workflow, no completion is ever taken to be
+	// running, and a refusal met beside one is final.
+	Executions Executions
 	// Logger discards the logs if it is given as nil.
 	Logger *slog.Logger
+}
+
+// Executions is the saga engine's record of executions as the completion
+// reads it ("core.workflow.store"): whether a completion of a cart is running
+// now (ADR 0438). A refusal met beside a running completion of the same cart
+// may be that completion's work — it spent the promotion's last use, or
+// stamped the cart — and is answered "not yet" rather than acted on.
+type Executions interface {
+	FindByIdempotencyKey(ctx context.Context, workflow, key string) (*workflow.Execution, error)
 }
 
 // Workflows is the type that runs the order completion workflow. It is safe for
@@ -712,6 +806,7 @@ type Workflows struct {
 	catalog     Catalog
 	promotions  Promotions
 	executor    workflow.Executor
+	executions  Executions
 	log         *slog.Logger
 }
 
@@ -758,6 +853,7 @@ func New(deps Deps) (*Workflows, error) {
 		// and an installation without the module sells without coupons.
 		promotions: deps.Promotions,
 		executor:   deps.Executor,
+		executions: deps.Executions,
 		log:        log,
 	}, nil
 }
@@ -820,6 +916,10 @@ func FromContainer(c *container.Container) (*Workflows, error) {
 	if err != nil {
 		return nil, err
 	}
+	executions, err := resolve[Executions](c, ServiceWorkflowStore)
+	if err != nil {
+		return nil, err
+	}
 
 	totals, err := cartwf.FromContainer(c)
 	if err != nil {
@@ -848,6 +948,7 @@ func FromContainer(c *container.Container) (*Workflows, error) {
 		Catalog:     catalog,
 		Promotions:  promotions,
 		Executor:    executor,
+		Executions:  executions,
 		// The application sets the logger up with slog.SetDefault at startup; the
 		// workflow does not look for a separate logger registration.
 		Logger: slog.Default().With("workflow", WorkflowName),

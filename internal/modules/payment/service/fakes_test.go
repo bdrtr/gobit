@@ -1,6 +1,7 @@
 package service_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"maps"
@@ -38,6 +39,11 @@ type fakeStore struct {
 	sessions    map[string]models.PaymentSession
 	payments    map[string]models.Payment
 	refunds     map[string]models.Refund
+	// reports are the session reports of providers whose customer pays on
+	// their page (ADR 0438).
+	reports map[string]models.SessionReport
+	// answers are the completion secrets' digests, keyed by session.
+	answers map[string]*fakeAnswer
 	// outbox holds the events written inside a transaction IN ORDER. The order
 	// matters: we want to see that the event is written AFTER the money movement.
 	outbox []outboxRow
@@ -102,6 +108,7 @@ func newFakeStore() *fakeStore {
 		sessions:    map[string]models.PaymentSession{},
 		payments:    map[string]models.Payment{},
 		refunds:     map[string]models.Refund{},
+		reports:     map[string]models.SessionReport{},
 	}
 }
 
@@ -577,6 +584,185 @@ func (f *fakeStore) ListSessionsForReconciliation(
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+// ListPendingSessionsForReconciliation returns the pending and canceled
+// sessions of the given providers, newest first, as the real query does:
+// pending or canceled, one of the providers, last written inside [settledAfter, unchangedSince), ordered by
+// updated_at DESCENDING. Each condition is imitated so that a service that
+// stopped narrowing the set would be caught here rather than only against a
+// database.
+func (f *fakeStore) ListPendingSessionsForReconciliation(
+	_ context.Context,
+	unchangedSince, settledAfter time.Time,
+	providerIDs []string,
+	limit int32,
+) ([]models.PaymentSession, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := []models.PaymentSession{}
+	for _, id := range slices.Sorted(maps.Keys(f.sessions)) {
+		ses := f.sessions[id]
+		if (ses.Status != models.SessionPending && ses.Status != models.SessionCanceled) ||
+			!slices.Contains(providerIDs, ses.ProviderID) {
+			continue
+		}
+		if !ses.UpdatedAt.Before(unchangedSince) || ses.UpdatedAt.Before(settledAfter) {
+			continue
+		}
+		out = append(out, ses)
+	}
+
+	slices.SortStableFunc(out, func(a, b models.PaymentSession) int {
+		return b.UpdatedAt.Compare(a.UpdatedAt)
+	})
+
+	if int32(len(out)) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// ListSessionsByExternalID returns the sessions a provider knows by an id,
+// oldest first, as the real query does.
+func (f *fakeStore) ListSessionsByExternalID(
+	_ context.Context, providerID, externalID string,
+) ([]models.PaymentSession, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := []models.PaymentSession{}
+	for _, id := range slices.Sorted(maps.Keys(f.sessions)) {
+		if ses := f.sessions[id]; ses.ProviderID == providerID && ses.ExternalID == externalID {
+			out = append(out, ses)
+		}
+	}
+	slices.SortStableFunc(out, func(a, b models.PaymentSession) int { return a.CreatedAt.Compare(b.CreatedAt) })
+
+	return out, nil
+}
+
+// RecordSessionReport opens a report once and says whether it opened it.
+func (f *fakeStore) RecordSessionReport(_ context.Context, sessionID string, firstDue time.Time) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if _, ok := f.reports[sessionID]; ok {
+		return false, nil
+	}
+	now := time.Now().UTC()
+	f.reports[sessionID] = models.SessionReport{SessionID: sessionID, ReportedAt: now, NextAttemptAt: firstDue}
+
+	return true, nil
+}
+
+// RecordSessionAnswer keeps a session's secret digest.
+func (f *fakeStore) RecordSessionAnswer(_ context.Context, sessionID string, digest []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.answers == nil {
+		f.answers = map[string]*fakeAnswer{}
+	}
+	f.answers[sessionID] = &fakeAnswer{digest: slices.Clone(digest)}
+
+	return nil
+}
+
+// ClaimSessionAnswer spends a secret whose digest is the session's, once.
+func (f *fakeStore) ClaimSessionAnswer(_ context.Context, sessionID string, digest []byte) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	answer, ok := f.answers[sessionID]
+	if !ok || answer.answered || !bytes.Equal(answer.digest, digest) {
+		return false, nil
+	}
+	answer.answered = true
+
+	return true, nil
+}
+
+// fakeAnswer is a session's kept secret digest and whether it was spent.
+type fakeAnswer struct {
+	digest   []byte
+	answered bool
+}
+
+// ListDueSessionReports returns the open reports due by the moment, soonest
+// first.
+func (f *fakeStore) ListDueSessionReports(
+	_ context.Context, dueBy time.Time, limit int32,
+) ([]models.SessionReport, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := []models.SessionReport{}
+	for _, report := range f.reports {
+		if report.Outcome == "" && !report.NextAttemptAt.After(dueBy) {
+			out = append(out, report)
+		}
+	}
+	slices.SortStableFunc(out, func(a, b models.SessionReport) int {
+		if c := a.NextAttemptAt.Compare(b.NextAttemptAt); c != 0 {
+			return c
+		}
+
+		return strings.Compare(a.SessionID, b.SessionID)
+	})
+	if int32(len(out)) > limit {
+		out = out[:limit]
+	}
+
+	return out, nil
+}
+
+// GetSessionReport returns one report.
+func (f *fakeStore) GetSessionReport(_ context.Context, sessionID string) (models.SessionReport, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	report, ok := f.reports[sessionID]
+	if !ok {
+		return models.SessionReport{}, errors.NotFound("payment_query_failed", "no report of %s", sessionID)
+	}
+
+	return report, nil
+}
+
+// RecordSessionReportAttempt counts an attempt of an open report.
+func (f *fakeStore) RecordSessionReportAttempt(
+	_ context.Context, sessionID, failure string, next time.Time,
+) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	report, ok := f.reports[sessionID]
+	if !ok || report.Outcome != "" {
+		return false, nil
+	}
+	report.Attempts++
+	report.NextAttemptAt, report.LastFailure = next, failure
+	f.reports[sessionID] = report
+
+	return true, nil
+}
+
+// SettleSessionReport closes an open report.
+func (f *fakeStore) SettleSessionReport(_ context.Context, sessionID, outcome, note string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	report, ok := f.reports[sessionID]
+	if !ok || report.Outcome != "" {
+		return false, nil
+	}
+	now := time.Now().UTC()
+	report.Outcome, report.LastFailure, report.SettledAt = outcome, note, &now
+	f.reports[sessionID] = report
+
+	return true, nil
 }
 
 // SessionCounts counts the collection's sessions by status.

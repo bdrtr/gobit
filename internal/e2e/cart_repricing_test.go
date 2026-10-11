@@ -55,7 +55,9 @@ type repricingScenario struct {
 func TestNoStorefrontWriteLeavesTheCartStale(t *testing.T) {
 	ctx := t.Context()
 
-	variantID := newVariant(ctx, t, "Repriced product", map[string]int64{taxedCurrency: 10_000})
+	// Stocked, because opening the payment checks the cart as the completion
+	// does, and a counted variant with no stock is refused there.
+	variantID, _ := newStockedVariant(ctx, t, "Repriced product", map[string]int64{taxedCurrency: 10_000}, 100)
 	optionID := newShippingOption(ctx, t, newShippingProfile(ctx, t, "Repricing profile"),
 		"Repricing option", 4_900, false)
 	code := fmt.Sprintf("REPRICE%d", fixtureCounter.Add(1))
@@ -132,6 +134,30 @@ func TestNoStorefrontWriteLeavesTheCartStale(t *testing.T) {
 
 			return "/store/v1/carts/" + cartID + "/shipping-methods/" + addShipping(t, cartID), ""
 		}},
+		// Opening the payment changes no line, so the cart is made stale by
+		// hand first: the opening recomputes the totals the payment collects,
+		// and the cart has to carry them afterwards (ADR 0438).
+		http.MethodPost + " " + cartResource + "/payment-sessions": {func(t *testing.T, cartID string) (string, string) {
+			_, err := testPool.Pool().Exec(t.Context(),
+				`UPDATE carts SET revision = revision + 1 WHERE id = $1`, cartID)
+			require.NoError(t, err)
+
+			return "/store/v1/carts/" + cartID + "/payment-sessions",
+				`{"payment_provider_id":"manual","expected_total":0}`
+		}},
+		// The cancel writes no cart field; the cart is made stale and repriced
+		// by the opening first, so the check is that the cancel leaves it so.
+		http.MethodPost + " " + cartResource + "/payment-sessions/{payment_session_id}/cancel": {
+			func(t *testing.T, cartID string) (string, string) {
+				rec := storefrontRequest(t, http.MethodPost, "/store/v1/carts/"+cartID+"/payment-sessions",
+					`{"payment_provider_id":"manual","expected_total":0}`)
+				require.Equal(t, http.StatusCreated, rec.Code, "body: %s", rec.Body.String())
+				sessionID, ok := storefrontData(t, rec)["payment_session_id"].(string)
+				require.True(t, ok, "body: %s", rec.Body.String())
+
+				return "/store/v1/carts/" + cartID + "/payment-sessions/" + sessionID + "/cancel", ""
+			},
+		},
 	}
 
 	writes := storefrontCartWrites(t)

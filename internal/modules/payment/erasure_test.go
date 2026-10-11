@@ -34,7 +34,17 @@ import (
 //     the caller's and is declared.
 //   - A GIFT CARD SESSION'S DECLINE REASON. gobit's sentence about the card's
 //     balance, which is the card's and not a person's.
+//   - A SESSION REPORT (ADR 0438). The session it names, its attempts, its
+//     stamps, its outcome and its last failure, gobit's own sentence about why
+//     a completion did not happen.
+//   - A SESSION'S COMPLETION SECRET (ADR 0438). The session, the digest of
+//     256 random bits gobit made, and when it was spent: a key to an order,
+//     like the order's own token digest, and nobody's data.
 var notPersonalColumns = map[string][]string{
+	"payment_session_reports": {
+		"session_id", "reported_at", "attempts", "next_attempt_at", "last_failure", "outcome", "settled_at",
+	},
+	"payment_session_answers": {"session_id", "secret_digest", "answered_at"},
 	"payment_collections": {
 		"id", "reference", "amount", "currency_code", "status", "authorized_amount",
 		"captured_amount", "refunded_amount", "created_at", "updated_at",

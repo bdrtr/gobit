@@ -31,6 +31,7 @@ import (
 	"github.com/bdrtr/gobit/internal/jobs/offlineexpiry"
 	"github.com/bdrtr/gobit/internal/jobs/outboxrelay"
 	"github.com/bdrtr/gobit/internal/jobs/paymentrecon"
+	"github.com/bdrtr/gobit/internal/jobs/paymentreports"
 	"github.com/bdrtr/gobit/internal/jobs/productimport"
 	"github.com/bdrtr/gobit/internal/jobs/reviewsuggest"
 	"github.com/bdrtr/gobit/internal/jobs/sagawatch"
@@ -46,6 +47,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/review"
 	reviewmodels "github.com/bdrtr/gobit/internal/modules/review/models"
 	reviewservice "github.com/bdrtr/gobit/internal/modules/review/service"
+	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 	giftcardsalewf "github.com/bdrtr/gobit/internal/workflows/giftcardsale"
 	segmentwf "github.com/bdrtr/gobit/internal/workflows/segment"
 	stockalertwf "github.com/bdrtr/gobit/internal/workflows/stockalert"
@@ -233,6 +235,16 @@ func registerJobs(
 		return nil, err
 	}
 	if err := registry.Add(giftcardsweep.Definition(giftCards, log)); err != nil {
+		return nil, err
+	}
+	// The payment-report sweep is registered unconditionally for the same
+	// reason: with no provider whose customer pays on its page there is no
+	// report, and it says so (ADR 0438).
+	checkout, err := container.Resolve[paymentreports.Completer](c, checkoutwf.InteropName)
+	if err != nil {
+		return nil, err
+	}
+	if err := registry.Add(paymentreports.Definition(checkout, log)); err != nil {
 		return nil, err
 	}
 	// The expiry job closes the cards whose moment has come (ADR 0214). It is

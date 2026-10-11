@@ -21,6 +21,7 @@ import (
 	productmodels "github.com/bdrtr/gobit/internal/modules/product/models"
 	productsvc "github.com/bdrtr/gobit/internal/modules/product/service"
 	"github.com/bdrtr/gobit/plugins/analytics"
+	"github.com/bdrtr/gobit/plugins/paymentpaytr"
 	"github.com/bdrtr/gobit/plugins/searchpg"
 	"github.com/bdrtr/gobit/plugins/webhookout"
 )
@@ -107,9 +108,12 @@ const searchIndexTable = "searchpg_product"
 // here for the same reason (ADR 0153): its three subscriptions are the only
 // place in the tree where the cart module's real events meet a real consumer.
 //
-// None of the three reads a setting, so the cleared environment leaves them
-// nothing to miss.
-var groundPlugins = []string{searchpg.Name, analytics.Name, webhookout.Name}
+// The PayTR plugin is the box's one provider whose customer pays on its own
+// page, and its checkout is paytr_checkout_test.go (ADR 0438). It is the only
+// one that reads settings: [groundEnvironment] gives it every one it reads,
+// pointed at the fake PayTR [setUpHarness] starts. Before it stood here, its
+// callback and its pending list were outside every audit the ground runs.
+var groundPlugins = []string{searchpg.Name, analytics.Name, webhookout.Name, paymentpaytr.Name}
 
 // searchWord produces a search word that appears nowhere else in the catalog.
 //

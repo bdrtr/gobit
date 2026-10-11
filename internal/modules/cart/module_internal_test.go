@@ -166,6 +166,16 @@ func (s *stubCompletion) CompleteCartJSON(_ context.Context, _ json.RawMessage) 
 	return s.response, nil
 }
 
+// OpenPaymentJSON returns the scripted response.
+func (s *stubCompletion) OpenPaymentJSON(_ context.Context, _ json.RawMessage) (json.RawMessage, error) {
+	return s.response, nil
+}
+
+// CancelPaymentJSON succeeds.
+func (s *stubCompletion) CancelPaymentJSON(_ context.Context, _ json.RawMessage) error {
+	return nil
+}
+
 // TestCartCompletionFlowIsResolvedByName verifies that the completion flow is
 // resolved BY NAME too.
 func TestCartCompletionFlowIsResolvedByName(t *testing.T) {

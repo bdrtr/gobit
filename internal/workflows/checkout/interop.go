@@ -3,6 +3,7 @@ package checkout
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
 )
@@ -71,6 +72,16 @@ type completeCartRequest struct {
 	// PaymentData is the free-form JSON passed to the provider as is; it is
 	// optional (card token, return address).
 	PaymentData json.RawMessage `json:"payment_data,omitempty"`
+	// PaymentSessionID is the payment the storefront opened for the cart
+	// before completing it; it is optional, and required for a provider whose
+	// customer pays on its own page (ADR 0438). It raises no authority
+	// question: a session opened for another cart is refused, so naming one
+	// cannot spend somebody else's payment.
+	PaymentSessionID string `json:"payment_session_id,omitempty"`
+	// CompletionSecret is the secret the opening of that payment handed the
+	// storefront; it answers the completion of a cart the provider's report
+	// completed (ADR 0438).
+	CompletionSecret string `json:"completion_secret,omitempty"`
 	// GiftCardCode is a gift card that pays first; it is optional (ADR 0209).
 	GiftCardCode string `json:"gift_card_code,omitempty"`
 	// PayFirstWith names the customer's balances that pay after the card and
@@ -182,6 +193,8 @@ func (i *Interop) CompleteCartJSON(ctx context.Context, request json.RawMessage)
 		CartID:            req.CartID,
 		PaymentProviderID: req.PaymentProviderID,
 		PaymentData:       req.PaymentData,
+		PaymentSessionID:  req.PaymentSessionID,
+		CompletionSecret:  req.CompletionSecret,
 		GiftCardCode:      req.GiftCardCode,
 		PayFirstWith:      req.PayFirstWith,
 		Email:             req.Email,
@@ -203,4 +216,114 @@ func (i *Interop) CompleteCartJSON(ctx context.Context, request json.RawMessage)
 		Outstanding:  result.Outstanding,
 		OrderToken:   result.OrderToken,
 	})
+}
+
+// openPaymentRequest is the JSON schema of a storefront's request to open its
+// cart's payment (ADR 0438).
+//
+// It is the completion's request less what the payment opened here cannot
+// carry: no gift card and no balance pays first, because the session is opened
+// for the whole total, and no operator opens one.
+type openPaymentRequest struct {
+	// CartID is the cart whose payment is opened; it is REQUIRED.
+	CartID string `json:"cart_id"`
+	// PaymentProviderID is the provider the session is opened at; it is
+	// REQUIRED.
+	PaymentProviderID string `json:"payment_provider_id"`
+	// PaymentData is handed to the provider as it is.
+	PaymentData json.RawMessage `json:"payment_data,omitempty"`
+	// SalesChannelIDs are the request's channels, read from the identity, for
+	// [completeCartRequest.SalesChannelIDs]'s reason.
+	SalesChannelIDs []string `json:"sales_channel_ids,omitempty"`
+	// ExpectedTotal is the total the customer confirmed (minor unit).
+	ExpectedTotal int64 `json:"expected_total"`
+}
+
+// openPaymentResponse is the JSON schema of the opened payment.
+//
+// Unlike [completeCartResponse] it carries the payment's identifiers: the
+// storefront holds the session, names it in the completion and cancels it when
+// the cart changes, and the provider's data is what it shows the customer.
+type openPaymentResponse struct {
+	PaymentSessionID    string          `json:"payment_session_id"`
+	PaymentCollectionID string          `json:"payment_collection_id"`
+	ProviderID          string          `json:"provider_id"`
+	Status              string          `json:"status"`
+	Amount              int64           `json:"amount"`
+	CurrencyCode        string          `json:"currency_code"`
+	Data                json.RawMessage `json:"data,omitempty"`
+	CompletionSecret    string          `json:"completion_secret"`
+}
+
+// OpenPaymentJSON opens a cart's payment before the cart is completed (ADR
+// 0438).
+//
+// The request is in the [openPaymentRequest] schema and the response in the
+// [openPaymentResponse] schema; the decisions are [Workflows.OpenPayment]'s and
+// this method only translates the boundary, refusing a body it cannot decode
+// for [Interop.CompleteCartJSON]'s reason.
+func (i *Interop) OpenPaymentJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error) {
+	if len(request) == 0 {
+		return nil, errors.Invalid(CodeInteropRequestInvalid,
+			"payment opening request cannot be empty")
+	}
+
+	var req openPaymentRequest
+	if err := json.Unmarshal(request, &req); err != nil {
+		return nil, errors.Wrap(err, errors.KindInvalid, CodeInteropRequestInvalid,
+			"payment opening request could not be decoded")
+	}
+
+	result, err := i.w.OpenPayment(ctx, OpenPaymentInput{
+		CartID:            req.CartID,
+		SalesChannelIDs:   req.SalesChannelIDs,
+		PaymentProviderID: req.PaymentProviderID,
+		PaymentData:       req.PaymentData,
+		ExpectedTotal:     req.ExpectedTotal,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(openPaymentResponse(result))
+}
+
+// cancelPaymentRequest is the JSON schema of a storefront's request to cancel a
+// payment it opened for its cart (ADR 0438).
+type cancelPaymentRequest struct {
+	// CartID is the cart the payment was opened for; it is REQUIRED.
+	CartID string `json:"cart_id"`
+	// PaymentSessionID is the session to cancel; it is REQUIRED.
+	PaymentSessionID string `json:"payment_session_id"`
+}
+
+// CancelPaymentJSON cancels a payment the storefront opened for its cart; the
+// request is in the [cancelPaymentRequest] schema and the decisions are
+// [Workflows.CancelPayment]'s (ADR 0438).
+func (i *Interop) CancelPaymentJSON(ctx context.Context, request json.RawMessage) error {
+	if len(request) == 0 {
+		return errors.Invalid(CodeInteropRequestInvalid, "payment cancel request cannot be empty")
+	}
+
+	var req cancelPaymentRequest
+	if err := json.Unmarshal(request, &req); err != nil {
+		return errors.Wrap(err, errors.KindInvalid, CodeInteropRequestInvalid,
+			"payment cancel request could not be decoded")
+	}
+
+	return i.w.CancelPayment(ctx, req.CartID, req.PaymentSessionID)
+}
+
+// CompleteReportedPayments sweeps the report queue once; the decisions are
+// [Workflows.CompleteReportedPayments]'s (ADR 0438).
+func (i *Interop) CompleteReportedPayments(ctx context.Context, now time.Time) (ReportPass, error) {
+	return i.w.CompleteReportedPayments(ctx, now)
+}
+
+// PaymentReported is a provider's report that the customer paid one of its
+// sessions, named by the provider's own id; it is what the composition root
+// registers for a provider plugin to report through, and the decisions are
+// [Workflows.PaymentReported]'s (ADR 0438).
+func (i *Interop) PaymentReported(ctx context.Context, providerID, sessionID string) error {
+	return i.w.PaymentReported(ctx, providerID, sessionID)
 }

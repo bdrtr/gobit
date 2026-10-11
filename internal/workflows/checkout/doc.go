@@ -85,7 +85,10 @@
 // call within the same execution does not open a new order.
 //
 // authorize_payment — the collection is opened, the session is opened and
-// authorized; its compensation is Cancel and it releases the hold.
+// authorized; its compensation is Cancel and it releases the hold. When the
+// storefront opened the payment before the completion, that session is
+// authorized instead, and nothing is opened (see "A payment opened before the
+// completion").
 //
 // capture_payment — the capture is performed and the amount is VERIFIED against
 // Collection. It has NO compensation (see "The point of no return"). The call
@@ -184,6 +187,40 @@
 // customer's promise, the order is placed owing that part, and the capture is
 // the operator's when the money arrives. The verification then asks for what
 // the tenders that paid before it held.
+//
+// # A payment opened before the completion (ADR 0438)
+//
+// A provider whose customer pays on the provider's own page — PayTR's iframe —
+// cannot be opened inside the completion: the page has to be shown to the
+// customer first, and the money moves when they pay there, which the provider
+// reports by posting back. [Workflows.OpenPayment] opens it before: it runs the
+// preparation, opens a collection for the total and a session at the
+// provider, and returns the provider's data for the page. The completion names
+// that session; the preparation holds it to the plan — the same cart, the same
+// provider, the same amount and currency, still open — and, for such a
+// provider, refuses while the provider has not reported the payment, so an
+// early completion reserves nothing, opens nothing and may be sent again. Such
+// a provider named with no session is refused before anything is opened.
+//
+// For that provider the money moves BEFORE the saga, so the pivot below is not
+// where its money is taken, only where the order's capture is recorded. The
+// provider's report of the payment completes the cart on the server
+// ([Workflows.PaymentReported]), because the shopper who paid may never bring
+// the storefront back; the storefront's completion of the same session runs
+// under the same saga key, so whichever comes second answers with the order
+// the first placed — the storefront's once, with the order's access token,
+// since a completed cart is otherwise the unknown cart's 404 (ADR 0439) — or
+// "not yet" while it runs. A server completion that
+// fails — stock gone, a fault on the way — is tried again from the payment
+// module's report queue with a doubling wait and then given up, leaving the
+// paid session open for reconciliation to report; one that can never succeed
+// — the cart gone, changed, or completed with another payment — cancels the
+// session, which at PayTR is the refund, once no completion of the cart is
+// running or holds the session: a refusal met beside a running completion may
+// be that completion's own work, and is answered "not yet" on both paths. The
+// authorization step leaves a session it could not authorize as it was,
+// releases one it holds short or cannot bind the order to, and binds the order
+// only once the money is held, because that collection outlives an attempt.
 //
 // # The point of no return (the pivot)
 //

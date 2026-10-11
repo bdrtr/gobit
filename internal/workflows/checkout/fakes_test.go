@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -656,6 +657,27 @@ type stubPayments struct {
 	// when set, is the answer to every question about it.
 	later    map[string]bool
 	laterErr error
+	// customerAuthorizes are the providers whose customer pays on their own
+	// page (ADR 0438).
+	customerAuthorizes map[string]bool
+	// sessions are the sessions a storefront opened, as the payment module
+	// answers about them, keyed by id; a missing one is NotFound.
+	sessions map[string]paymentSessionFacts
+	// reported is what a customer-authorizing provider says about a session,
+	// keyed by id; a missing one reads "pending".
+	reported map[string]string
+	// reports are the report queue, keyed by session id (ADR 0438);
+	// byExternal maps a provider's own id to the sessions it names, and
+	// discovered are the sessions the next discovery finds; reportErr and
+	// discoverErr fail the report and the discovery.
+	reports     map[string]*stubReport
+	byExternal  map[string][]string
+	discovered  []string
+	reportErr   error
+	discoverErr error
+	answerErr   error
+	// answers are the opened sessions' completion secrets, keyed by session.
+	answers map[string]*stubAnswer
 
 	// checkedTenders keeps, in order, the provider and customer each check was
 	// asked about. It is kept apart from the recorder: the check is a read made
@@ -759,6 +781,148 @@ func (s *stubPayments) Collection(ctx context.Context, collectionID string) (
 	return s.collectionFn(ctx, collectionID)
 }
 
+// CustomerAuthorizes answers from the scripted set.
+func (s *stubPayments) CustomerAuthorizes(_ context.Context, providerID string) (bool, error) {
+	return s.customerAuthorizes[providerID], nil
+}
+
+// CheckoutSessionJSON answers from the scripted sessions.
+func (s *stubPayments) CheckoutSessionJSON(_ context.Context, sessionID string) (json.RawMessage, error) {
+	s.rec.add("payment:read_session")
+	facts, ok := s.sessions[sessionID]
+	if !ok {
+		return nil, errors.NotFound("payment_session_not_found", "no session %s", sessionID)
+	}
+
+	return json.Marshal(facts)
+}
+
+// ReportedStatus answers from the scripted reports.
+func (s *stubPayments) ReportedStatus(_ context.Context, sessionID string) (string, error) {
+	s.rec.add("payment:reported")
+	if status, ok := s.reported[sessionID]; ok {
+		return status, nil
+	}
+
+	return SessionPending, nil
+}
+
+// stubReport is one report of the stub's queue.
+type stubReport struct {
+	attempts int
+	next     time.Time
+	failure  string
+	outcome  string
+	note     string
+}
+
+// report returns a session's report, opening it when there is none.
+func (s *stubPayments) report(sessionID string) *stubReport {
+	if s.reports == nil {
+		s.reports = map[string]*stubReport{}
+	}
+	if s.reports[sessionID] == nil {
+		s.reports[sessionID] = &stubReport{}
+	}
+
+	return s.reports[sessionID]
+}
+
+// RecordSessionReport opens the reports of the sessions the external id names.
+func (s *stubPayments) RecordSessionReport(_ context.Context, _, externalID string) ([]string, error) {
+	s.rec.add("payment:report")
+	if s.reportErr != nil {
+		return nil, s.reportErr
+	}
+	ids := s.byExternal[externalID]
+	for _, id := range ids {
+		s.report(id)
+	}
+
+	return ids, nil
+}
+
+// DiscoverReportedSessions opens and answers the scripted discoveries.
+func (s *stubPayments) DiscoverReportedSessions(context.Context, time.Time) ([]string, error) {
+	if s.discoverErr != nil {
+		return nil, s.discoverErr
+	}
+	for _, id := range s.discovered {
+		s.report(id)
+	}
+
+	return s.discovered, nil
+}
+
+// DueSessionReportsJSON answers the open reports due by the moment.
+func (s *stubPayments) DueSessionReportsJSON(_ context.Context, dueBy time.Time, _ int) (json.RawMessage, error) {
+	var due []map[string]any
+	for _, id := range slices.Sorted(maps.Keys(s.reports)) {
+		if r := s.reports[id]; r.outcome == "" && !r.next.After(dueBy) {
+			due = append(due, map[string]any{"session_id": id, "attempts": r.attempts})
+		}
+	}
+
+	return json.Marshal(due)
+}
+
+// SessionReportAttempts answers the attempts counted.
+func (s *stubPayments) SessionReportAttempts(_ context.Context, sessionID string) (int, error) {
+	return s.report(sessionID).attempts, nil
+}
+
+// RecordSessionReportAttempt counts an attempt.
+func (s *stubPayments) RecordSessionReportAttempt(_ context.Context, sessionID, failure string, next time.Time) error {
+	r := s.report(sessionID)
+	r.attempts++
+	r.next, r.failure = next, failure
+
+	return nil
+}
+
+// OpenSessionAnswer hands out "cpsec_<session>" and keeps it.
+func (s *stubPayments) OpenSessionAnswer(_ context.Context, sessionID string) (string, error) {
+	s.rec.add("payment:open_answer")
+	if s.answers == nil {
+		s.answers = map[string]*stubAnswer{}
+	}
+	secret := "cpsec_" + sessionID
+	s.answers[sessionID] = &stubAnswer{secret: secret}
+
+	return secret, nil
+}
+
+// ClaimSessionAnswer spends a session's secret once; answerErr fails it.
+func (s *stubPayments) ClaimSessionAnswer(_ context.Context, sessionID, secret string) (bool, error) {
+	s.rec.add("payment:claim_answer")
+	if s.answerErr != nil {
+		return false, s.answerErr
+	}
+	answer, ok := s.answers[sessionID]
+	if !ok || answer.answered || secret == "" || answer.secret != secret {
+		return false, nil
+	}
+	answer.answered = true
+
+	return true, nil
+}
+
+// stubAnswer is an opened session's secret and whether it was spent.
+type stubAnswer struct {
+	secret   string
+	answered bool
+}
+
+// SettleSessionReport settles a report.
+func (s *stubPayments) SettleSessionReport(_ context.Context, sessionID, outcome, note string) error {
+	r := s.report(sessionID)
+	if r.outcome == "" {
+		r.outcome, r.note = outcome, note
+	}
+
+	return nil
+}
+
 // stubLinks is the implementation of the [Links] interface that the tests can
 // script.
 type stubLinks struct {
@@ -856,7 +1020,10 @@ type harness struct {
 	links       *stubLinks
 	catalog     *stubCatalog
 	promotions  *stubPromotions
-	wf          *Workflows
+	// executions is the engine's record, which the completion reads to tell
+	// whether a completion of the cart is running (ADR 0438).
+	executions workflow.Store
+	wf         *Workflows
 }
 
 // newHarness builds a workflow with the fakes tuned to the HAPPY PATH.
@@ -881,6 +1048,7 @@ func newHarness(t *testing.T) *harness {
 		promotions:  &stubPromotions{rec: rec},
 	}
 
+	h.executions = workflow.NewMemoryStore()
 	wf, err := New(Deps{
 		Carts:       h.carts,
 		Totals:      h.totals,
@@ -891,7 +1059,8 @@ func newHarness(t *testing.T) *harness {
 		Links:       h.links,
 		Catalog:     h.catalog,
 		Promotions:  h.promotions,
-		Executor:    workflow.NewInMemory(slog.New(slog.DiscardHandler)),
+		Executor:    workflow.New(h.executions, slog.New(slog.DiscardHandler)),
+		Executions:  h.executions,
 		Logger:      slog.New(slog.DiscardHandler),
 	})
 	require.NoError(t, err)

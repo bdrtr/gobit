@@ -3,7 +3,7 @@
 **Summary:** The storefront's order routes answer one of the order's access tokens or a proof of its customer, a cart's id leaves gobit only toward its shopper, and the storefront takes no payment collection's id.
 It costs a guest's order page its token and a webhook receiver its cart id, and an order placed before this record opens to its customer's proof alone.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0438](0438-a-shoppers-payment-is-opened-before-the-cart-is-completed.md), whose storefront names a payment session under its own cart and answers a completed cart's reported session once
 - **Date:** 2026-10-11
 - **Amends:** [0100](0100-the-customer-sees-the-goods-and-not-the-ledger.md), [0153](0153-a-shop-can-see-where-its-carts-go.md), [0193](0193-an-order-says-where-it-went.md), [0218](0218-a-webhook-receiver-can-narrow-what-it-gets.md), [0367](0367-a-customer-lists-their-own-orders.md), [0390](0390-an-analytics-product-hears-gobit-through-the-bus.md) and [0435](0435-a-webhook-receiver-builds-against-a-published-contract.md); narrows the historical [0008](0008-musteri-kimligi-guven-siniri.md) and [0051](0051-an-unidentified-write-is-confined-or-inert.md)
 

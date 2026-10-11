@@ -861,6 +861,71 @@ past and is not corrected retroactively.
   ([ADR 0414](adr/0414-graphql-reads-the-catalog-and-nothing-else.md)); a client
   that reads the catalog there reads everything else over REST.
 
+## Payment on the provider's own page
+
+- **A PayTR payment is taken before the stock is reserved.** The customer pays
+  in PayTR's iframe and PayTR's callback completes the cart, so a completion
+  that fails then — stock sold meanwhile, a fault on the way — leaves the money
+  held with no order while the report queue tries again, five minutes later
+  and doubling, six attempts in all; a payment it gives up on stays held,
+  reconciliation reports it, and an operator completes the cart through the
+  storefront's completion naming the session or refunds it with
+  `POST /admin/v1/payment-sessions/{id}/cancel`. One that fails after the
+  payment was authorized — its capture, or the order's binding — is
+  compensated, which at PayTR is the refund, and the report says refunded
+  (ADR 0438).
+- **A payment the cart no longer matches is refunded on its own.** A cart that
+  grew, was completed another way or is gone when PayTR reports cannot be placed
+  with that payment, and once no completion of the cart is running or holds
+  the session the report cancels it, which at PayTR is the refund, logged at
+  ERROR and kept as the report's outcome (ADR 0438).
+- **The storefront is told a reported order once.** The storefront's
+  completion of a session PayTR's report completed answers once, for the
+  opening's `completion_secret`, with the order and a new `order_token`, which
+  a repeat under the same `Idempotency-Key` is answered again; a storefront
+  that lost the secret, or asks again under another key, meets the completed
+  cart's 404, a completion of a still open cart without it places the order
+  with no token, and the shopper reaches the order through the token the mail
+  carries (ADR 0438, ADR 0439).
+- **An opened payment pays the whole total.** A session opened with
+  `POST /store/v1/carts/{id}/payment-sessions` is completed alone; a gift card
+  or a balance cannot pay part of it, and the shop's own balances are not
+  opened that way (ADR 0438).
+- **A paid PayTR session with no order is reported for at most a day.**
+  Reconciliation reads the pending and canceled sessions of such a provider
+  that settled in the last day, the newest thousand a pass, and a payment page
+  left unpaid stays pending, so a paid one is reported on every pass until a
+  thousand newer ones settle or the day ends; a pass whose thousand do not reach back an hour
+  says some were never asked, which is what a storefront, or a bot, opening
+  more than a thousand payments an hour produces (ADR 0438).
+- **A shopper who signs in after the payment was opened earns no points on
+  that order.** The collection keeps the customer it was opened for, nobody
+  for a guest, and loyalty points are earned for the collection's customer
+  (ADR 0438).
+- **A PayTR session canceled while the customer pays is not completed.** PayTR
+  cannot void a page it handed out, so a payment PayTR reports after the
+  session was canceled lands on a canceled session: no report is opened, the
+  checkout logs it at ERROR, and reconciliation reports the money for the day
+  after the cancel; the operator refunds it in PayTR's merchant panel, or opens
+  a session on that collection, which adopts it, and completes the cart with it
+  (ADR 0438).
+- **A second PayTR session on one collection is the same PayTR payment.** A
+  session an operator opens with
+  `POST /admin/v1/payment-collections/{id}/payment-sessions` on a collection
+  whose PayTR session was canceled reuses its `merchant_oid` and its row,
+  because PayTR's order id is the collection's: it adopts a payment PayTR
+  reported paid and nothing gave back, and is refused with
+  `paytr_order_id_taken` once PayTR reported the order id refused or its
+  payment was given back (ADR 0438).
+- **The installment difference is read, not observed.** That PayTR's signed
+  `total_amount` carries it is PayTR's documentation; gobit gives back at most
+  the order's total, and whether PayTR then returns the difference to the
+  customer is PayTR's and the card bank's (ADR 0438).
+- **The PayTR pending list holds abandoned payment pages.** Since the payment is
+  opened before the completion, every page a customer opened and did not pay on
+  is listed after an hour, beside a callback that never reached the server
+  (ADR 0438).
+
 ## The limit of the invariants
 
 - **The cross-module JSON SCHEMA is not checked at compile time.** A narrow

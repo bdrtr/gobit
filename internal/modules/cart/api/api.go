@@ -493,6 +493,18 @@ type CartCompletion interface {
 	// CompleteCartJSON turns the cart into an order: stock is reserved, the order
 	// is opened, the payment is authorized and captured and the cart is closed.
 	CompleteCartJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
+
+	// OpenPaymentJSON opens the cart's payment before it is completed: the
+	// totals are recomputed, a collection is opened for the total and a session
+	// at the named provider, and the session comes back with the provider's
+	// data (ADR 0438). The schema is [openPaymentFlowRequest] and
+	// [openPaymentFlowResult].
+	OpenPaymentJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
+
+	// CancelPaymentJSON cancels a payment opened for the cart, which at a
+	// provider that already took the money is the refund (ADR 0438). The
+	// schema is [cancelPaymentFlowRequest].
+	CancelPaymentJSON(ctx context.Context, request json.RawMessage) error
 }
 
 // Flows is the set of surfaces the handler needs from the flows.

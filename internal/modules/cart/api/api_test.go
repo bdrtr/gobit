@@ -359,6 +359,21 @@ func (f *fakeCheckout) CompleteCartJSON(_ context.Context, request json.RawMessa
 	return f.response, f.err
 }
 
+// OpenPaymentJSON records the request and returns the scripted response; the
+// calls share the record, since a test drives one of them.
+func (f *fakeCheckout) OpenPaymentJSON(_ context.Context, request json.RawMessage) (json.RawMessage, error) {
+	f.calls++
+	f.got = request
+	return f.response, f.err
+}
+
+// CancelPaymentJSON records the request and returns the scripted error.
+func (f *fakeCheckout) CancelPaymentJSON(_ context.Context, request json.RawMessage) error {
+	f.calls++
+	f.got = request
+	return f.err
+}
+
 // fakeRepricing is the fake of the flow that runs a write and reprices after it.
 //
 // It RUNS the write it is handed, because the handler's side of the contract is
@@ -1100,6 +1115,122 @@ func TestCompleteCartReturnsTheFlowErrorAsItIs(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
 }
 
+// TestOpenPaymentHandsTheProvidersDataBack verifies the route that opens a
+// cart's payment before its completion (ADR 0438): the flow is sent the cart
+// from the path and the channels from the key, and the storefront is answered
+// 201 with the session and the provider's data.
+func TestOpenPaymentHandsTheProvidersDataBack(t *testing.T) {
+	flow := &fakeCheckout{response: json.RawMessage(`{"payment_session_id":"pses_1",
+		"payment_collection_id":"pcol_1","provider_id":"paytr","status":"pending","amount":3600,
+		"currency_code":"TRY","data":{"iframe_token":"tok_1"},"completion_secret":"cpsec_1"}`)}
+	h := newServerWithFlows(t, withLineItem(), api.Flows{Checkout: flow})
+	keyed := corehttp.Principal{
+		ID: "key_1", Kind: "api_key", Scopes: []string{corehttp.ScopeAdmin}, SalesChannelIDs: []string{"sc_web"},
+	}
+
+	rec := doRequestAs(t, h, &keyed, http.MethodPost, "/store/v1/carts/cart_1/payment-sessions",
+		`{"payment_provider_id":"paytr","payment_data":{"email":"a@b.c"},"expected_total":3600}`)
+
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	require.Equal(t, 1, flow.calls)
+	assert.JSONEq(t, `{"data":{"payment_session_id":"pses_1",
+		"provider_id":"paytr","status":"pending","amount":3600,"currency_code":"TRY",
+		"data":{"iframe_token":"tok_1"},"completion_secret":"cpsec_1"}}`, rec.Body.String(),
+		"the collection's id is not published, and the secret is handed back")
+	assert.JSONEq(t, `{"cart_id":"cart_1","payment_provider_id":"paytr","payment_data":{"email":"a@b.c"},
+		"sales_channel_ids":["sc_web"],"expected_total":3600}`, string(flow.got))
+}
+
+// TestOpenPaymentTakesNoAmountAndNoChannelFromTheBody verifies the fields the
+// body cannot carry: the amount is the cart's, the channels are the key's, and
+// expected_total is mandatory.
+func TestOpenPaymentTakesNoAmountAndNoChannelFromTheBody(t *testing.T) {
+	for name, body := range map[string]string{
+		"an amount":              `{"payment_provider_id":"paytr","expected_total":3600,"amount":1}`,
+		"a channel":              `{"payment_provider_id":"paytr","expected_total":3600,"sales_channel_ids":["sc_all"]}`,
+		"no approved total":      `{"payment_provider_id":"paytr"}`,
+		"a gift card before it":  `{"payment_provider_id":"paytr","expected_total":3600,"gift_card_code":"G"}`,
+		"a balance before it":    `{"payment_provider_id":"paytr","expected_total":3600,"pay_first_with":["store_credit"]}`,
+		"a session it opens too": `{"payment_provider_id":"paytr","expected_total":3600,"payment_session_id":"x"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			flow := &fakeCheckout{}
+			h := newServerWithFlows(t, withLineItem(), api.Flows{Checkout: flow})
+
+			rec := doRequest(t, h, http.MethodPost, "/store/v1/carts/cart_1/payment-sessions", body)
+
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+			assert.Zero(t, flow.calls, "a refused body must not reach the flow")
+		})
+	}
+}
+
+// TestOpenPaymentReturnsTheFlowErrorAsItIs verifies the flow's error kind
+// survives: a total that changed is a 409 the storefront shows the customer.
+func TestOpenPaymentReturnsTheFlowErrorAsItIs(t *testing.T) {
+	flow := &fakeCheckout{err: errors.Conflict("checkout_workflow_total_mismatch", "the total changed")}
+	h := newServerWithFlows(t, withLineItem(), api.Flows{Checkout: flow})
+
+	rec := doRequest(t, h, http.MethodPost, "/store/v1/carts/cart_1/payment-sessions",
+		`{"payment_provider_id":"paytr","expected_total":1}`)
+
+	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+}
+
+// TestCancelPaymentNamesTheCartAndTheSession verifies the cancel keyed on the
+// cart (ADR 0438): both ids come from the path, and the answer is bodiless.
+func TestCancelPaymentNamesTheCartAndTheSession(t *testing.T) {
+	flow := &fakeCheckout{}
+	h := newServerWithFlows(t, withLineItem(), api.Flows{Checkout: flow})
+
+	rec := doRequest(t, h, http.MethodPost, "/store/v1/carts/cart_1/payment-sessions/pses_1/cancel", "")
+
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	assert.Empty(t, rec.Body.String())
+	assert.JSONEq(t, `{"cart_id":"cart_1","payment_session_id":"pses_1"}`, string(flow.got))
+}
+
+// TestACancelBesideARunningCompletionSaysWhenToAskAgain verifies the cancel
+// refused while a completion of the cart runs carries Retry-After, so the
+// idempotency ring does not record it (ADR 0438).
+func TestACancelBesideARunningCompletionSaysWhenToAskAgain(t *testing.T) {
+	flow := &fakeCheckout{err: errors.Conflict(api.CodeCheckoutPaymentPending, "a completion is running")}
+	h := newServerWithFlows(t, withLineItem(), api.Flows{Checkout: flow})
+
+	rec := doRequest(t, h, http.MethodPost, "/store/v1/carts/cart_1/payment-sessions/pses_1/cancel", "")
+
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	assert.NotEmpty(t, rec.Header().Get("Retry-After"),
+		"the refusal says when to ask again, which keeps it out of the key's record")
+}
+
+// TestCancelPaymentReturnsTheFlowErrorAsItIs verifies a refusal keeps its
+// kind: another cart's session is a 409, not a 500.
+func TestCancelPaymentReturnsTheFlowErrorAsItIs(t *testing.T) {
+	flow := &fakeCheckout{err: errors.Conflict("checkout_workflow_payment_session_foreign", "not this cart's")}
+	h := newServerWithFlows(t, withLineItem(), api.Flows{Checkout: flow})
+
+	rec := doRequest(t, h, http.MethodPost, "/store/v1/carts/cart_1/payment-sessions/pses_1/cancel", "")
+
+	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+}
+
+// TestCompleteCartSendsTheOpenedSession verifies the completion carries the
+// payment the storefront opened (ADR 0438).
+func TestCompleteCartSendsTheOpenedSession(t *testing.T) {
+	flow := &fakeCheckout{response: json.RawMessage(
+		`{"order_id":"order_1","cart_id":"cart_1","currency_code":"TRY","amount":3600}`)}
+	h := newServerWithFlows(t, withLineItem(), api.Flows{Checkout: flow})
+
+	rec := doRequest(t, h, http.MethodPost, "/store/v1/carts/cart_1/complete",
+		`{"payment_provider_id":"paytr","payment_session_id":"pses_1","expected_total":3600}`)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	sent := map[string]any{}
+	require.NoError(t, json.Unmarshal(flow.got, &sent))
+	assert.Equal(t, "pses_1", sent["payment_session_id"])
+}
+
 // TestRemoveLineItemReturns204 verifies that removing a line item returns a
 // bodyless 204.
 func TestRemoveLineItemReturns204(t *testing.T) {
@@ -1760,6 +1891,8 @@ func TestEveryStorefrontRouteRefusesACompletedCart(t *testing.T) {
 		{http.MethodPost, "/store/v1/carts/cart_1/shipping-methods", `{"shipping_option_id":"so_1"}`},
 		{http.MethodDelete, "/store/v1/carts/cart_1/shipping-methods/csm_1", ""},
 		{http.MethodPost, "/store/v1/carts/cart_1/complete", `{"payment_provider_id":"manual","expected_total":1}`},
+		{http.MethodPost, "/store/v1/carts/cart_1/payment-sessions", `{"payment_provider_id":"paytr","expected_total":1}`},
+		{http.MethodPost, "/store/v1/carts/cart_1/payment-sessions/pses_1/cancel", ""},
 	} {
 		rec := doRequest(t, h, route.method, route.path, route.body)
 		require.Equal(t, http.StatusNotFound, rec.Code, "%s %s: %s", route.method, route.path, rec.Body.String())
@@ -1768,4 +1901,70 @@ func TestEveryStorefrontRouteRefusesACompletedCart(t *testing.T) {
 		assert.Equal(t, want["code"], got["code"], "%s %s", route.method, route.path)
 		assert.Equal(t, want["message"], got["message"], "%s %s", route.method, route.path)
 	}
+}
+
+// TestACompletedCartAnswersItsReportedSessionOnce: a completion naming a
+// payment session reaches the flow on a completed cart, because the provider's
+// report may have completed it (ADR 0438); the flow's one answer carries the
+// order and its token, and its refusals — answered already, or the cart
+// completed otherwise — are word for word the unknown cart's 404 (ADR 0439).
+func TestACompletedCartAnswersItsReportedSessionOnce(t *testing.T) {
+	completedAt := time.Now()
+	completed := func() *fakeCarts {
+		return &fakeCarts{detail: models.CartDetail{Cart: models.Cart{
+			ID: "cart_1", RegionID: "reg_1", CurrencyCode: "TRY", CompletedAt: &completedAt,
+		}}}
+	}
+	unknown := doRequest(t, newServer(t, &fakeCarts{
+		err: errors.NotFound("cart_not_found", "cart not found: %s", "cart_1"),
+	}), http.MethodGet, "/store/v1/carts/cart_1", "")
+	want, ok := bodyMap(t, unknown)["error"].(map[string]any)
+	require.True(t, ok)
+	body := `{"payment_provider_id":"paytr","payment_session_id":"pses_1","completion_secret":"cpsec_1",` +
+		`"expected_total":3600}`
+
+	flow := &fakeCheckout{response: json.RawMessage(
+		`{"order_id":"order_1","cart_id":"cart_1","currency_code":"TRY","amount":3600,"order_token":"ordtok_x"}`)}
+	h := newServerWithFlows(t, completed(), api.Flows{Checkout: flow})
+	rec := doRequest(t, h, http.MethodPost, "/store/v1/carts/cart_1/complete", body)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	data, ok := bodyMap(t, rec)["data"].(map[string]any)
+	require.True(t, ok, rec.Body.String())
+	assert.Equal(t, "ordtok_x", data["order_token"])
+	sent := map[string]any{}
+	require.NoError(t, json.Unmarshal(flow.got, &sent))
+	assert.Equal(t, true, sent["issue_order_token"], "the storefront asks for the order's token")
+	assert.Equal(t, "cpsec_1", sent["completion_secret"])
+
+	// Without the secret the completed cart is refused before the flow.
+	unasked := &fakeCheckout{}
+	rec = doRequest(t, newServerWithFlows(t, completed(), api.Flows{Checkout: unasked}),
+		http.MethodPost, "/store/v1/carts/cart_1/complete",
+		`{"payment_provider_id":"paytr","payment_session_id":"pses_1","expected_total":3600}`)
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+	assert.Zero(t, unasked.calls)
+
+	// Whatever the flow refuses on a completed cart is the same 404: its own
+	// codes, the cart workflow's, a session that does not exist, a bad body.
+	for _, code := range []string{
+		"checkout_workflow_payment_answered", "checkout_workflow_cart_completed", "cart_workflow_cart_completed",
+		"payment_session_not_found", "checkout_workflow_invalid_input",
+	} {
+		flow := &fakeCheckout{err: errors.Conflict(code, "refused")}
+		h := newServerWithFlows(t, completed(), api.Flows{Checkout: flow})
+
+		rec := doRequest(t, h, http.MethodPost, "/store/v1/carts/cart_1/complete", body)
+
+		require.Equal(t, http.StatusNotFound, rec.Code, "%s: %s", code, rec.Body.String())
+		got, ok := bodyMap(t, rec)["error"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, want["code"], got["code"], code)
+		assert.Equal(t, want["message"], got["message"], code)
+	}
+
+	// A fault is not a refusal: it stays a fault, as an unknown cart's would.
+	faulty := &fakeCheckout{err: errors.Internal("payment_store_down", "the store did not answer")}
+	rec = doRequest(t, newServerWithFlows(t, completed(), api.Flows{Checkout: faulty}),
+		http.MethodPost, "/store/v1/carts/cart_1/complete", body)
+	assert.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
 }

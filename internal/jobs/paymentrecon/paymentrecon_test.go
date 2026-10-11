@@ -174,6 +174,13 @@ func TestWhatCouldNotBeAskedIsSaidOutLoud(t *testing.T) {
 			level:  "level=WARN",
 			phrase: "the reconciliation pass filled its limit",
 		},
+		// Alone, so the pass is otherwise clean: a page of payment pages that
+		// could not hold the day is a gap in what only it looks for (ADR 0438).
+		"an interval of payment pages larger than a pass": {
+			report: paymentsvc.ReconciliationReport{Examined: 1000, Agreed: 1000, UnreportedTruncated: true},
+			level:  "level=WARN",
+			phrase: "more payment pages settled within a pass's interval than one pass reads",
+		},
 	}
 
 	for name, tc := range cases {
@@ -291,6 +298,24 @@ func TestWhatCouldNotBeAskedIsInTheListingToo(t *testing.T) {
 	assert.Contains(t, detail, "unaskable 1")
 	assert.Contains(t, detail, "limit of 50 was filled")
 	assert.NotContains(t, detail, "\n", "Outcome.Detail is one line of a table")
+}
+
+// TestAFullPageOfPaymentPagesIsInTheListing: the second page's overflow
+// reaches `gobit jobs` too (ADR 0438).
+func TestAFullPageOfPaymentPagesIsInTheListing(t *testing.T) {
+	detail, err := reportedBy(t, &fakeReconciler{report: paymentsvc.ReconciliationReport{
+		Examined: 1000, Agreed: 1000, UnreportedTruncated: true,
+	}})
+	require.NoError(t, err)
+
+	assert.Contains(t, detail, "more than 1000 payment pages settled within 1h0m0s")
+}
+
+// TestThePassComesBeforeThePendingPageLosesASession: the page of pending
+// payment pages is judged complete when it reaches back one interval, which
+// is true only while this job runs at least that often (ADR 0438).
+func TestThePassComesBeforeThePendingPageLosesASession(t *testing.T) {
+	assert.LessOrEqual(t, paymentrecon.Every, paymentsvc.UnreportedCoverage)
 }
 
 // TestAZeroFindingIsOmittedRatherThanPrinted keeps the cell scannable.

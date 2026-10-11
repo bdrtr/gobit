@@ -141,7 +141,9 @@ func provideCheckout(t *testing.T, c *container.Container, h *harness) {
 	require.NoError(t, c.Provide(ServicePayment, h.payments))
 	require.NoError(t, c.Provide(ServiceLink, h.links))
 	require.NoError(t, c.Provide(ServiceQuery, h.catalog))
-	require.NoError(t, c.Provide(ServiceWorkflow, workflow.NewInMemory(slog.New(slog.DiscardHandler))))
+	store := workflow.NewMemoryStore()
+	require.NoError(t, c.Provide(ServiceWorkflow, workflow.New(store, slog.New(slog.DiscardHandler))))
+	require.NoError(t, c.Provide(ServiceWorkflowStore, store))
 }
 
 // provideCartTotals registers the dependencies of the cart totals in the

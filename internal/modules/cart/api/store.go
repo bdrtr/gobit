@@ -769,6 +769,11 @@ func (h *Handler) storeRemoveLineItem(w http.ResponseWriter, r *http.Request) {
 //   - payment_data IS THERE. It is free-form data passed to the provider as it
 //     is (card token, return address); by definition it is the client's
 //     information.
+//   - payment_session_id IS THERE. It names the payment the storefront opened
+//     with POST /store/v1/carts/{id}/payment-sessions, which a provider whose
+//     customer pays on its own page requires (ADR 0438). It raises no
+//     authority problem: a session opened for another cart is refused, so a
+//     body cannot spend somebody else's payment.
 //   - gift_card_code IS THERE. A gift card is a bearer credential the customer
 //     holds, and presenting it is the customer's choice; the card pays what it
 //     holds and payment_provider_id pays the rest (ADR 0209).
@@ -796,6 +801,15 @@ type completeCartRequest struct {
 	PaymentProviderID string `json:"payment_provider_id"`
 	// PaymentData is passed to the provider as it is; it is optional.
 	PaymentData json.RawMessage `json:"payment_data"`
+	// PaymentSessionID is the payment opened for the cart before the
+	// completion; it is optional, and required for a provider whose customer
+	// pays on its own page (ADR 0438).
+	PaymentSessionID string `json:"payment_session_id"`
+	// CompletionSecret is the secret the opening of that payment answered
+	// with. It is read only when the provider's report has completed the cart
+	// already: it is then what answers this completion, once, with the order
+	// and its order_token (ADR 0438, ADR 0439).
+	CompletionSecret string `json:"completion_secret"`
 	// GiftCardCode is a gift card that pays first; it is optional (ADR 0209).
 	GiftCardCode string `json:"gift_card_code"`
 	// PayFirstWith names the customer's balances that pay after the gift card
@@ -834,6 +848,8 @@ type completeCartFlowRequest struct {
 	CartID            string          `json:"cart_id"`
 	PaymentProviderID string          `json:"payment_provider_id"`
 	PaymentData       json.RawMessage `json:"payment_data,omitempty"`
+	PaymentSessionID  string          `json:"payment_session_id,omitempty"`
+	CompletionSecret  string          `json:"completion_secret,omitempty"`
 	GiftCardCode      string          `json:"gift_card_code,omitempty"`
 	PayFirstWith      []string        `json:"pay_first_with,omitempty"`
 	Email             string          `json:"email,omitempty"`
@@ -857,6 +873,17 @@ type completeCartFlowRequest struct {
 	// completion sets it and the operator's does not (ADR 0439).
 	IssueOrderToken bool `json:"issue_order_token,omitempty"`
 }
+
+// CodeCheckoutPaymentPending is the completion flow's refusal of a cart whose
+// payment the provider has not reported yet (ADR 0438). It is repeated here
+// rather than imported, for [completeCartFlowRequest]'s reason, and
+// internal/arch holds it to the flow's own.
+const CodeCheckoutPaymentPending = "checkout_workflow_payment_pending"
+
+// paymentPendingRetryAfter is the Retry-After that refusal carries, in seconds:
+// a provider reports a payment within seconds of the customer paying, and the
+// header is what keeps the answer out of the Idempotency-Key's record.
+const paymentPendingRetryAfter = "2"
 
 // completeCartFlowResult is the schema of the JSON returned from the completion
 // flow.
@@ -925,9 +952,6 @@ type completeCartDTO struct {
 // on the same cart. That is why a client whose network drops repeating the
 // request does not produce a second order.
 func (h *Handler) storeCompleteCart(w http.ResponseWriter, r *http.Request) {
-	if h.completedCartRefused(w, r) {
-		return
-	}
 	ctx := r.Context()
 
 	var body completeCartRequest
@@ -935,16 +959,38 @@ func (h *Handler) storeCompleteCart(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
+	// A completed cart is the unknown cart's 404 (ADR 0439), save to the
+	// completion that presents the completion secret of the payment the
+	// provider's report completed it with: the flow answers that once with
+	// the order and its token, and whatever else it answers about a completed
+	// cart is the same 404 (ADR 0438). The body is read first, to know which
+	// of the two this is, and a completion naming a session is asked for its
+	// total before its cart is looked at, as an unknown cart's is.
+	if body.PaymentSessionID == "" && h.completedCartRefused(w, r) {
+		return
+	}
 	if body.ExpectedTotal == nil {
 		corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest,
 			"expected_total is mandatory; the total approved by the customer has to be declared"))
 		return
 	}
+	completed := false
+	if body.PaymentSessionID != "" {
+		if err := h.completedCart(ctx, cartID(r)); err != nil {
+			if coreerrors.CodeOf(err) != codeStoreCartNotFound || body.CompletionSecret == "" {
+				corehttp.WriteError(ctx, w, err)
+				return
+			}
+			completed = true
+		}
+	}
 
-	h.completeCart(ctx, w, completeCartFlowRequest{
+	h.completeCart(ctx, w, completed, completeCartFlowRequest{
 		CartID:            cartID(r),
 		PaymentProviderID: body.PaymentProviderID,
 		PaymentData:       body.PaymentData,
+		PaymentSessionID:  body.PaymentSessionID,
+		CompletionSecret:  body.CompletionSecret,
 		GiftCardCode:      body.GiftCardCode,
 		PayFirstWith:      body.PayFirstWith,
 		// The channels come from the IDENTITY, next to the email that comes
@@ -965,9 +1011,27 @@ func (h *Handler) storeCompleteCart(w http.ResponseWriter, r *http.Request) {
 //
 // The cart's contact address is read from OUR OWN service here, for both: it is
 // not taken from either body.
-func (h *Handler) completeCart(ctx context.Context, w http.ResponseWriter, in completeCartFlowRequest) {
+//
+// cartCompleted says the storefront's completion reached the flow on a
+// completed cart, for its payment's completion secret: every refusal is then
+// the unknown cart's 404, so the answer tells nothing of the cart (ADR 0439).
+// A fault is not a refusal, and stays the fault it is: an unknown cart's
+// completion meets the same one, and a 404 would be recorded under the key.
+func (h *Handler) completeCart(
+	ctx context.Context, w http.ResponseWriter, cartCompleted bool, in completeCartFlowRequest,
+) {
 	result, err := h.complete(ctx, in)
 	if err != nil {
+		if kind := coreerrors.KindOf(err); cartCompleted &&
+			kind != coreerrors.KindInternal && kind != coreerrors.KindUnavailable {
+			err = storeCartNotFound(in.CartID)
+		}
+		if coreerrors.CodeOf(err) == CodeCheckoutPaymentPending {
+			// The completion is to be sent again once the provider reports,
+			// and the same Idempotency-Key must reach the flow then rather
+			// than this answer's record (ADR 0438).
+			w.Header().Set("Retry-After", paymentPendingRetryAfter)
+		}
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
@@ -1011,6 +1075,203 @@ func (h *Handler) complete(ctx context.Context, in completeCartFlowRequest) (com
 	if err := json.Unmarshal(response, &result); err != nil {
 		return completeCartFlowResult{}, coreerrors.Wrap(err, coreerrors.KindInternal, codeFlowResultInvalid,
 			"the order completion result could not be decoded: %s", in.CartID)
+	}
+
+	return result, nil
+}
+
+// openPaymentRequest is the body of POST /store/v1/carts/{id}/payment-sessions.
+//
+// It is the completion's body less the tenders that pay first: the session is
+// opened for the cart's whole total, so neither a gift card nor a balance can
+// stand before it (ADR 0438). The amount is NOT here, and that is the point of
+// the route living under the cart: the payment module cannot compute a cart's
+// total, and an amount the client sent is the one field the storefront surface
+// never takes.
+type openPaymentRequest struct {
+	// PaymentProviderID is the provider the session is opened at; it is the
+	// customer's choice, as on the completion.
+	PaymentProviderID string `json:"payment_provider_id"`
+	// PaymentData is passed to the provider as it is: PayTR's customer e-mail
+	// and the customer's own address.
+	PaymentData json.RawMessage `json:"payment_data"`
+	// ExpectedTotal is the total the customer APPROVED (minor unit); it is
+	// MANDATORY, for [completeCartRequest.ExpectedTotal]'s reason: the payment
+	// page shows the customer an amount, and it must be the one they saw.
+	ExpectedTotal *int64 `json:"expected_total"`
+}
+
+// openPaymentFlowRequest is the schema of the JSON sent to the flow; the
+// channels come from the identity, for [completeCartFlowRequest]'s reason.
+type openPaymentFlowRequest struct {
+	CartID            string          `json:"cart_id"`
+	PaymentProviderID string          `json:"payment_provider_id"`
+	PaymentData       json.RawMessage `json:"payment_data,omitempty"`
+	SalesChannelIDs   []string        `json:"sales_channel_ids,omitempty"`
+	ExpectedTotal     int64           `json:"expected_total"`
+}
+
+// openPaymentFlowResult is the schema of the JSON the flow returns.
+type openPaymentFlowResult struct {
+	PaymentSessionID    string          `json:"payment_session_id"`
+	PaymentCollectionID string          `json:"payment_collection_id"`
+	ProviderID          string          `json:"provider_id"`
+	Status              string          `json:"status"`
+	Amount              int64           `json:"amount"`
+	CurrencyCode        string          `json:"currency_code"`
+	Data                json.RawMessage `json:"data,omitempty"`
+	CompletionSecret    string          `json:"completion_secret"`
+}
+
+// openPaymentDTO is the opened payment's outward representation.
+//
+// Unlike [completeCartDTO] it carries the payment session's id: the storefront
+// names it in the completion and cancels it under the cart when the cart
+// changes, and the provider's data — PayTR's iframe_token — is what it shows
+// the customer. The collection's id is not here: no storefront route takes it,
+// and an identifier the storefront cannot use is structure it need not see.
+// The completion secret is the only copy; it answers the completion of a cart
+// the provider's report completed (ADR 0438, ADR 0439).
+type openPaymentDTO struct {
+	PaymentSessionID string          `json:"payment_session_id"`
+	ProviderID       string          `json:"provider_id"`
+	Status           string          `json:"status"`
+	Amount           int64           `json:"amount"`
+	CurrencyCode     string          `json:"currency_code"`
+	Data             json.RawMessage `json:"data,omitempty"`
+	CompletionSecret string          `json:"completion_secret"`
+}
+
+// cancelPaymentFlowRequest is the schema of the JSON sent to the flow to
+// cancel a payment opened for the cart.
+type cancelPaymentFlowRequest struct {
+	CartID           string `json:"cart_id"`
+	PaymentSessionID string `json:"payment_session_id"`
+}
+
+// paramPaymentSessionID is the path parameter naming a cart's payment session.
+const paramPaymentSessionID = "payment_session_id"
+
+// storeCancelPayment cancels a payment opened for the cart
+// (POST /store/v1/carts/{id}/payment-sessions/{payment_session_id}/cancel,
+// ADR 0438).
+//
+// It is under the cart for the opening's reason: the cart is the storefront's
+// capability, and the flow refuses a session opened for another cart and the
+// payment of a completed one. At a provider that already took the money — a
+// PayTR payment made before the cart changed — the cancel is the refund. It
+// answers 204: the session is closed and there is nothing to return.
+func (h *Handler) storeCancelPayment(w http.ResponseWriter, r *http.Request) {
+	if h.completedCartRefused(w, r) {
+		return
+	}
+	ctx := r.Context()
+
+	flow, err := h.checkout()
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	request, err := json.Marshal(cancelPaymentFlowRequest{
+		CartID: cartID(r), PaymentSessionID: chi.URLParam(r, paramPaymentSessionID),
+	})
+	if err != nil {
+		corehttp.WriteError(ctx, w, coreerrors.Wrap(err, coreerrors.KindInternal, codeInvalidRequest,
+			"the payment cancel request could not be encoded"))
+		return
+	}
+	if err := flow.CancelPaymentJSON(ctx, request); err != nil {
+		if coreerrors.CodeOf(err) == CodeCheckoutPaymentPending {
+			// A completion of the cart is running; the cancel is sent again
+			// once it has finished, for the completion's reason above.
+			w.Header().Set("Retry-After", paymentPendingRetryAfter)
+		}
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
+	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
+}
+
+// storeOpenPayment opens the cart's payment before the cart is completed
+// (POST /store/v1/carts/{id}/payment-sessions, ADR 0438).
+//
+// # Why it is in THIS module
+//
+// The collection is opened for the cart's total, and the total is the cart's:
+// the flow recomputes it as the completion does, so the payment the customer
+// is shown is for the amount the completion will compare. The payment module's
+// own store route opens a session on a collection that already exists, and a
+// storefront has no way to open one.
+//
+// # Why 201
+//
+// A session is created and the answer carries its id, which is the address
+// the completion and the cancel name.
+func (h *Handler) storeOpenPayment(w http.ResponseWriter, r *http.Request) {
+	if h.completedCartRefused(w, r) {
+		return
+	}
+	ctx := r.Context()
+
+	var body openPaymentRequest
+	if err := decodeBody(w, r, &body); err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	if body.ExpectedTotal == nil {
+		corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest,
+			"expected_total is mandatory; the total approved by the customer has to be declared"))
+		return
+	}
+
+	result, err := h.openPayment(ctx, openPaymentFlowRequest{
+		CartID:            cartID(r),
+		PaymentProviderID: body.PaymentProviderID,
+		PaymentData:       body.PaymentData,
+		// The channels come from the IDENTITY, for the completion's reason.
+		SalesChannelIDs: corehttp.SalesChannelIDs(ctx),
+		ExpectedTotal:   *body.ExpectedTotal,
+	})
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
+	corehttp.WriteJSON(ctx, w, http.StatusCreated, singleEnvelope{Data: openPaymentDTO{
+		PaymentSessionID: result.PaymentSessionID,
+		ProviderID:       result.ProviderID,
+		Status:           result.Status,
+		Amount:           result.Amount,
+		CurrencyCode:     result.CurrencyCode,
+		Data:             result.Data,
+		CompletionSecret: result.CompletionSecret,
+	}})
+}
+
+// openPayment hands the request to the flow and decodes what it opened, for
+// [Handler.complete]'s reason: the handler answers, this translates.
+func (h *Handler) openPayment(ctx context.Context, in openPaymentFlowRequest) (openPaymentFlowResult, error) {
+	flow, err := h.checkout()
+	if err != nil {
+		return openPaymentFlowResult{}, err
+	}
+
+	request, err := json.Marshal(in)
+	if err != nil {
+		return openPaymentFlowResult{}, coreerrors.Wrap(err, coreerrors.KindInternal, codeInvalidRequest,
+			"the payment opening request could not be encoded")
+	}
+
+	response, err := flow.OpenPaymentJSON(ctx, request)
+	if err != nil {
+		return openPaymentFlowResult{}, err
+	}
+
+	var result openPaymentFlowResult
+	if err := json.Unmarshal(response, &result); err != nil {
+		return openPaymentFlowResult{}, coreerrors.Wrap(err, coreerrors.KindInternal, codeFlowResultInvalid,
+			"the payment opening result could not be decoded: %s", in.CartID)
 	}
 
 	return result, nil

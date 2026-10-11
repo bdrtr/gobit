@@ -192,6 +192,69 @@ func TestIdempotencyAServerErrorIsNotRecorded(t *testing.T) {
 	assert.Empty(t, w2.Header().Get(corehttp.IdempotencyReplayedHeader))
 }
 
+// TestIdempotencyAResponseThatSaysWhenToAskAgainIsNotRecorded verifies that a
+// response carrying Retry-After is not replayed, whatever its status (ADR
+// 0438): it says "not yet", and the retry it asked for has to run.
+func TestIdempotencyAResponseThatSaysWhenToAskAgainIsNotRecorded(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		if calls == 1 {
+			w.Header().Set("Retry-After", "2")
+			w.WriteHeader(http.StatusConflict)
+
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
+
+	w1 := httptest.NewRecorder()
+	mw.ServeHTTP(w1, postRequest("idem_1", "/x", `{"a":1}`))
+	require.Equal(t, http.StatusConflict, w1.Code)
+
+	w2 := httptest.NewRecorder()
+	mw.ServeHTTP(w2, postRequest("idem_1", "/x", `{"a":1}`))
+
+	assert.Equal(t, http.StatusOK, w2.Code, "the retry the response asked for has to run")
+	assert.Equal(t, 2, calls)
+	assert.Empty(t, w2.Header().Get(corehttp.IdempotencyReplayedHeader))
+
+	w3 := httptest.NewRecorder()
+	mw.ServeHTTP(w3, postRequest("idem_1", "/x", `{"a":1}`))
+
+	assert.Equal(t, http.StatusOK, w3.Code)
+	assert.Equal(t, 2, calls, "the answer that came after it is recorded as usual")
+	assert.Equal(t, "true", w3.Header().Get(corehttp.IdempotencyReplayedHeader))
+}
+
+// TestIdempotencyASuccessThatSaysWhenToLookIsRecorded verifies that the
+// Retry-After rule reaches refusals only: a 202 that started a job and says
+// when to look did the work, and a retry under its key must not start a second
+// one.
+func TestIdempotencyASuccessThatSaysWhenToLookIsRecorded(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Retry-After", "5")
+		w.WriteHeader(http.StatusAccepted)
+	})
+	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
+
+	mw.ServeHTTP(httptest.NewRecorder(), postRequest("idem_1", "/x", `{"a":1}`))
+
+	w2 := httptest.NewRecorder()
+	mw.ServeHTTP(w2, postRequest("idem_1", "/x", `{"a":1}`))
+
+	assert.Equal(t, http.StatusAccepted, w2.Code)
+	assert.Equal(t, 1, calls, "the job is started once")
+	assert.Equal(t, "true", w2.Header().Get(corehttp.IdempotencyReplayedHeader))
+}
+
 // TestIdempotencyAClientErrorIsRecorded verifies that a 4xx response is replayed.
 //
 // A 4xx comes from the client and retrying gives the same result; recording it

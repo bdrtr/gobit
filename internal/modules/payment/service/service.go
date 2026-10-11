@@ -324,12 +324,40 @@ type Store interface {
 	) ([]models.PaymentSession, error)
 	// ListSessionsForReconciliation returns the sessions that are authorized
 	// but not captured here and have been in that state since before
-	// unchangedSince — the only set where this module and a provider can
-	// silently disagree about money — leaving out the sessions of the excluded
+	// unchangedSince — where this module and a driven provider can silently
+	// disagree about money — leaving out the sessions of the excluded
 	// providers.
 	ListSessionsForReconciliation(
 		ctx context.Context, unchangedSince time.Time, excluded []string, limit int32,
 	) ([]models.PaymentSession, error)
+	// ListPendingSessionsForReconciliation returns, newest first, the pending
+	// and canceled sessions of the given providers last written in
+	// [settledAfter, unchangedSince): the providers whose customer pays on
+	// their own page, where money moves while the session is still pending
+	// here, or after it was canceled (ADR 0438).
+	ListPendingSessionsForReconciliation(
+		ctx context.Context, unchangedSince, settledAfter time.Time, providerIDs []string, limit int32,
+	) ([]models.PaymentSession, error)
+	// ListSessionsByExternalID returns the sessions a provider knows by one id
+	// of its own (ADR 0438).
+	ListSessionsByExternalID(ctx context.Context, providerID, externalID string) ([]models.PaymentSession, error)
+	// RecordSessionReport opens a session's report once, first due at
+	// firstDue, and reports whether this call opened it (ADR 0438).
+	RecordSessionReport(ctx context.Context, sessionID string, firstDue time.Time) (bool, error)
+	// ListDueSessionReports returns the open reports due by the moment.
+	ListDueSessionReports(ctx context.Context, dueBy time.Time, limit int32) ([]models.SessionReport, error)
+	// GetSessionReport returns one report; NotFound when there is none.
+	GetSessionReport(ctx context.Context, sessionID string) (models.SessionReport, error)
+	// RecordSessionAnswer keeps the digest of an opened payment's completion
+	// secret (ADR 0438).
+	RecordSessionAnswer(ctx context.Context, sessionID string, digest []byte) error
+	// ClaimSessionAnswer spends the secret when the digest is the session's
+	// and it was not spent, and reports whether it did.
+	ClaimSessionAnswer(ctx context.Context, sessionID string, digest []byte) (bool, error)
+	// RecordSessionReportAttempt counts a failed attempt of an open report.
+	RecordSessionReportAttempt(ctx context.Context, sessionID, failure string, next time.Time) (bool, error)
+	// SettleSessionReport closes an open report with its outcome.
+	SettleSessionReport(ctx context.Context, sessionID, outcome, note string) (bool, error)
 	// SessionCounts counts the collection's sessions by status in a SINGLE
 	// query.
 	SessionCounts(ctx context.Context, collectionID string) (models.SessionCounts, error)

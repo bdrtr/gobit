@@ -84,10 +84,12 @@ import (
 //     closed on 2026-09-07 (docs/gaps.md D30); the shape was not.
 //   - A write another MODULE performs on this route's behalf. Checkout is the
 //     case: POST /store/v1/carts/{id}/complete runs a saga that writes an order,
-//     and the order module's tables are outside the intersection above. That is
-//     the same boundary ADR 0001 draws and the same one module_sql_test.go
-//     enforces; the order module's own storefront route is audited on its own
-//     row.
+//     and POST /store/v1/carts/{id}/payment-sessions opens a payment collection
+//     and a session (ADR 0438); the order and payment modules' tables are
+//     outside the intersection above, and both routes resolve to the cart's own
+//     table through the totals they recompute. That is the same boundary ADR
+//     0001 draws and the same one module_sql_test.go enforces; the order and
+//     payment modules' own storefront routes are audited on their own rows.
 //   - A column reached through SQL this repository builds at run time. The walk
 //     reads string literals and constants; a statement assembled from a variable
 //     resolves to no table, and the route-reaches-a-table guard is what stops
@@ -785,12 +787,17 @@ func TestEveryStorefrontWriteReachesATable(t *testing.T) {
 // storefrontWritesNoRow names a storefront write that stores nothing at all,
 // with the reason.
 //
-// EMPTY, and measured so on 2026-09-08: all twenty-two storefront writes under
-// internal/modules resolve to at least one table. An entry here is a claim that
-// a write is durable-row-free, which is a strong statement about a route and
-// deserves to be written down rather than inferred from a walk coming back
-// empty-handed.
-var storefrontWritesNoRow = map[string]string{}
+// It was empty from 2026-09-08, when every storefront write under
+// internal/modules resolved to at least one table. An entry here is a claim
+// that a write is durable-row-free IN ITS OWN MODULE, which is a strong
+// statement about a route and deserves to be written down rather than inferred
+// from a walk coming back empty-handed.
+var storefrontWritesNoRow = map[string]string{
+	"/store/v1/carts/{id}/payment-sessions/{payment_session_id}/cancel": "it cancels a payment " +
+		"session the payment module writes, and stores nothing of the cart's: the cart is read " +
+		"only to hold the session to it (ADR 0438). Its body is empty, so no column of any table " +
+		"is the client's.",
+}
 
 // columnClaim is one column and what it claims.
 type columnClaim struct {

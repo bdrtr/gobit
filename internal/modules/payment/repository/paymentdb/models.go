@@ -134,6 +134,22 @@ type PaymentSession struct {
 	UpdatedAt           pgtype.Timestamptz
 }
 
+type PaymentSessionAnswer struct {
+	SessionID    string
+	SecretDigest []byte
+	AnsweredAt   pgtype.Timestamptz
+}
+
+type PaymentSessionReport struct {
+	SessionID     string
+	ReportedAt    pgtype.Timestamptz
+	Attempts      int32
+	NextAttemptAt pgtype.Timestamptz
+	LastFailure   string
+	Outcome       string
+	SettledAt     pgtype.Timestamptz
+}
+
 type PaymentStoreCreditEntry struct {
 	ID           string
 	CustomerID   string

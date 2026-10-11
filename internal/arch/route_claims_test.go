@@ -915,6 +915,15 @@ type routeClaimExemption struct {
 // sentence goes away, the audit fails and asks for the entry to be removed. A
 // forgiveness that outlives its reason is what D16 records.
 var routeClaimExemptions = []routeClaimExemption{
+	// The reproduction behind ADR 0438 probed the addresses a storefront might
+	// have tried for a payment of its own; this one was never bound, and the
+	// transcript keeps its 404.
+	{
+		file:  "docs/measurements/0438-what-paytr-could-not-complete.md",
+		claim: "POST /store/v1/payment-collections",
+		reason: "A probe transcript at the base commit: the route a storefront might have " +
+			"opened its own collection with answered 404, which is part of the fault.",
+	},
 	// The credential route of contrib/identity-session moved to name its customer
 	// in the path (ADR 0434). The four entries below name the address it had, each
 	// on purpose: the fault it was, a probe transcript of it, and the record that

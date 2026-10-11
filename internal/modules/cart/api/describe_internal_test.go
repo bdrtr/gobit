@@ -277,6 +277,15 @@ func storeEndpoints() []endpointExpectation {
 			request: completeCartRequest{}, response: completeCartDTO{OrderToken: "ordtok_1"},
 		},
 		{
+			method: http.MethodPost, path: "/store/v1/carts/{id}/payment-sessions", status: "201",
+			request:  openPaymentRequest{},
+			response: openPaymentDTO{Data: json.RawMessage(`{"iframe_token":"t"}`)},
+		},
+		{
+			method: http.MethodPost, path: "/store/v1/carts/{id}/payment-sessions/{payment_session_id}/cancel",
+			status: "204",
+		},
+		{
 			method: http.MethodDelete,
 			path:   "/store/v1/carts/{id}/shipping-methods/{shipping_method_id}",
 			status: "204",

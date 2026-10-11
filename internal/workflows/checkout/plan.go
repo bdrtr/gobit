@@ -42,6 +42,11 @@ type Snapshot struct {
 	Revision int64 `json:"revision"`
 	// Completed reports whether the cart has been completed.
 	Completed bool `json:"completed"`
+	// Email is the cart's contact address; empty when it has none. The
+	// storefront's and the operator's completions bring it from the cart
+	// module themselves, and the completion a provider's report makes, with no
+	// storefront behind it, reads it here (ADR 0438).
+	Email string `json:"email,omitempty"`
 	// Items are the lines of the cart.
 	Items []SnapshotItem `json:"items"`
 	// ShippingAddress and BillingAddress are the addresses the cart carries;
@@ -185,6 +190,20 @@ type checkoutPlan struct {
 	// tomorrow captures what it would have captured today. A plan recorded
 	// before the field reads false, and no provider then captured later.
 	CapturesLater bool `json:"captures_later,omitempty"`
+	// PaymentSessionID and PaymentCollectionID are the session the storefront
+	// opened before the completion and its collection; both are empty when the
+	// saga opens its own (ADR 0438). They are identifiers, not credentials, and
+	// are recorded so the execution says which payment it used; the
+	// authorization step authorizes this session rather than opening one, and
+	// its own record is what a recovered compensation cancels. A plan recorded
+	// before the fields reads empty and opened its own.
+	PaymentSessionID    string `json:"payment_session_id,omitempty"`
+	PaymentCollectionID string `json:"payment_collection_id,omitempty"`
+	// CustomerAuthorizes says the provider's customer pays on the provider's
+	// own page, so a session it opened is the customer's page and is left as
+	// it is when its authorization fails, where a driven provider's is
+	// released (ADR 0438). A plan recorded before the field reads false.
+	CustomerAuthorizes bool `json:"customer_authorizes,omitempty"`
 	// Amount is the total to be collected (minor unit).
 	Amount int64 `json:"amount"`
 	// Subtotal is the sum of the line subtotals.
@@ -455,10 +474,14 @@ func (w *Workflows) prepare(ctx context.Context, in CompleteCartInput) (*checkou
 	}
 	// A payment that can never be made is refused HERE, with the payment
 	// module's own code, rather than at the payment step: by then the order is
-	// placed and order.placed is out (ADR 0175).
-	if err := w.payments.CheckTender(ctx, in.PaymentProviderID, snap.CustomerID, snap.CurrencyCode,
-		in.PaymentData); err != nil {
-		return nil, err
+	// placed and order.placed is out (ADR 0175). A session the storefront
+	// opened was checked when it was opened, with the data it was opened
+	// with, which the completion does not resend (ADR 0438).
+	if in.PaymentSessionID == "" {
+		if err := w.payments.CheckTender(ctx, in.PaymentProviderID, snap.CustomerID, snap.CurrencyCode,
+			in.PaymentData); err != nil {
+			return nil, err
+		}
 	}
 	// A gift card that cannot pay is refused here as well, and first: a code
 	// that opens no card, or one in another currency (ADR 0208, ADR 0209).

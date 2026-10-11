@@ -544,6 +544,12 @@ func fieldExpr(value *ast.CompositeLit, field string) ast.Expr {
 //     against the module's constant by [TestThePanelCatalogNamesAgree], and
 //     whether the module's surface satisfies the panel's interface by
 //     [TestEveryInteropConsumerIsPinned] (gap D251).
+//   - [paymentReportsFamily]: the door a payment provider reports its
+//     customer's payment through (ADR 0438). The composition root fills it
+//     with the checkout, and its one consumer is core/plugin's
+//     Host.PaymentReports, which resolves it by the published name when a
+//     provider reports; it is a SINGLE slot like [reportingFamily], filled
+//     from the other side.
 //   - [shutdownFamily]: a registration whose only consumer is the container's
 //     own Shutdown. A flow that only listens on the bus registers itself after
 //     the bus so that the container closes it BEFORE the bus, ending the
@@ -561,6 +567,8 @@ const (
 	reportingFamily = "error.reporter"
 	aiFamily        = "ai.provider"
 	coreFamily      = "core."
+	// paymentReportsFamily is spelled as coreplugin.PaymentReportsName is.
+	paymentReportsFamily = "payment.reports"
 )
 
 // resolveCallFragment is the name fragment of the functions that resolve from
@@ -693,7 +701,7 @@ func knownFamily(name string) bool {
 	if strings.HasPrefix(name, coreFamily) {
 		return true
 	}
-	if name == reportingFamily || name == aiFamily {
+	if name == reportingFamily || name == aiFamily || name == paymentReportsFamily {
 		return true
 	}
 	for _, suffix := range []string{interopFamily, serviceFamily, queryFamily, providerFamily, adminFamily, shutdownFamily} {

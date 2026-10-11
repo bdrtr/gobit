@@ -444,7 +444,7 @@ func (h *Handler) adminCompleteCart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.completeCart(scoped, w, completeCartFlowRequest{
+	h.completeCart(scoped, w, false, completeCartFlowRequest{
 		CartID:            cartID(r),
 		PaymentProviderID: body.PaymentProviderID,
 		SalesChannelIDs:   corehttp.SalesChannelIDs(scoped),

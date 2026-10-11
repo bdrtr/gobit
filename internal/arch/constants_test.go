@@ -25,6 +25,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/auth"
 	authsvc "github.com/bdrtr/gobit/internal/modules/auth/service"
 	"github.com/bdrtr/gobit/internal/modules/cart"
+	cartapi "github.com/bdrtr/gobit/internal/modules/cart/api"
 	cartsvc "github.com/bdrtr/gobit/internal/modules/cart/service"
 	"github.com/bdrtr/gobit/internal/modules/customer"
 	customersvc "github.com/bdrtr/gobit/internal/modules/customer/service"
@@ -330,6 +331,70 @@ func TestTheGiftCardNamesAgree(t *testing.T) {
 
 	assert.Equal(t, paymentmodels.GiftCardTenderID, checkoutwf.GiftCardProviderID)
 	assert.Equal(t, giftcard.DataCode, checkoutwf.GiftCardDataCode)
+}
+
+// TestTheSessionStatusesAgree binds the checkout's spelling of a payment
+// session's statuses to the payment module's and to the provider contract's
+// (ADR 0438). The checkout reads both: the module's to refuse a closed
+// session, and a provider's own ledger to wait for the customer's payment. A
+// drift is silent until a PayTR order: a pending report read as something else
+// would start the saga before the customer paid, and a closed session read as
+// open would be authorized again.
+func TestTheSessionStatusesAgree(t *testing.T) {
+	t.Parallel()
+
+	for _, pair := range []struct {
+		checkout string
+		module   paymentmodels.SessionStatus
+		provider coreprovider.SessionStatus
+	}{
+		{checkoutwf.SessionPending, paymentmodels.SessionPending, coreprovider.SessionPending},
+		{checkoutwf.SessionAuthorized, paymentmodels.SessionAuthorized, coreprovider.SessionAuthorized},
+		{checkoutwf.SessionCaptured, paymentmodels.SessionCaptured, coreprovider.SessionCaptured},
+		{checkoutwf.SessionCanceled, paymentmodels.SessionCanceled, coreprovider.SessionCanceled},
+		{checkoutwf.SessionFailed, paymentmodels.SessionFailed, coreprovider.SessionFailed},
+	} {
+		assert.Equal(t, string(pair.module), pair.checkout)
+		assert.Equal(t, string(pair.provider), pair.checkout)
+	}
+}
+
+// TestThePaymentPendingCodeAgrees binds the cart module's spelling of the
+// checkout's "payment pending" refusal to the flow's (ADR 0438). A drift is
+// silent until a PayTR completion arrives early: the answer would carry no
+// Retry-After, the Idempotency-Key would record it, and the storefront's retry
+// would be answered "not yet" for a day.
+func TestThePaymentPendingCodeAgrees(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, checkoutwf.CodePaymentPending, cartapi.CodeCheckoutPaymentPending)
+}
+
+// TestTheReportOutcomesAgree binds the checkout's spelling of a payment
+// report's outcomes to the payment module's, whose constraint refuses any
+// other (ADR 0438). A drift is loud only at a report: the settle is refused,
+// and a completed or refunded payment stays open in the queue for the sweep.
+func TestTheReportOutcomesAgree(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, paymentmodels.ReportCompleted, checkoutwf.ReportCompleted)
+	assert.Equal(t, paymentmodels.ReportRefunded, checkoutwf.ReportRefunded)
+	assert.Equal(t, paymentmodels.ReportClosed, checkoutwf.ReportClosed)
+	assert.Equal(t, paymentmodels.ReportLeft, checkoutwf.ReportLeft)
+	assert.Equal(t, paymentmodels.ReportGaveUp, checkoutwf.ReportGaveUp)
+}
+
+// TestTheReportQueueAndTheCheckoutAgreeOnTiming binds the moment a new report
+// is first due to the checkout's first retry, and the payment module's refusal
+// of a report naming only closed sessions to the code the checkout reads
+// (ADR 0438). A first due earlier than the retry has the sweep attempt a
+// report beside the provider's own attempt; a code spelled apart turns a
+// payment on a canceled session into an error the provider is told to resend.
+func TestTheReportQueueAndTheCheckoutAgreeOnTiming(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, paymentmodels.ReportFirstRetry, checkoutwf.ReportRetryBase)
+	assert.Equal(t, paymentservice.CodeReportedSessionClosed, checkoutwf.CodeReportedSessionClosed)
 }
 
 // TestTheBalanceNamesAgree binds the checkout's spelling of the customer's
