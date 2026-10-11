@@ -9,7 +9,20 @@ design. It is fixed with `1.0.0`.
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-10-11
+
 ### Breaking changes
+
+Legitimate in a minor version throughout `0.x` (see the head of this file).
+Collected on the day of the cut by diffing v0.11.0 against this tree: the
+OpenAPI documents of the server, of the server with the plugins that serve
+routes and of the starter; `gorelease` and `apidiff` over the importable
+packages and the two `contrib/` modules; the `env:` tags; the privilege each
+route's guard demands; the event topics and payloads; and the migrations. The
+importable packages changed only by addition, apart from the webhook-out
+names that moved to `core/webhook` and stay as aliases (Deprecated below).
+Each item names its audience and what a v0.11.0 user has to change. Upgrade
+with no v0.11.0 instance running beside a v0.12.0 one (Security below).
 
 - **An id gobit hands out opens nothing at the storefront** (ADR 0439, D280,
   D281, D282, D283). gobit sends an order's id to every webhook receiver of an
@@ -8627,7 +8640,8 @@ application, which running the tests alone did not reveal:
   startup.
 - The load test is in-process; it does not produce a capacity plan.
 
-[Unreleased]: https://github.com/bdrtr/gobit/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/bdrtr/gobit/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/bdrtr/gobit/releases/tag/v0.12.0
 [0.11.0]: https://github.com/bdrtr/gobit/releases/tag/v0.11.0
 [0.10.0]: https://github.com/bdrtr/gobit/releases/tag/v0.10.0
 [0.9.0]: https://github.com/bdrtr/gobit/releases/tag/v0.9.0

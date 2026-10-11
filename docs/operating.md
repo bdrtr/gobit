@@ -260,7 +260,7 @@ make rename-module MODULE=github.com/user/repo
 
 ## Version
 
-Current version: **v0.11.0**. For the changes, see
+Current version: **v0.12.0**. For the changes, see
 [`CHANGELOG.md`](../CHANGELOG.md). Which roadmap phase covers what is in the
 README's phase-status table.
 
@@ -411,6 +411,38 @@ credentials whose `updated_at` and `sessions_valid_from` moved then; after it,
 the listing's filter is exact and each path names its customer, so query the
 table with `path LIKE '/admin/v1/customer-credentials/%'`. The
 [CHANGELOG](../CHANGELOG.md) says what to do with one.
+
+- **v0.12.0** — what a receiver and a shopper are promised: a webhook receiver
+  builds against a published contract, `core/webhook` and `webhooks` in
+  `/openapi.json`
+  ([ADR 0435](adr/0435-a-webhook-receiver-builds-against-a-published-contract.md)),
+  a delivery goes out when it is due
+  ([ADR 0436](adr/0436-a-webhook-goes-out-when-it-is-due.md)), a parcel's
+  delivery and a return's moves are on the bus
+  ([ADR 0437](adr/0437-a-parcels-delivery-and-a-returns-moves-are-on-the-bus.md)),
+  a PayTR shopper's payment is opened before the cart is completed and the
+  provider's report completes it on the server
+  ([ADR 0438](adr/0438-a-shoppers-payment-is-opened-before-the-cart-is-completed.md)),
+  and an id gobit hands out opens nothing at the storefront
+  ([ADR 0439](adr/0439-an-id-gobit-hands-out-opens-nothing-at-the-storefront.md)),
+  a security fix. **There are breaking changes**, and the CHANGELOG lists them
+  by audience: storefront order reads that ask for the order's token, a
+  completed cart that answers as an unknown one, the storefront's payment
+  routes moved under the cart, `cart_id` withheld from webhook receivers, and a
+  webhook redirect followed only when it keeps the POST.
+
+**Every release let an order's id open the order at the storefront**
+([ADR 0439](adr/0439-an-id-gobit-hands-out-opens-nothing-at-the-storefront.md),
+D280–D283), and from v0.9.0 `webhook-out` sent the ids to its receivers. Stop
+every v0.11.0 instance before the first v0.12.0 instance starts: an old one
+still answers the order routes to the id, issues no order token and sends
+`cart_id`, and one restarted after the migrations refuses to start with
+`no migration found for version 17`. Drain the webhook queue and drop `cart_id`
+filters from registrations first. A guest order placed before the upgrade has
+no token, so its storefront page and its old mail's link no longer open. Order
+migration 000044's down deletes every access token, and payment 000017 and
+`webhook-out` 000004 build an index without `CONCURRENTLY` as the installation
+starts. The [CHANGELOG](../CHANGELOG.md) says how to look for abuse.
 
 Throughout `0.x`, **breaking changes may arrive in minor versions**: the API
 surface is not frozen yet. It freezes with `1.0.0`.
