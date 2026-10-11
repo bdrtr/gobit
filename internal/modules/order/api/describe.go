@@ -420,7 +420,10 @@ func describeFulfilling(d *openapi.Doc) {
 			"The idempotency key is REQUIRED. A second call with the same key does NOT open a " +
 			"second parcel: it returns the one already open, with \"already_open\": true and a " +
 			"200 instead of a 201. Without a key a retried request opens a second parcel and " +
-			"the shop finds out at the carrier. " +
+			"the shop finds out at the carrier. The key is the installation's, not the " +
+			"order's: the same key on another order's parcel answers 409 " +
+			"fulfillment_idempotency_key_mismatch, so a client derives it from the order and " +
+			"its own reference. " +
 			"An unknown order id is REFUSED rather than opening a parcel bound to nothing — " +
 			"the fulfillment module never validates the reference it is handed, so this is the " +
 			"only place that can refuse. " +
@@ -445,7 +448,8 @@ func describeFulfilling(d *openapi.Doc) {
 			"409": openapi.ErrorResponse("The order owes no unit to a parcel " +
 				"(fulfillment_nothing_owed), a line owes fewer units than named " +
 				"(fulfillment_line_not_dispatchable), the key names a parcel opened with " +
-				"another list (fulfillment_idempotency_key_mismatch) (ADR 0409), or the key " +
+				"another list or for another order (fulfillment_idempotency_key_mismatch) " +
+				"(ADR 0409), or the key " +
 				"names a parcel that was canceled (fulfilling_shipment_canceled)."),
 			"422": openapi.ErrorResponse("The request is invalid; a return option is refused " +
 				"here (ADR 0384), and an order not sold exactly one delivery names its items " +

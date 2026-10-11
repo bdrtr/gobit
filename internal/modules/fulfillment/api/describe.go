@@ -287,13 +287,17 @@ func describeFulfillments(d *openapi.Doc) {
 			"for them (ADR 0423). With no items it answers 422 " +
 			"fulfillment_items_required, once its key is read (a replay is answered with its " +
 			"parcel) and its option's direction; a parcel of every unit still owed is opened " +
-			"through POST /admin/v1/orders/{id}/fulfillments.",
+			"through POST /admin/v1/orders/{id}/fulfillments. " +
+			"The idempotency_key is the installation's, not the order's: one parcel holds " +
+			"it, and the same key on another order's parcel answers 409 " +
+			"fulfillment_idempotency_key_mismatch, so a client derives it from the order " +
+			"and its own reference.",
 		RequestBody: d.RequestBody(createFulfillmentRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response("The opened fulfillment", d.Item(fulfillmentDTO{})),
 			"409": openapi.ErrorResponse("A line may ship fewer units than named " +
-				"(fulfillment_line_not_dispatchable), the key names another parcel " +
-				"(fulfillment_idempotency_key_mismatch), or a return awaits nothing " +
+				"(fulfillment_line_not_dispatchable), the key names another parcel, of this " +
+				"order or another (fulfillment_idempotency_key_mismatch), or a return awaits nothing " +
 				"(fulfillment_return_not_awaited)."),
 			"422": openapi.ErrorResponse("The request is invalid: an outgoing parcel with no " +
 				"items (fulfillment_items_required, ADR 0409), a line not on the order " +

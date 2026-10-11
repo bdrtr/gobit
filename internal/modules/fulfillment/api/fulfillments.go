@@ -21,7 +21,8 @@ type createFulfillmentRequest struct {
 	Reference        string `json:"reference"`
 	ShippingOptionID string `json:"shipping_option_id"`
 	// IdempotencyKey is required: a second request with the same key does NOT
-	// open a new fulfillment, it returns the existing one.
+	// open a new fulfillment, it returns the existing one. The key is unique
+	// across the installation, not within an order.
 	IdempotencyKey string                 `json:"idempotency_key"`
 	Items          []fulfillmentItemInput `json:"items"`
 	Data           map[string]any         `json:"data"`

@@ -101,7 +101,8 @@ type openShipmentRequest struct {
 	// changes (ADR 0198, 0199).
 	ShippingOptionID string `json:"shipping_option_id"`
 	// IdempotencyKey is required. Without one a retried request opens a SECOND
-	// parcel for the same order.
+	// parcel for the same order. The key is unique across the installation, not
+	// within an order.
 	IdempotencyKey string `json:"idempotency_key"`
 	// Items are the units the parcel holds. Left out on an order sold one
 	// delivery, the parcel holds every unit still owed to a parcel (ADR 0409).
