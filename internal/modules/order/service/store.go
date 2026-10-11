@@ -119,6 +119,15 @@ type Store interface {
 	// The ROW and its address_type and country_code survive; the reason is in
 	// queries/erasure.sql.
 	AnonymizeOrderAddresses(ctx context.Context, orderIDs []string) (int64, error)
+	// WithdrawAccessTokens deletes every access token of the given orders and
+	// returns how many there were (ADR 0439).
+	WithdrawAccessTokens(ctx context.Context, orderIDs []string) (int64, error)
+
+	// RecordAccessToken keeps the digest of a token issued for the order;
+	// NotFound when there is no such order (ADR 0439).
+	RecordAccessToken(ctx context.Context, orderID string, digest []byte) error
+	// AccessTokenDigests returns the digests of every token the order issued.
+	AccessTokenDigests(ctx context.Context, orderID string) ([][]byte, error)
 
 	// OrdersForDisclosure returns the orders of the person named by the
 	// customer id and/or the e-mail, WITHOUT locking anything.

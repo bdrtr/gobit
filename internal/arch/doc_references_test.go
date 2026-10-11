@@ -2386,6 +2386,13 @@ var markdownReferenceExemptions = []pathReferenceExemption{
 			"ADR 0407 deleted that method; the head is resolved in Workflows.priceContext now.",
 	},
 	{
+		file: "docs/adr/0051-an-unidentified-write-is-confined-or-inert.md",
+		path: "Handler.createStoreSession",
+		reason: "ADR 0051 is in the historical range 0001-0051, which takes no edit but its " +
+			"Summary, and it names the storefront session handler it judged on its day. " +
+			"ADR 0439 deleted that route; the storefront takes no collection id now.",
+	},
+	{
 		file: "docs/adr/0111-the-cart-carries-its-own-data-into-a-rule.md",
 		path: "Snapshot.Metadata",
 		reason: "ADR 0111 is superseded by ADR 0407 and takes no edit but that line; its " +

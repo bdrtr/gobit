@@ -20,43 +20,94 @@ import (
 // way back). Opening a status transition to a client would mean that an order
 // whose payment
 // had already been captured could be closed by the customer.
+//
+// # Who may ask (ADR 0439)
+//
+// The three routes under /store/v1/orders/{id} answer a request that presents
+// one of the order's access tokens in [corehttp.OrderTokenHeader], or that the
+// installation's bound identity proves to be the order's customer. The id
+// alone opens nothing: gobit hands it to every webhook receiver of an order
+// topic, so it names the order without being its key. Every refusal is the
+// 404 an unknown id gets, so a caller holding an id learns neither that the
+// order exists nor whether it has a customer; an identity that could not reach
+// a verdict answers its own class, because a proof that could not be read is
+// not a proof of nobody (ADR 0371).
 
-// storeGetOrder returns the customer's order with its line items and summary.
+// storeOrderAccess decides whether the request may reach the order its path
+// names, and returns the error that ends it when it may not.
 //
-// # Authorization
+// The token is asked first: it is what a guest holds, and it needs no
+// identity. Then the identity, and only an order that has a customer opens to
+// it — a guest's order has none to prove, and an identity proving nobody must
+// not match the empty customer.
 //
-// Verifying that the order belongs to the REQUESTING customer IS NOT DONE
-// HERE, and no phase of this framework is going to do it: ADR 0008 settles the
-// responsibility on the EMBEDDING APPLICATION. The auth module that arrived in
-// Phase 8 is ADMIN identity — its own package doc says the user there is not
-// the person shopping. The endpoint is open to anyone who knows the order id,
-// and it stays that way until whoever embeds gobit puts a session in front of
-// it.
+// The identity is asked BEFORE the order's existence is told, for every
+// request the token did not open, so an identity that cannot reach a verdict
+// answers its own class for an unknown id as for a real one. Asking it only
+// for a real order told the two apart during an outage: 503 for an order, 404
+// for no order. A guest's order costs an identity call it cannot use; that is
+// the price of the answer saying nothing about the id.
+func (h *Handler) storeOrderAccess(w http.ResponseWriter, r *http.Request) error {
+	ctx := r.Context()
+	id := orderID(r)
+	privateToTheCaller(w)
+
+	access, err := h.svc.StorefrontAccess(ctx, id, r.Header.Get(corehttp.OrderTokenHeader))
+	unknown := coreerrors.IsNotFound(err)
+	if err != nil && !unknown {
+		return err
+	}
+	if !unknown && access.TokenMatches {
+		return nil
+	}
+
+	proven, err := corehttp.ProvenCustomerIfAny(h.identity, r)
+	if err != nil {
+		return err
+	}
+	if !unknown && access.CustomerID != "" && proven == access.CustomerID {
+		return nil
+	}
+
+	return storeOrderNotFound(id)
+}
+
+// privateToTheCaller marks an answer as the caller's alone (ADR 0439).
 //
-// The gap is not being hidden, it is being DECLARED: because the id itself is
-// unguessable (a 26-character random body) this is not a "public listing", but
-// unguessability is no substitute for authorization. This is why there is no
-// LIST endpoint on the customer side — a list endpoint would turn knowing a
-// single id into reading every order.
-//
-// # Why the identity contract does not reach here
-//
-// ADR 0057 requires the embedder's proof wherever a storefront request NAMES a
-// customer. This route names an ORDER. The claim it would have to compare does
-// not exist in the request — the order's own customer is a fact of the record
-// rather than something the caller asserts — so the check would have to become
-// "the reader must be the order's customer", which is a different decision: it
-// would close guest order lookup, and a guest order has no customer to prove.
-// The route is outside the gate's population for that reason, not by omission.
+// What it holds was opened by a header or a session, so a shared cache keyed on
+// the URL — one placed in front of the storefront API, as the catalog's own
+// caching invites — must neither keep it nor hand it to the next caller asking
+// the same URL. A refusal is marked too: a cached 404 would close the order to
+// its owner. Vary names the credentials a cache would have to key on if it
+// ignored no-store: the token's header, and the cookie and Authorization header
+// an identity commonly reads.
+func privateToTheCaller(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Add("Vary", corehttp.OrderTokenHeader+", Cookie, Authorization")
+}
+
+// storeOrderNotFound is the refusal of a request that may not reach the order:
+// word for word what an unknown id is answered.
+func storeOrderNotFound(id string) error {
+	return coreerrors.NotFound(service.CodeOrderNotFound, "order not found: %s", id)
+}
+
+// storeGetOrder returns the customer's order with its line items and summary,
+// as [storeOrderDetailDTO]: no address, no cart id and no customer id.
 func (h *Handler) storeGetOrder(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
+	if err := h.storeOrderAccess(w, r); err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
 
 	detail, err := h.svc.GetOrder(ctx, orderID(r))
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
-	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toOrderDetailDTO(detail)})
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toStoreOrderDetailDTO(detail)})
 }
 
 // storeReturnRequest is the body of a customer's return request.
@@ -82,15 +133,10 @@ type storeReturnLine struct {
 //
 // # Authorization
 //
-// The same boundary [Handler.storeGetOrder] declares, and for the same reason:
-// verifying that the order belongs to the requesting customer is the EMBEDDING
-// APPLICATION's job (ADR 0008). Anyone who knows the order id can open a return
-// request against it.
-//
-// What that costs here is bounded and worth stating: a request is a REQUEST. It
-// moves no stock and no money, an operator has to receive it before anything
-// happens, and the quantity rule already refuses more than was bought. The
-// endpoint that acts — receiving, refunding — is admin-only and scoped.
+// [Handler.storeOrderAccess], before the body is read. A request moves no
+// stock and no money, but it holds the units it names: the quantity rule
+// counts them against what was bought, so a stranger's request refused the
+// owner's own until an operator withdrew it (ADR 0439).
 //
 // # The customer names lines, not amounts
 //
@@ -99,6 +145,12 @@ type storeReturnLine struct {
 // which is the shipping-price defect in another place.
 func (h *Handler) storeRequestReturn(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
+	if err := h.storeOrderAccess(w, r); err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
 
 	var body storeReturnRequest
 	if err := decodeBody(w, r, &body); err != nil {
@@ -173,17 +225,18 @@ type storeTimelineEntryDTO struct {
 //
 // # Authorization
 //
-// The same boundary [Handler.storeGetOrder] declares, and for the same reason:
-// knowing the order id is the capability, and verifying that the order belongs
-// to the requesting customer is the EMBEDDING APPLICATION's job (ADR 0008).
-// This route names an ORDER rather than a customer, so it is outside ADR 0057's
-// population for the reason that endpoint's godoc sets out.
-//
-// What that boundary costs is smaller here than on the order read: the timeline
-// carries no address, no e-mail and no line prices, and since it carries no
-// money moments at all it says less about the order than the order does.
+// [Handler.storeOrderAccess]. The timeline carries no address, no e-mail, no
+// line prices and no money moment, and it does carry each parcel's tracking
+// number, which the parcel's webhook leaves out (ADR 0437): a lookup key to
+// the recipient, for the order's shopper alone.
 func (h *Handler) storeGetOrderTimeline(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
+	if err := h.storeOrderAccess(w, r); err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
 
 	entries, err := h.svc.StorefrontTimeline(ctx, orderID(r))
 	if err != nil {

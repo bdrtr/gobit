@@ -61,7 +61,7 @@ func baseConfig() config.Config {
 func guardedRouter(t *testing.T, cfg config.Config, authn corehttp.Authenticator) http.Handler {
 	t.Helper()
 
-	guards, _, err := guardStack(cfg, authn, &adminui.Ring{}, nil, nil, discardLogger())
+	guards, _, err := guardStack(cfg, authn, &adminui.Ring{}, nil, nil, discardLogger(), nil)
 	require.NoError(t, err, "the guard stack could not be built")
 
 	r := corehttp.NewRouter(corehttp.RouterOptions{
@@ -140,11 +140,11 @@ func TestRateLimitCanBeTurnedOff(t *testing.T) {
 	cfg := baseConfig()
 	cfg.RateLimitPerMinute = 0
 
-	off, _, err := guardStack(cfg, &corehttp.DeferredAuthenticator{}, &adminui.Ring{}, nil, nil, discardLogger())
+	off, _, err := guardStack(cfg, &corehttp.DeferredAuthenticator{}, &adminui.Ring{}, nil, nil, discardLogger(), nil)
 	require.NoError(t, err)
 
 	cfg.RateLimitPerMinute = 600
-	on, _, err := guardStack(cfg, &corehttp.DeferredAuthenticator{}, &adminui.Ring{}, nil, nil, discardLogger())
+	on, _, err := guardStack(cfg, &corehttp.DeferredAuthenticator{}, &adminui.Ring{}, nil, nil, discardLogger(), nil)
 	require.NoError(t, err)
 
 	assert.Less(t, len(off), len(on),
@@ -661,7 +661,7 @@ func TestRateLimitOffIsReportedInASharedEnvironment(t *testing.T) {
 	cfg.RateLimitPerMinute = 0
 	catcher := &recordCatcher{}
 
-	_, _, err := guardStack(cfg, validIdentity{}, &adminui.Ring{}, nil, nil, catcher.logger())
+	_, _, err := guardStack(cfg, validIdentity{}, &adminui.Ring{}, nil, nil, catcher.logger(), nil)
 
 	require.NoError(t, err)
 	assert.Contains(t, catcher.messages(slog.LevelWarn), "the rate limiter was NOT ATTACHED",
@@ -683,7 +683,7 @@ func TestRateLimitWarnsAboutTheKeyBehindAProxy(t *testing.T) {
 	cfg.TrustedProxyHops = 0
 	catcher := &recordCatcher{}
 
-	_, _, err := guardStack(cfg, validIdentity{}, &adminui.Ring{}, nil, nil, catcher.logger())
+	_, _, err := guardStack(cfg, validIdentity{}, &adminui.Ring{}, nil, nil, catcher.logger(), nil)
 
 	require.NoError(t, err, "the warning must NOT stop startup: zero hops is the right "+
 		"answer for an installation facing the internet directly")
@@ -721,7 +721,7 @@ func TestRateLimitIsSilentWhenSetUpCorrectly(t *testing.T) {
 			apply(&cfg)
 			catcher := &recordCatcher{}
 
-			_, _, err := guardStack(cfg, validIdentity{}, &adminui.Ring{}, nil, nil, catcher.logger())
+			_, _, err := guardStack(cfg, validIdentity{}, &adminui.Ring{}, nil, nil, catcher.logger(), nil)
 
 			require.NoError(t, err)
 			// The in-memory guard warning is OUTSIDE this gate and keeps being
@@ -862,7 +862,7 @@ func TestGuardStackPassesTheKeyPrefixToTheConstructors(t *testing.T) {
 			cfg.GuardBackend = config.BackendRedis
 			cfg.RedisKeyPrefix = prefix
 
-			_, _, err := guardStack(cfg, &corehttp.DeferredAuthenticator{}, &adminui.Ring{}, unconnectedRedis(), nil, discardLogger())
+			_, _, err := guardStack(cfg, &corehttp.DeferredAuthenticator{}, &adminui.Ring{}, unconnectedRedis(), nil, discardLogger(), nil)
 
 			require.Error(t, err, "an invalid prefix must reach the constructor and stop startup")
 			assert.Equal(t, "redisguard_invalid_config", errors.CodeOf(err),
@@ -883,7 +883,7 @@ func TestGuardStackBuildsTheRedisBackend(t *testing.T) {
 	cfg.GuardBackend = config.BackendRedis
 	cfg.RedisKeyPrefix = "gobit-staging"
 
-	guards, _, err := guardStack(cfg, &corehttp.DeferredAuthenticator{}, &adminui.Ring{}, unconnectedRedis(), nil, discardLogger())
+	guards, _, err := guardStack(cfg, &corehttp.DeferredAuthenticator{}, &adminui.Ring{}, unconnectedRedis(), nil, discardLogger(), nil)
 
 	require.NoError(t, err, "the redis backend must be buildable with a valid prefix")
 	assert.NotEmpty(t, guards, "the guard stack must not come back empty")
@@ -902,7 +902,7 @@ func TestGuardStackStopsWhenRedisIsChosenWithoutAClient(t *testing.T) {
 	cfg := baseConfig()
 	cfg.GuardBackend = "redis"
 
-	_, _, err := guardStack(cfg, &corehttp.DeferredAuthenticator{}, &adminui.Ring{}, nil, nil, discardLogger())
+	_, _, err := guardStack(cfg, &corehttp.DeferredAuthenticator{}, &adminui.Ring{}, nil, nil, discardLogger(), nil)
 
 	require.Error(t, err, "the redis backend must not be built without a Redis client")
 	assert.Contains(t, err.Error(), "GUARD_BACKEND")
@@ -928,7 +928,7 @@ func TestGuardStackReportsTheIdempotencyBudget(t *testing.T) {
 	cfg.IdempotencyMaxMemoryBytes = 12345678
 	catcher := &recordCatcher{}
 
-	_, _, err := guardStack(cfg, validIdentity{}, &adminui.Ring{}, nil, nil, catcher.logger())
+	_, _, err := guardStack(cfg, validIdentity{}, &adminui.Ring{}, nil, nil, catcher.logger(), nil)
 
 	require.NoError(t, err)
 	assert.Contains(t, catcher.messages(slog.LevelInfo), message,
@@ -951,7 +951,7 @@ func TestGuardStackReportsTheIdempotencyBudget(t *testing.T) {
 	shared.RedisKeyPrefix = "gobit-staging"
 	sharedCatcher := &recordCatcher{}
 
-	_, _, err = guardStack(shared, validIdentity{}, &adminui.Ring{}, unconnectedRedis(), nil, sharedCatcher.logger())
+	_, _, err = guardStack(shared, validIdentity{}, &adminui.Ring{}, unconnectedRedis(), nil, sharedCatcher.logger(), nil)
 
 	require.NoError(t, err)
 	assert.NotContains(t, sharedCatcher.messages(slog.LevelInfo), message,
@@ -1135,7 +1135,7 @@ func (validIdentity) AuthenticateStore(_ context.Context, _ string) (corehttp.Pr
 func TestGuardStackExemptsCartCreationFromIdempotency(t *testing.T) {
 	t.Parallel()
 
-	guards, _, err := guardStack(baseConfig(), validIdentity{}, &adminui.Ring{}, nil, nil, discardLogger())
+	guards, _, err := guardStack(baseConfig(), validIdentity{}, &adminui.Ring{}, nil, nil, discardLogger(), nil)
 	require.NoError(t, err)
 
 	created := 0
@@ -1188,7 +1188,7 @@ func TestGuardStackExemptsCartCreationFromIdempotency(t *testing.T) {
 func TestGuardStackExemptsTheGraphQLEndpointFromIdempotency(t *testing.T) {
 	t.Parallel()
 
-	guards, _, err := guardStack(baseConfig(), validIdentity{}, &adminui.Ring{}, nil, nil, discardLogger())
+	guards, _, err := guardStack(baseConfig(), validIdentity{}, &adminui.Ring{}, nil, nil, discardLogger(), nil)
 	require.NoError(t, err)
 
 	failing := true
@@ -1346,7 +1346,7 @@ func TestThePanelSessionReachesTheAdminAPIOnlyUnderTheOriginCheck(t *testing.T) 
 	ring := &adminui.Ring{}
 	ring.Bind(panel)
 
-	guards, _, err := guardStack(baseConfig(), identity, ring, nil, nil, discardLogger())
+	guards, _, err := guardStack(baseConfig(), identity, ring, nil, nil, discardLogger(), nil)
 	require.NoError(t, err)
 
 	r := corehttp.NewRouter(corehttp.RouterOptions{Version: "test", Middlewares: guards})
@@ -1608,7 +1608,7 @@ func TestEverythingUnderThePanelsPrefixCarriesThePolicy(t *testing.T) {
 	require.NoError(t, c.Provide(adminui.InteropAuth, identity))
 
 	ring := &adminui.Ring{}
-	guards, _, err := guardStack(baseConfig(), identity, ring, nil, nil, discardLogger())
+	guards, _, err := guardStack(baseConfig(), identity, ring, nil, nil, discardLogger(), nil)
 	require.NoError(t, err)
 
 	r := corehttp.NewRouter(corehttp.RouterOptions{Version: "test", Middlewares: guards})

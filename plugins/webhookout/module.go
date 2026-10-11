@@ -125,7 +125,8 @@ const (
 	// is the publisher's decision and it is what makes forwarding it safe
 	// without a new redaction rule: money figures do not go on the wire to an
 	// operator's third-party endpoints, and a receiver that wants them asks
-	// this installation for the collection.
+	// the admin surface, with the operator's key. The storefront takes no
+	// collection id (ADR 0439), so the id opens nothing there.
 	topicPaymentCaptured = "payment.captured"
 	// topicPaymentRefunded is published when money is sent back against a
 	// payment collection. Same payload, same reason.
@@ -167,15 +168,17 @@ const (
 	// topicCartCreated is published when a cart is opened (ADR 0153). It is the
 	// cart module's FIRST event.
 	//
-	// It carries the cart, its region and its currency — no money and no
-	// identity, so it needs no new redaction rule. It is also the highest-volume
+	// It carries the cart, its region, its currency and the moment, and the
+	// cart's id is withheld (see [redactedFields]): a receiver hears a cart open
+	// in a region and a currency, and pairs it with its completion by the
+	// event id, which names the cart by a digest. It is also the highest-volume
 	// topic this plugin forwards, and that is a cost an operator should know
 	// about: every abandoned basket is a delivery. The publisher declined to go
 	// finer than the cart for exactly this reason — there is no per-LINE topic,
 	// because it would have multiplied this queue by the shopper's clicking.
 	topicCartCreated = "cart.created"
 	// topicCartCompleted is published when a cart is completed and becomes
-	// immutable (ADR 0153).
+	// immutable (ADR 0153). Its cart id is withheld as the creation's is.
 	//
 	// It is NOT the same moment as "order.placed": the checkout saga places the
 	// order at its second step and completes the cart at its last, so a
@@ -243,12 +246,25 @@ const (
 // no customer. A silent removal would be the worse half of this decision — the
 // receiver would build a guest-order branch that fires on every order.
 //
+// # cart_id, for the reason the storefront gives
+//
+// A cart has no owner check at the storefront: its id is its access, and the
+// cart module's own rule is that the id is carried like a secret. Forwarding it
+// was handing a third party that access for every basket the shop opened — a
+// receiver read a live cart's e-mail, home address and phone and moved its
+// delivery (ADR 0439). The cart topics keep their region, currency and moment,
+// and their event id names the cart by a digest, so a receiver still pairs a
+// cart's opening with its completion without holding the cart.
+//
 // This map is deliberately not configurable. A setting that let an installation
 // switch it off would be the setting nobody reads before switching it on.
 var redactedFields = map[string]string{
 	"customer_id": "a customer id is a lever on that customer: an installation that trusts " +
 		"an unverified claim returns their b2b company and spending limit for it and opens " +
 		"a cart in their name on it alone (ADR 0008, ADR 0043, ADR 0125)",
+	fieldCartID: "a cart's id is its access: every storefront cart route answers whoever " +
+		"holds it, the shopper's e-mail, home address and phone included, and moves the " +
+		"cart's delivery on it alone (ADR 0439)",
 }
 
 // The delivery job's shape.
@@ -821,8 +837,8 @@ var TopicFields = map[string][]string{
 	},
 	topicFulfillmentCanceled:  {fieldCanceledAt, fieldFulfillmentID, fieldReference, fieldReturnID},
 	topicFulfillmentReturned:  {fieldFulfillmentID, fieldReference, fieldReturnID, "returned_at"},
-	topicCartCreated:          {fieldCartID, fieldCurrencyCode, fieldOccurredAt, fieldRegionID},
-	topicCartCompleted:        {fieldCartID, fieldCurrencyCode, fieldOccurredAt, fieldRegionID},
+	topicCartCreated:          {fieldCurrencyCode, fieldOccurredAt, fieldRegionID},
+	topicCartCompleted:        {fieldCurrencyCode, fieldOccurredAt, fieldRegionID},
 	topicOrderCanceled:        {fieldCanceledAt, fieldOrderID},
 	topicOrderCompleted:       {"completed_at", fieldOrderID},
 	topicFulfillmentDelivered: {"delivered_at", fieldFulfillmentID, fieldReference, fieldReturnID},

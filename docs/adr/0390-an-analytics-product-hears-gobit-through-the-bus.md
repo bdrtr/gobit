@@ -3,7 +3,7 @@
 **Summary:** `core/provider` gains no analytics contract; an outside analytics product hears gobit from a
 `webhook-out` receiver or a plugin that subscribes to the bus. It costs a translator or a plugin in front of every product, and what leaves is decided by the sender rather than by the core.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0439](0439-an-id-gobit-hands-out-opens-nothing-at-the-storefront.md), whose join of a page's events to the server's by the cart id is gone behind webhook-out
 - **Date:** 2026-10-05
 
 ## Context

@@ -120,7 +120,7 @@ func TestADeliveryIsPutOnACheaperService(t *testing.T) {
 
 	for surface, timeline := range map[string]*httptest.ResponseRecorder{
 		"admin":      adminCartRequest(t, http.MethodGet, "/admin/v1/orders/"+orderID+"/timeline", ""),
-		"storefront": storefrontRequest(t, http.MethodGet, "/store/v1/orders/"+orderID+"/timeline", ""),
+		"storefront": shopperOrderRequest(t, orderID, http.MethodGet, "/store/v1/orders/"+orderID+"/timeline", ""),
 	} {
 		require.Equal(t, http.StatusOK, timeline.Code, "%s: %s", surface, timeline.Body.String())
 		assert.Contains(t, timeline.Body.String(), `"order.delivery_changed"`, surface)

@@ -48,17 +48,18 @@ func TestAShopperListsTheirOwnOrdersOnTheStorefront(t *testing.T) {
 
 		rec := identifiedStorefrontRequest(t, as, http.MethodGet, "/store/v1/customers/"+of+"/orders", "")
 		var body struct {
-			Data []struct {
-				ID         string `json:"id"`
-				CustomerID string `json:"customer_id"`
-			} `json:"data"`
+			Data []map[string]any `json:"data"`
 		}
 		ids := []string{}
 		if rec.Code == http.StatusOK {
 			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 			for _, order := range body.Data {
-				assert.Equal(t, of, order.CustomerID)
-				ids = append(ids, order.ID)
+				// The storefront record names no customer (ADR 0439): the
+				// list is the proven customer's, and the ids say whose.
+				assert.NotContains(t, order, "customer_id")
+				assert.NotContains(t, order, "cart_id")
+				id, _ := order["id"].(string)
+				ids = append(ids, id)
 			}
 		}
 		return rec.Code, ids

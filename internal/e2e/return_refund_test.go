@@ -60,7 +60,7 @@ func receivedOneUnitReturn(t *testing.T, product string) (orderID, collectionID,
 	t.Helper()
 
 	orderID, collectionID, lineID = placedHappyOrder(t, product)
-	requested := storefrontRequest(t, http.MethodPost, "/store/v1/orders/"+orderID+"/returns",
+	requested := shopperOrderRequest(t, orderID, http.MethodPost, "/store/v1/orders/"+orderID+"/returns",
 		`{"lines":[{"order_line_item_id":"`+lineID+`","quantity":1}]}`)
 	require.Equal(t, http.StatusCreated, requested.Code, requested.Body.String())
 	var opened afterSalesRecordResponse

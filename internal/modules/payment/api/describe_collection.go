@@ -130,19 +130,4 @@ func describeCollections(d *openapi.Doc) {
 			"200": openapi.Response("The collection", d.Item(collectionDTO{})),
 		},
 	})
-
-	d.Describe(http.MethodGet, pathStoreCollection, openapi.Operation{
-		Summary: "Reads a payment collection from the storefront.",
-		Description: "The SAME record the admin surface returns, and that is deliberate: " +
-			"the fields a shopper's checkout needs to decide whether the payment step is " +
-			"finished are the fields an operator needs to decide the same thing, and two " +
-			"shapes for one record would give a client two classes for one concept." +
-			"\n\n" +
-			"The storefront reaches it with the publishable key, which identifies the shop " +
-			"rather than the shopper, so the collection id in the path is the only thing " +
-			"naming whose debt this is — treat it as a capability. " + amountNote,
-		Responses: map[string]any{
-			"200": openapi.Response("The collection", d.Item(collectionDTO{})),
-		},
-	})
 }

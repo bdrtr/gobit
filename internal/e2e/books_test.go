@@ -48,7 +48,7 @@ func TestTheBooksCloseForAReturnedOrder(t *testing.T) {
 	order, err := orderSvc.GetOrder(ctx, placed.OrderID)
 	require.NoError(t, err)
 
-	requested := storefrontRequest(t, http.MethodPost, "/store/v1/orders/"+placed.OrderID+"/returns",
+	requested := shopperOrderRequest(t, placed.OrderID, http.MethodPost, "/store/v1/orders/"+placed.OrderID+"/returns",
 		`{"reason":"books","lines":[{"order_line_item_id":"`+order.Items[0].ID+`","quantity":1}]}`)
 	require.Equal(t, http.StatusCreated, requested.Code, requested.Body.String())
 	var opened afterSalesRecordResponse

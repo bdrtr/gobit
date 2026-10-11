@@ -16,7 +16,7 @@ import (
 // with no customer identity bound the route refuses, because a list of one
 // person's orders has no correct anonymous reader. The records are the order
 // records GET /store/v1/orders/{id} would answer each of, without their lines,
-// newest first.
+// newest first; the same proof opens each of those (ADR 0439).
 
 // pathStoreOwnOrders lists the proven customer's orders.
 const pathStoreOwnOrders = "/store/v1/customers/{id}/orders"
@@ -55,9 +55,9 @@ func (h *Handler) storeListOwnOrders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data := make([]orderDTO, 0, len(result.Items))
+	data := make([]storeOrderDTO, 0, len(result.Items))
 	for i := range result.Items {
-		data = append(data, toOrderDTO(result.Items[i]))
+		data = append(data, toStoreOrderDTO(result.Items[i]))
 	}
 	corehttp.WriteJSON(ctx, w, http.StatusOK, listEnvelope{
 		Data:       data,

@@ -144,7 +144,7 @@ func TestACustomerAddsToAPendingOrder(t *testing.T) {
 	assert.InDelta(t, float64(additionTotal), addition["total"], 0,
 		"the addition's total is its own, priced and taxed by its own cart")
 
-	shown := storefrontRequest(t, http.MethodGet, "/store/v1/orders/"+additionID, "")
+	shown := shopperOrderRequest(t, additionID, http.MethodGet, "/store/v1/orders/"+additionID, "")
 	require.Equal(t, http.StatusOK, shown.Code, "body: %s", shown.Body.String())
 	assert.Equal(t, f.parentID, storefrontData(t, shown)["adds_to_order_id"],
 		"the shopper sees what their order adds to")
@@ -166,7 +166,10 @@ func TestACustomerAddsToAPendingOrder(t *testing.T) {
 }
 
 // TestAnAdditionIsRefusedWhereTheOrderSays reaches every refusal through the
-// HTTP answer, with the order module's own codes, and opens no cart.
+// HTTP answer, with the order module's own codes, and opens no cart. A guest
+// and another customer are answered the unknown order's 404: the cart is
+// opened with an order id gobit hands to webhook receivers, and only the
+// order's own customer is told anything about it (ADR 0439).
 func TestAnAdditionIsRefusedWhereTheOrderSays(t *testing.T) {
 	f := newAdditionFixture(t)
 	otherCustomer, otherEmail := newCustomer(t.Context(), t)
@@ -184,12 +187,12 @@ func TestAnAdditionIsRefusedWhereTheOrderSays(t *testing.T) {
 				return storefrontRequest(t, http.MethodPost, "/store/v1/carts",
 					fmt.Sprintf(`{"country_code":%q,"adds_to_order_id":%q}`, taxedCountry, f.parentID))
 			},
-			status: http.StatusConflict, code: "order_addition_needs_customer",
+			status: http.StatusNotFound, code: "order_not_found",
 		},
 		{
 			name:   "another customer",
 			open:   func() *httptest.ResponseRecorder { return openAdditionCart(t, otherCustomer, otherEmail, f.parentID) },
-			status: http.StatusConflict, code: "order_addition_customer_mismatch",
+			status: http.StatusNotFound, code: "order_not_found",
 		},
 		{
 			name:   "an addition",

@@ -490,10 +490,21 @@ reason: not a wasted record but a **leak**. The record is namespaced by the
 caller's identity, and on the storefront that identity is the PUBLISHABLE KEY —
 the store's, identical for every shopper and visible in every browser — so all
 shoppers share one namespace and the key that selects a record inside it is a
-header the client chooses. A storefront POST whose path carries an id of its own
-survives that, because the fingerprint includes the path: a second shopper
-reusing a key on their own cart, their own customer record or their own order
-gets `409 idempotency_key_reuse`, not somebody else's data. Where the path
+header the client chooses. A storefront POST whose path carries the caller's own
+access survives that, because the fingerprint includes the path: a second
+shopper reusing a key on their own cart gets `409 idempotency_key_reuse`, not
+somebody else's data. A path that names a customer or an order carries no
+access — a customer's id names somebody the identity is asked about, and an
+order's id goes to every webhook receiver of an order topic — so the store ring
+also keys a record on what the request proves: the order token it presents and
+the customer the bound identity proves (`GuardOptions.IdempotencyProof`,
+[ADR 0439](adr/0439-an-id-gobit-hands-out-opens-nothing-at-the-storefront.md)). Before that, a stranger replaying an owner's key, path and body
+was answered the owner's recorded return, and one writing first under the
+owner's key recorded a refusal the owner was then answered. A cart's routes
+are keyed on their path as before and ask the identity nothing; any other keyed
+write whose proof cannot be read, during an identity outage, is refused with the
+identity's own class and writes nothing.
+Where the path
 carries no id, only the BODY is left to tell two shoppers apart, and that is
 enough for `POST /store/v1/customers`: a guest registration must carry an e-mail
 address (an empty one is refused), so two shoppers do not send the same bytes.
@@ -508,6 +519,13 @@ responses and `Idempotency-Replayed: true` on the second. The exemption costs a
 duplicate cart when a client retries a creation that timed out — an abandoned
 row, against handing a stranger someone else's cart. This path too comes from the
 module's constant, `cartapi.StoreCartsPath`.
+
+A cart's completion stays in the ring, and its recorded response carries a
+secret: the order's access token ([ADR 0439](adr/0439-an-id-gobit-hands-out-opens-nothing-at-the-storefront.md)). The path names the cart, so a
+repeat reaches that record only with the cart's id, the same key and the same
+body, and a cart's id is its access already; but the record holds the token's
+plaintext for `IDEMPOTENCY_TTL`, in Redis where the guard backend is, while the
+order keeps only its digest.
 
 `TRUSTED_PROXY_HOPS` is the number of **trusted** reverse proxies between us and
 the request, and it can be got wrong in both directions — but the two costs are

@@ -81,6 +81,13 @@ const (
 	dataKeyCurrencyCode = "currency_code"
 	dataKeyTotal        = "total"
 	dataKeyItemCount    = "item_count"
+	// dataKeyOrderToken is the order's access token, which opens the order at
+	// the storefront (ADR 0439). A template builds the shopper's link with
+	// it; each mail carries its own, issued as the mail is built, so the
+	// order keeps a digest of every one and no store holds the plaintext. The
+	// link should carry it where the storefront reads it off the URL once and
+	// puts it in X-Order-Token, never as a path a third-party script sees.
+	dataKeyOrderToken = "order_token"
 )
 
 // EventSubscriber is the NARROW surface the module wants from the event bus.
@@ -168,7 +175,8 @@ func (s *Service) OrderCompleted(ctx context.Context, e eventbus.Event) error {
 
 // orderMail builds an order mail with the given template from the order
 // record, the same way for the event and for an operator's resend (ADR 0243,
-// ADR 0386). The confirmation and the completion notice carry the same data.
+// ADR 0386). The confirmation and the completion notice carry the same data,
+// and each a new access token for the order (ADR 0439).
 func (s *Service) orderMail(ctx context.Context, orderID, template string) (NotifyInput, error) {
 	raw, err := s.contacts.OrderContactJSON(ctx, orderID)
 	if err != nil {
@@ -184,6 +192,15 @@ func (s *Service) orderMail(ctx context.Context, orderID, template string) (Noti
 		return NotifyInput{}, err
 	}
 
+	// A mail without its token would send the shopper to a page that opens
+	// to nothing, so a token that could not be made fails the mail as an
+	// unread contact does, and the bus asks again (ADR 0439).
+	token, err := s.contacts.IssueOrderAccessToken(ctx, orderID)
+	if err != nil {
+		return NotifyInput{}, errors.Wrap(err, errors.KindOf(err), CodeContactUnavailable,
+			"no access token could be issued for the order's mail: %s", orderID)
+	}
+
 	return NotifyInput{
 		Template:  template,
 		Channel:   coreprovider.ChannelEmail,
@@ -195,6 +212,7 @@ func (s *Service) orderMail(ctx context.Context, orderID, template string) (Noti
 			dataKeyCurrencyCode: contact.CurrencyCode,
 			dataKeyTotal:        contact.Total,
 			dataKeyItemCount:    contact.ItemCount,
+			dataKeyOrderToken:   token,
 		},
 	}, nil
 }

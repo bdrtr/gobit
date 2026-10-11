@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	corehttp "github.com/bdrtr/gobit/core/http"
 	ordermodels "github.com/bdrtr/gobit/internal/modules/order/models"
 	"github.com/bdrtr/gobit/internal/modules/payment/manual"
 )
@@ -123,6 +124,7 @@ type storefrontCompletionResult struct {
 	CartID       string `json:"cart_id"`
 	CurrencyCode string `json:"currency_code"`
 	Total        int64  `json:"total"`
+	OrderToken   string `json:"order_token"`
 }
 
 // storefrontOrder holds the order body fields the scenario reads.
@@ -222,7 +224,7 @@ func TestStorefrontFromCartToOrderInARealProcess(t *testing.T) {
 		require.Len(t, cart.Items, 1, "the cart must hold a single line item")
 	})
 
-	var orderID string
+	var orderID, orderToken string
 
 	t.Run("the cart is turned into an order", func(t *testing.T) {
 		status, body := s.storefrontRequest(http.MethodPost, "/store/v1/carts/"+cartID+"/complete",
@@ -245,6 +247,22 @@ func TestStorefrontFromCartToOrderInARealProcess(t *testing.T) {
 			"the amount charged must be the HAND-computed grand total")
 
 		orderID = result.OrderID
+		orderToken = result.OrderToken
+	})
+
+	t.Run("the order opens to its token and not to its id", func(t *testing.T) {
+		require.NotEmpty(t, orderToken, "the completion answered no order_token (ADR 0439)")
+
+		status, body := s.storefrontRequest(http.MethodGet, "/store/v1/orders/"+orderID, storefrontKey, nil)
+		assert.Equal(t, http.StatusNotFound, status,
+			"the order id alone opened the order; gobit sends it to webhook receivers. body: %s", body)
+
+		status, body = s.jsonRequest(http.MethodGet, "/store/v1/orders/"+orderID, nil, map[string]string{
+			corehttp.PublishableKeyHeader: storefrontKey,
+			corehttp.OrderTokenHeader:     orderToken,
+		})
+		require.Equal(t, http.StatusOK, status, "the completion's token did not open the order; body: %s", body)
+		assert.NotContains(t, body, `"cart_id"`, "the storefront record names the order's cart")
 	})
 
 	t.Run("the order is durable and its amounts match the cart's", func(t *testing.T) {
@@ -274,10 +292,13 @@ func TestStorefrontFromCartToOrderInARealProcess(t *testing.T) {
 		// could have been the source of a second order. The assertion looks at the
 		// cart's BEHAVIOR and not at its flag, because behavior is what the
 		// storefront client sees.
+		// A completed cart answers the storefront the unknown cart's 404 on every
+		// route (ADR 0439): its addresses and customer are the order's now.
 		status, body := s.storefrontRequest(http.MethodPost, lineItemPath, storefrontKey,
 			map[string]any{"variant_id": variantID, "quantity": int64(1)})
-		assert.Equal(t, http.StatusConflict, status,
+		assert.Equal(t, http.StatusNotFound, status,
 			"a completed cart must not be modifiable; body: %s", body)
+		assert.Contains(t, body, "cart_not_found", "the refusal is an unknown cart's")
 	})
 }
 

@@ -5,7 +5,7 @@ one plugin turns them, beside `order.placed`, into a daily funnel an operator ca
 read. It costs two more mandatorily forwarded topics and a transaction where there
 was one insert, and it gives a shop the denominator of every conversion question.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0439](0439-an-id-gobit-hands-out-opens-nothing-at-the-storefront.md), whose cart topics' webhook deliveries withhold `cart_id` and whose event ids name the cart by a digest
 - **Date:** 2026-09-12
 
 ## Context

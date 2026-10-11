@@ -439,9 +439,11 @@ func (s *Service) Erase(ctx context.Context, subject personaldata.Subject) (pers
 		}
 
 		ids := make([]string, 0, len(candidates))
+		every := make([]string, 0, len(candidates))
 		// By index: the candidate carries twelve fields and copying it per turn
 		// would move them for nothing.
 		for i := range candidates {
+			every = append(every, candidates[i].OrderID)
 			fact := candidates[i].Unsettled()
 			// An order that was ALREADY erased is never retained, however
 			// unsettled it has since become. The carve-out exists to keep an
@@ -461,6 +463,18 @@ func (s *Service) Erase(ctx context.Context, subject personaldata.Subject) (pers
 				continue
 			}
 			ids = append(ids, candidates[i].OrderID)
+		}
+
+		// A forgotten person's links open nothing (ADR 0439), on every order of
+		// theirs — a retained one too. Retention keeps what the order is still
+		// performed with, the contact and the address, for the shop; a link in
+		// a mail is the person's access, and the person asked to be forgotten.
+		// A registered customer's own proof still opens a retained order. The
+		// tokens are not counted in the rows: they hold nothing about the
+		// person, and the report a controller compares across sweeps would
+		// shrink on the second.
+		if _, err := s.store.WithdrawAccessTokens(ctx, every); err != nil {
+			return err
 		}
 		if len(ids) == 0 {
 			return nil

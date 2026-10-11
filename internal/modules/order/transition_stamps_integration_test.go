@@ -308,9 +308,9 @@ func TestAnExchangeOnACanceledOrderCanStillBeWithdrawn(t *testing.T) {
 //
 // What the test shows is the shape of the defect the missing route left behind.
 // Step 2 is the whole point: with no caller for CancelReturn, a single request
-// for the full line — one the STOREFRONT endpoint opens knowing nothing but the
-// order id — made those units unreturnable for the life of the order, and no
-// operator had any way to give them back.
+// for the full line — one the STOREFRONT endpoint then opened knowing nothing
+// but the order id, which ADR 0439 closed — made those units unreturnable for
+// the life of the order, and no operator had any way to give them back.
 func TestAWithdrawnReturnGivesItsUnitsBackOnTheRealDatabase(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newService(t)

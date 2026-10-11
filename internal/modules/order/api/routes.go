@@ -71,14 +71,11 @@ func (h *Handler) Routes(r chi.Router) {
 
 	// --- Store API (customer) ---
 	//
-	// ~~READ ONLY.~~ **Corrected 2026-09-07:** it is not — the return request
-	// registered below is a POST, so the storefront surface CREATES a record
-	// as well as reading one.
-	//
-	// No scope IS ADDED to the storefront surface: the identity there is the
-	// publishable key and that key by definition carries no scope. Verifying
-	// that the order BELONGS TO THE CUSTOMER is separate work and is still not
-	// done; this is a deliberate gap, not a hidden assumption.
+	// The storefront reads an order and asks for a return on it. No scope IS
+	// ADDED there: the identity is the publishable key and that key by
+	// definition carries no scope. What opens an order is one of its access
+	// tokens or its customer's proof, and the id alone opens nothing
+	// (ADR 0439, Handler.storeOrderAccess).
 	r.Get("/store/v1/orders/{id}", h.storeGetOrder)
 	// A customer's own orders are the exception: the route PROVES the customer
 	// through the installation's customer identity (ADR 0367).
@@ -126,9 +123,9 @@ func (h *Handler) Routes(r chi.Router) {
 	read.Get("/admin/v1/orders/{id}/returns/{returnId}", h.adminGetReturn)
 	write.Post("/admin/v1/orders/{id}/returns/{returnId}/receive", h.adminReceiveReturn)
 	write.Post("/admin/v1/orders/{id}/returns/{returnId}/refund", h.adminRefundReturn)
-	// The return's release valve. Without it a request — which the STOREFRONT
-	// can open knowing nothing but the order id — held the line's returnable
-	// quantity for good; see Handler.adminCancelReturn.
+	// The return's release valve. Without it a request the STOREFRONT opened
+	// held the line's returnable quantity for good; see
+	// Handler.adminCancelReturn.
 	write.Post("/admin/v1/orders/{id}/returns/{returnId}/cancel", h.adminCancelReturn)
 	read.Get("/admin/v1/orders/{id}/exchanges", h.adminListExchanges)
 	write.Post("/admin/v1/orders/{id}/exchanges", h.adminCreateExchange)

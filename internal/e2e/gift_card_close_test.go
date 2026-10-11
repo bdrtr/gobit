@@ -42,7 +42,7 @@ func TestABoughtCardIsClosedAndNotReturned(t *testing.T) {
 	order, err := orderSvc.GetOrder(ctx, bought.OrderID)
 	require.NoError(t, err)
 
-	asked := storefrontRequest(t, http.MethodPost, "/store/v1/orders/"+bought.OrderID+"/returns",
+	asked := shopperOrderRequest(t, bought.OrderID, http.MethodPost, "/store/v1/orders/"+bought.OrderID+"/returns",
 		`{"reason":"changed my mind","lines":[{"order_line_item_id":"`+order.Items[0].ID+`","quantity":1}]}`)
 	require.Equal(t, http.StatusConflict, asked.Code, asked.Body.String())
 	assert.Contains(t, asked.Body.String(), ordersvc.CodeGiftCardLineFinal)

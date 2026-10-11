@@ -121,7 +121,7 @@ func TestAnEngravingIsALineOfItsRingsOwn(t *testing.T) {
 		}
 	}
 	askBack := func(lines string) (int, string) {
-		rec := storefrontRequest(t, http.MethodPost, "/store/v1/orders/"+orderID+"/returns",
+		rec := shopperOrderRequest(t, orderID, http.MethodPost, "/store/v1/orders/"+orderID+"/returns",
 			`{"reason":"too small","lines":[`+lines+`]}`)
 		return rec.Code, rec.Body.String()
 	}

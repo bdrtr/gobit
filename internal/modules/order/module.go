@@ -49,9 +49,11 @@
 //     quantity and the amount of a sale were reachable only one order at a
 //     time. Its date filter selects on the ORDER's placed_at.
 //   - /admin/v1/orders … — the admin API (reads + status transitions).
-//   - /store/v1/orders/{id} and POST /store/v1/orders/{id}/returns — the
-//     customer API. It reads the order and it also CREATES a return request,
-//     so the storefront surface is not read-only.
+//   - /store/v1/orders/{id}, its timeline and POST /store/v1/orders/{id}/returns
+//     — the customer API. It reads the order and it also CREATES a return
+//     request, so the storefront surface is not read-only. Each answers a
+//     caller presenting one of the order's access tokens or proving its
+//     customer (ADR 0439); "order.interop" issues the tokens.
 //
 // # The optional capabilities it implements
 //

@@ -179,6 +179,20 @@ type GuardOptions struct {
 	// The exemption is ONLY from the idempotency ring: the path keeps going through
 	// the rate limit and through identity.
 	IdempotencyExempt []string
+	// IdempotencyProof names what a STORE request proves beyond the publishable
+	// key, and the store ring mixes it into the record's namespace (ADR 0439).
+	//
+	// The publishable key is every shopper's principal, so without it a record is
+	// told apart by the path and the body alone; that holds where the path is the
+	// caller's access, a cart's id, and fails where it is not: an order's id is
+	// handed to webhook receivers, and a customer's names a customer the route
+	// asks the identity about. The core cannot read the embedder's proof itself —
+	// the identity is bound in the container after the stack is built — so the
+	// side building the application passes it, and decides which routes ask
+	// none: a cart's routes carry their access in the path. A proof that cannot
+	// be read refuses the write (see [IdempotencyProofFunc]). Nil keys the
+	// store ring on the principal alone.
+	IdempotencyProof IdempotencyProofFunc
 	// PublishableKeyHeader is the header the publishable key is read from; empty
 	// means [PublishableKeyHeader].
 	PublishableKeyHeader string
@@ -286,13 +300,13 @@ func APIGuards(opts GuardOptions) []func(http.Handler) http.Handler {
 	)
 
 	if opts.IdempotencyStore != nil {
-		idem := Idempotency(opts.IdempotencyStore)
 		// The exempt list is the SAME for both prefixes: a path sits under only one of
 		// them anyway, and splitting the list in two would make the caller answer a
-		// meaningless question.
+		// meaningless question. The proof is the store's alone: an admin principal
+		// names its caller already.
 		stack = append(stack,
-			Scoped(admin, opts.IdempotencyExempt, idem),
-			Scoped(store, opts.IdempotencyExempt, idem))
+			Scoped(admin, opts.IdempotencyExempt, Idempotency(opts.IdempotencyStore)),
+			Scoped(store, opts.IdempotencyExempt, idempotency(opts.IdempotencyStore, opts.IdempotencyProof)))
 	}
 
 	return stack

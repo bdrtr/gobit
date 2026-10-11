@@ -508,6 +508,11 @@ type Orders interface {
 	// as a JSON array. The last step reads it to name a backordered line's
 	// order line and to settle its claim against the write-offs (ADR 0392).
 	DispatchableLinesJSON(ctx context.Context, orderID string) (json.RawMessage, error)
+
+	// IssueOrderAccessToken makes a new access token for the order and returns
+	// the only copy (ADR 0439). The completion asks it after the saga, for the
+	// storefront that completed the cart; NotFound when there is no such order.
+	IssueOrderAccessToken(ctx context.Context, orderID string) (string, error)
 }
 
 // Payments is the surface of the payment module ("payment.interop") used by

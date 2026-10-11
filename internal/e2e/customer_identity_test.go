@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/core/container"
+	coreerrors "github.com/bdrtr/gobit/core/errors"
 	corehttp "github.com/bdrtr/gobit/core/http"
 	b2bmodels "github.com/bdrtr/gobit/internal/modules/b2b/models"
 )
@@ -49,6 +50,12 @@ import (
 // checking.
 const customerHeader = "X-E2E-Customer"
 
+// identityDown is a proof this harness's verifier cannot read, as a session
+// store that is down cannot: it answers a classified Unavailable error, which is
+// a failure to check rather than a refusal (ADR 0364, ADR 0371). The
+// idempotency tests of ADR 0439 send it to stand an outage up.
+const identityDown = "cust_IDENTITY_DOWN"
+
 // aStranger is a customer identifier a caller can prove while naming somebody
 // else. Nothing about an identifier is secret — it travels in cart and order
 // response bodies — which is what made believing one a defect.
@@ -78,6 +85,9 @@ func (storefrontIdentity) CustomerID(r *http.Request) (string, error) {
 	id := r.Header.Get(customerHeader)
 	if id == "" {
 		return "", errNoSession
+	}
+	if id == identityDown {
+		return "", coreerrors.Unavailable("e2e_identity_down", "the harness's session store is down")
 	}
 
 	return id, nil

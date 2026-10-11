@@ -245,7 +245,7 @@ func describedEndpoints() []endpointExpectation {
 		},
 		{
 			method: http.MethodGet, path: pathStoreOwnOrders, status: "200",
-			response: filledOrder(), shape: pagedList,
+			response: filledOrder().storeOrderDTO, shape: pagedList,
 		},
 		{
 			method: http.MethodGet, path: "/admin/v1/orders/{id}/returns", status: "200",
@@ -636,8 +636,10 @@ func describedEndpoints() []endpointExpectation {
 			response: filledAdminOrderDetail(),
 		},
 		{
+			// The storefront's record is a type of its own (ADR 0439): this row
+			// is what notices a cart or customer id coming back into it.
 			method: http.MethodGet, path: "/store/v1/orders/{id}", status: "200",
-			response: filledOrderDetail(),
+			response: filledStoreOrderDetail(),
 		},
 		{
 			method: http.MethodPost, path: "/admin/v1/orders/{id}/cancel", status: "200",
@@ -671,10 +673,20 @@ func describedEndpoints() []endpointExpectation {
 // comparison is "the schema's field set = the encoded key set", and a zero
 // sample would drop exactly the fields that carry omitempty.
 func filledOrderDetail() orderDetailDTO {
-	return orderDetailDTO{
-		orderDTO: filledOrder(),
-		Items:    []lineItemDTO{{Metadata: map[string]any{"k": "v"}, Properties: map[string]string{"Engraving": "A"}}},
-		Summary:  summaryDTO{},
+	return orderDetailDTO{orderDTO: filledOrder(), orderPartsDTO: filledOrderParts()}
+}
+
+// filledStoreOrderDetail is the storefront's record of [filledOrderDetail].
+func filledStoreOrderDetail() storeOrderDetailDTO {
+	return storeOrderDetailDTO{storeOrderDTO: filledOrder().storeOrderDTO, orderPartsDTO: filledOrderParts()}
+}
+
+// filledOrderParts produces the lines, summary and deliveries of an order with
+// their omitempty fields written.
+func filledOrderParts() orderPartsDTO {
+	return orderPartsDTO{
+		Items:   []lineItemDTO{{Metadata: map[string]any{"k": "v"}, Properties: map[string]string{"Engraving": "A"}}},
+		Summary: summaryDTO{},
 		ShippingMethods: []shippingMethodDTO{
 			{ID: "oship_1", ShippingOptionID: "so_1", Name: "Standard", Amount: 2500,
 				Changes: []deliveryChangeDTO{{
@@ -740,15 +752,17 @@ func filledOrder() orderDTO {
 	now := time.Now().UTC()
 
 	return orderDTO{
-		CustomerID:    "cus_1",
-		Email:         "a@b.c",
-		CartID:        "cart_1",
-		AddsToOrderID: "order_0",
-		Metadata:      map[string]any{"k": "v"},
-		CompletedAt:   &now,
-		CanceledAt:    &now,
-		ArchivedAt:    &now,
-		CancelReason:  "the customer changed their mind",
+		storeOrderDTO: storeOrderDTO{
+			Email:         "a@b.c",
+			AddsToOrderID: "order_0",
+			Metadata:      map[string]any{"k": "v"},
+			CompletedAt:   &now,
+			CanceledAt:    &now,
+			ArchivedAt:    &now,
+			CancelReason:  "the customer changed their mind",
+		},
+		CustomerID: "cus_1",
+		CartID:     "cart_1",
 	}
 }
 

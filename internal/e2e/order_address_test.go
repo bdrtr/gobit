@@ -85,10 +85,10 @@ func TestTheOperatorReadsWhereAnOrderWent(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "Engines Ltd", billing["company"])
 
-	shown := storefrontRequest(t, http.MethodGet, "/store/v1/orders/"+orderID, "")
+	shown := shopperOrderRequest(t, orderID, http.MethodGet, "/store/v1/orders/"+orderID, "")
 	require.Equal(t, http.StatusOK, shown.Code, "body: %s", shown.Body.String())
 	assert.NotContains(t, storefrontData(t, shown), "shipping_address",
-		"the storefront read, open to whoever holds the id, carries no address")
+		"the storefront read carries no address")
 }
 
 // TestAnInvoiceBillsWhomTheOrderWasBilledTo issues a document from a body that

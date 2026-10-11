@@ -273,7 +273,8 @@ func storeEndpoints() []endpointExpectation {
 		},
 		{
 			method: http.MethodPost, path: "/store/v1/carts/{id}/complete", status: "200",
-			request: completeCartRequest{}, response: completeCartDTO{},
+			// The token is filled so the omitempty field is among the keys.
+			request: completeCartRequest{}, response: completeCartDTO{OrderToken: "ordtok_1"},
 		},
 		{
 			method: http.MethodDelete,

@@ -4,7 +4,7 @@
 about the order and the goods; the money moments and the archiving do not cross.
 It costs a second response type that cannot hold a figure.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0439](0439-an-id-gobit-hands-out-opens-nothing-at-the-storefront.md), whose timeline opens to the order's token or its customer's proof rather than to its id
 - **Date:** 2026-09-09
 
 ## Context

@@ -50,6 +50,13 @@ type fakeOrders struct {
 	// exercise the error mapping.
 	err error
 
+	// access is what StorefrontAccess answers (ADR 0439); nil answers that the
+	// request presented the order's token, so a storefront route's own
+	// behavior is tested apart from the gate, whose tests script this.
+	// gotToken is the token the route handed it.
+	access   *service.StorefrontAccess
+	gotToken string
+
 	// journal is the scripted journal and journalQueries how it was asked
 	// (ADR 0188).
 	journal        service.Journal
@@ -265,6 +272,22 @@ func (f *fakeOrders) StorefrontTimeline(
 	_ context.Context, _ string,
 ) ([]service.TimelineEntry, error) {
 	return f.timeline, f.timelineErr
+}
+
+// StorefrontAccess answers the scripted access, or that the token matched.
+func (f *fakeOrders) StorefrontAccess(
+	_ context.Context, orderID, token string,
+) (service.StorefrontAccess, error) {
+	f.record("StorefrontAccess")
+	f.gotOrderID, f.gotToken = orderID, token
+	if f.err != nil {
+		return service.StorefrontAccess{}, f.err
+	}
+	if f.access != nil {
+		return *f.access, nil
+	}
+
+	return service.StorefrontAccess{TokenMatches: true}, nil
 }
 
 // PaymentOf returns the scripted live payment view.
@@ -596,7 +619,8 @@ func TestStoreGetOrderReturnsSameEnvelope(t *testing.T) {
 	rec := doRequest(t, r, http.MethodGet, "/store/v1/orders/order_1", "")
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, []string{"GetOrder"}, svc.calls)
+	assert.Equal(t, []string{"StorefrontAccess", "GetOrder"}, svc.calls,
+		"the access is decided before the order is read (ADR 0439)")
 }
 
 // TestAnOrderSaysWhetherItsPricesIncludeTax holds the flag on the record both
@@ -1321,7 +1345,7 @@ func TestStorefrontEndpointRequiresNoScope(t *testing.T) {
 	rec := doRequestAs(t, r, http.MethodGet, "/store/v1/orders/order_1", "", storefront)
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, []string{"GetOrder"}, svc.calls)
+	assert.Equal(t, []string{"StorefrontAccess", "GetOrder"}, svc.calls)
 }
 
 // TestTheOrdersLivePaymentIsReadable is the read the "order_payment" link was
@@ -1666,7 +1690,8 @@ func TestAReturnRequestWithNoLinesIsRefused(t *testing.T) {
 		`{"lines":[]}`, corehttp.Principal{})
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-	assert.Empty(t, svc.calls)
+	assert.Equal(t, []string{"StorefrontAccess"}, svc.calls,
+		"the access is decided and nothing is written (ADR 0439)")
 }
 
 // CreateReplacement records what a claim will send.
@@ -2110,9 +2135,9 @@ func TestAnOpenExchangePublishesNeitherMoment(t *testing.T) {
 // TestTheOperatorReadsWhereTheOrderWent holds the two addresses on the admin
 // record, and off the storefront's (ADR 0193).
 //
-// The storefront reads an order by an id anyone holding it can send, with a
-// key that names the shop; the operator reads it under order:read. The same
-// detail feeds both, so the test reads both.
+// The storefront reads an order for its token or its customer's proof
+// (ADR 0439); the operator reads it under order:read. The same detail feeds
+// both, so the test reads both.
 func TestTheOperatorReadsWhereTheOrderWent(t *testing.T) {
 	detail := sampleDetail()
 	detail.ShippingAddress = &models.OrderAddress{
@@ -2154,6 +2179,11 @@ func TestTheOperatorReadsWhereTheOrderWent(t *testing.T) {
 	require.True(t, ok)
 	assert.NotContains(t, data, "shipping_address", "the storefront read carries no address")
 	assert.NotContains(t, data, "billing_address")
+	// Nor the two ids the admin record carries (ADR 0439): the cart's id
+	// opened the completed cart's addresses, and the customer's is the lever
+	// webhook-out withholds.
+	assert.NotContains(t, data, "cart_id", "the storefront read names the order's cart")
+	assert.NotContains(t, data, "customer_id", "the storefront read names the order's customer")
 }
 
 // TestAdminWithdrawReplacementFailsClosedWithoutTheFlow holds ADR 0237's

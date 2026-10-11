@@ -107,6 +107,12 @@ type completeCartRequest struct {
 	// sets it from the caller's identity, and a storefront's never does (ADR
 	// 0298).
 	PlacedBy string `json:"placed_by,omitempty"`
+	// IssueOrderToken asks for the order's access token in the answer; a
+	// storefront's completion sets it and the operator's never does
+	// (ADR 0439). It decides who receives a credential, which is why the
+	// module that sends this document sets it from the route rather than from
+	// the body.
+	IssueOrderToken bool `json:"issue_order_token,omitempty"`
 
 	// THE LOCATION IS NOT HERE and will not be. [CompleteCartInput.LocationID]
 	// pins which WAREHOUSE the goods leave from; that is a shipping decision and
@@ -143,6 +149,10 @@ type completeCartResponse struct {
 	// Outstanding is what the order still owes: the part of an offline
 	// method, paid later (ADR 0284).
 	Outstanding int64 `json:"outstanding"`
+	// OrderToken is the order's access token, when the request asked for one
+	// and it could be issued (ADR 0439). It is the only copy: the order keeps
+	// its digest.
+	OrderToken string `json:"order_token,omitempty"`
 }
 
 // CompleteCartJSON turns the cart into an order.
@@ -179,6 +189,7 @@ func (i *Interop) CompleteCartJSON(ctx context.Context, request json.RawMessage)
 		ExpectedTotal:     req.ExpectedTotal,
 		OfflineOnly:       req.OfflineOnly,
 		PlacedBy:          req.PlacedBy,
+		IssueOrderToken:   req.IssueOrderToken,
 	})
 	if err != nil {
 		return nil, err
@@ -190,5 +201,6 @@ func (i *Interop) CompleteCartJSON(ctx context.Context, request json.RawMessage)
 		CurrencyCode: result.CurrencyCode,
 		Amount:       result.Amount,
 		Outstanding:  result.Outstanding,
+		OrderToken:   result.OrderToken,
 	})
 }

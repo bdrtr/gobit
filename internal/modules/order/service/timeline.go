@@ -620,8 +620,8 @@ func deliveryChangeEntries(currency string, changes []models.DeliveryChange) []T
 // correctionEntries dates each shipping address a correction closed (ADR 0195).
 //
 // The entry names the closed row and says nothing of either address: the
-// timeline reaches the storefront, whose read is open to anyone holding the
-// order's id, and where the parcel goes is the admin record's to say.
+// timeline reaches the storefront, and where the parcel goes is the admin
+// record's to say (ADR 0193).
 func correctionEntries(addresses []models.OrderAddress) []TimelineEntry {
 	var entries []TimelineEntry
 	for i := range addresses {

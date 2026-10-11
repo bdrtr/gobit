@@ -204,8 +204,9 @@ func Describe(d *openapi.Doc) {
 		Description: "The path's customer has to be the one the request proves through the " +
 			"installation's customer identity, as for the customer's addresses and " +
 			"balances: a storefront signed a shopper in, read their id, and lists their " +
-			"orders here (ADR 0367). Each record is the order without its lines; " +
-			"GET /store/v1/orders/{id} reads one with them.",
+			"orders here (ADR 0367). Each record is the order without its lines, and " +
+			"without the cart and customer ids (ADR 0439); GET /store/v1/orders/{id} reads " +
+			"one with them for the same proof.",
 		Parameters: []openapi.Parameter{
 			queryParameter("limit", typeInteger,
 				"Page size; when it is not given the service's default applies."),
@@ -217,7 +218,7 @@ func Describe(d *openapi.Doc) {
 		},
 		Responses: map[string]any{
 			"200": openapi.Response("Page of the customer's orders",
-				d.List(orderDTO{}, openapi.WithCursor())),
+				d.List(storeOrderDTO{}, openapi.WithCursor())),
 			"401": openapi.ErrorResponse("No customer identity is bound, or the request " +
 				"proves no customer (\"identity_not_bound\")."),
 			"403": openapi.ErrorResponse("The request proves another customer than the " +
@@ -1171,11 +1172,12 @@ func describeTimeline(d *openapi.Doc) {
 			"\"at\" is NULL really happened and its moment was never recorded; those come " +
 			"LAST. " +
 			"\n\n" +
-			"KNOWING THE ORDER ID IS THE CAPABILITY. This route names an order rather than " +
-			"a customer, so the embedding application is what decides whether the caller may " +
-			"see it (ADR 0008), exactly as on the order read.",
+			"A parcel's moments carry its tracking number in \"detail\", which the parcel's " +
+			"webhooks leave out (ADR 0437). " + storeOrderAccessNote,
+		Parameters: []openapi.Parameter{orderTokenParameter()},
 		Responses: map[string]any{
 			"200": openapi.Response("The order's timeline", d.Item([]storeTimelineEntryDTO{})),
+			"404": openapi.ErrorResponse(storeOrderRefusal),
 		},
 	})
 
@@ -1301,10 +1303,15 @@ func describeAfterSales(d *openapi.Doc) {
 			"cart that names its own shipping price. " +
 			"\n\n" +
 			"\"reason\" is optional free text. Opening publishes order.return_opened, " +
-			"which carries neither the reason nor the lines (ADR 0437). " + returnRecordNote,
+			"which carries neither the reason nor the lines (ADR 0437). " + returnRecordNote +
+			"\n\n" +
+			"A request holds the units it names until an operator receives or withdraws it. " +
+			storeOrderAccessNote,
+		Parameters:  []openapi.Parameter{orderTokenParameter()},
 		RequestBody: d.RequestBody(storeReturnRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response("The opened return request", d.Item(returnDTO{})),
+			"404": openapi.ErrorResponse(storeOrderRefusal),
 		},
 	})
 }

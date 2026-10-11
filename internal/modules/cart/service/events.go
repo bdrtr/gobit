@@ -89,19 +89,25 @@ func cartEventPayload(cart models.Cart, at time.Time) map[string]any {
 	}
 }
 
-// cartEventID derives an event's id from the topic and the cart.
+// EventID derives a cart event's id from the topic and the cart. It is
+// exported for the readers that look an event up by its id: the analytics
+// funnel's tests, which wait for a cart's row.
 //
-// A cart is created once and completed once, so the cart's own id makes each
-// topic's event unique without a second column to key on — and being DERIVED is
-// what makes the outbox row and the direct publish ONE event rather than two: a
+// A cart is created once and completed once, so the cart makes each topic's
+// event unique without a second column to key on — and being DERIVED is what
+// makes the outbox row and the direct publish ONE event rather than two: a
 // subscriber that is idempotent on the id, which the bus's at-least-once contract
 // already requires of it, cannot tell the two deliveries apart.
 //
 // The topic is part of the id because the same cart produces both events; keyed
 // on the cart alone, the completion would look like a redelivery of the creation
 // and the outbox's `ON CONFLICT (id) DO NOTHING` would drop it in silence.
-func cartEventID(topic, cartID string) string {
-	return topic + ":" + cartID
+//
+// The cart is named by its digest, [cartEventKey], and not by its id: the id is
+// the cart's access at the storefront, and an event id travels in every webhook
+// delivery's envelope, where the payload's cart_id is withheld (ADR 0439).
+func EventID(topic, cartID string) string {
+	return topic + ":" + cartEventKey(cartID)
 }
 
 // publishCartEvent sends the event AFTER the transaction has committed.
@@ -113,7 +119,7 @@ func cartEventID(topic, cartID string) string {
 // rather than up to a minute later.
 func (s *Service) publishCartEvent(ctx context.Context, topic string, cart models.Cart, at time.Time) {
 	err := s.events.Publish(ctx, eventbus.Event{
-		ID:   cartEventID(topic, cart.ID),
+		ID:   EventID(topic, cart.ID),
 		Name: topic,
 		Data: cartEventPayload(cart, at),
 	})
@@ -136,5 +142,5 @@ func (s *Service) recordCartEvent(
 	ctx context.Context, topic string, cart models.Cart, at time.Time,
 ) error {
 	return s.store.WriteOutboxEvent(ctx,
-		cartEventID(topic, cart.ID), topic, cartEventPayload(cart, at))
+		EventID(topic, cart.ID), topic, cartEventPayload(cart, at))
 }

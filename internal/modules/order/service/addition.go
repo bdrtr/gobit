@@ -33,6 +33,20 @@ const (
 // mistyped or closed order is refused before anything is bought. The answer
 // can change before the addition is placed, and the write asks again under a
 // lock on the parent ([Service.writeOrder]); this read takes none.
+//
+// # The order is told about only to its own customer (ADR 0439)
+//
+// The cart is opened at the storefront with an order id gobit hands to webhook
+// receivers, so an answer about the order is an answer to whoever holds the id.
+// The refusals below said that the order exists, that it adds to another (and
+// which), and its status, before they asked whose it is. So the customer is
+// asked first: a request naming no customer, or another than the order's, is
+// answered word for word what an unknown id is. That is the order's access
+// proof reduced to what an addition can use — an addition needs a customer, so
+// an access token, which a guest holds, opens nothing here. The cart's
+// customer is the one the bound identity proved (ADR 0057, ADR 0125). The
+// operator's door asks the same question and gets the same answer; the panel
+// reads the order.
 func (s *Service) CheckAddition(ctx context.Context, orderID, customerID, currencyCode string) error {
 	if err := requireID("adds_to_order_id", orderID); err != nil {
 		return err
@@ -48,6 +62,9 @@ func (s *Service) CheckAddition(ctx context.Context, orderID, customerID, curren
 	parent, err := s.store.GetOrder(ctx, orderID)
 	if err != nil {
 		return err
+	}
+	if customerID == "" || parent.CustomerID != customerID {
+		return errors.NotFound(CodeOrderNotFound, "order not found: %s", orderID)
 	}
 	return additionRefusal(parent, customerID, currency)
 }

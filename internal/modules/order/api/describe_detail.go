@@ -3,8 +3,43 @@ package api
 import (
 	"net/http"
 
+	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/openapi"
 )
+
+// storeOrderAccessNote is what the three storefront order routes say about who
+// may call them (ADR 0439).
+const storeOrderAccessNote = "The storefront's publishable key names the shop rather than the " +
+	"shopper, and the order id is not a secret: gobit sends it to every webhook receiver of " +
+	"an order topic. So the route answers a request that presents one of the order's access " +
+	"tokens in the \"" + corehttp.OrderTokenHeader + "\" header, or that the installation's " +
+	"customer identity proves to be the order's customer. A storefront receives a token as " +
+	"\"order_token\" in the answer of POST /store/v1/carts/{id}/complete, and each order mail " +
+	"carries another as \"order_token\" in its template data; a guest's order is opened by a " +
+	"token alone, and an order placed before tokens existed by its customer's proof alone. " +
+	"Send the token in the header and never in a URL: the request log writes the path. Every " +
+	"answer carries Cache-Control: no-store and varies on the token's header. An Idempotency-Key " +
+	"on the return request is the caller's own: the record is replayed only to a request " +
+	"presenting the same token or proving the same customer."
+
+// storeOrderRefusal is the 404 the three storefront order routes answer.
+const storeOrderRefusal = "No such order, or the request neither presents one of its access " +
+	"tokens nor proves its customer (\"order_not_found\"). The two answers are the same on " +
+	"purpose, so an order id says nothing about the order it names. An identity that could " +
+	"not reach a verdict answers its own class, 500 or 503, for a real order and an unknown id " +
+	"alike."
+
+// orderTokenParameter is the header the three storefront order routes read
+// the order's access token from.
+func orderTokenParameter() openapi.Parameter {
+	return openapi.Parameter{
+		Name: corehttp.OrderTokenHeader, In: "header",
+		Schema: map[string]any{schemaType: typeString},
+		Description: "One of the order's access tokens, as the completion answered it or an " +
+			"order mail carried it. Optional for a request the customer identity proves to be " +
+			"the order's customer.",
+	}
+}
 
 // describeOrderDetail records the five endpoints that answer with the order and
 // its lines.
@@ -72,14 +107,12 @@ func describeOrderDetail(d *openapi.Doc) {
 		Description: detailNote +
 			"\n\n" +
 			"It is the record the admin surface returns WITHOUT the two addresses, the " +
-			"lines' costs and the placed margin. The " +
-			"storefront reaches it with the publishable key, which identifies the shop " +
-			"rather than the shopper, so the order id in the path is the only thing naming " +
-			"whose order this is — treat it as a capability and keep it out of anywhere it " +
-			"can be guessed or shared. That is also why the addresses are not in it " +
-			"(ADR 0193).",
+			"cart and customer ids, the lines' costs and the placed margin (ADR 0193, " +
+			"ADR 0439). " + storeOrderAccessNote,
+		Parameters: []openapi.Parameter{orderTokenParameter()},
 		Responses: map[string]any{
-			"200": openapi.Response("The order with its lines", d.Item(orderDetailDTO{})),
+			"200": openapi.Response("The order with its lines", d.Item(storeOrderDetailDTO{})),
+			"404": openapi.ErrorResponse(storeOrderRefusal),
 		},
 	})
 

@@ -2,7 +2,8 @@
 //
 // There are two surfaces: the admin side (/admin/v1/orders …) reads the order
 // and applies status transitions, the customer side (/store/v1/orders/{id})
-// ONLY READS.
+// reads an order and asks for a return on it, for a caller presenting the
+// order's access token or proving its customer (ADR 0439).
 //
 // # Scopes
 //
@@ -18,7 +19,9 @@
 // both of them (see corehttp.Principal.HasScope).
 //
 // No scope IS ADDED to the storefront endpoint: the identity of /store/v1 is
-// the publishable key and that key by definition carries no scope.
+// the publishable key and that key by definition carries no scope. What opens
+// an order there is its token or its customer's proof (see
+// [Handler.storeOrderAccess]).
 //
 // # Surfaces not opened to HTTP
 //
@@ -118,6 +121,9 @@ type Orders interface {
 	Timeline(ctx context.Context, orderID string) ([]service.TimelineEntry, error)
 	// StorefrontTimeline returns the moments a CUSTOMER may see on their order.
 	StorefrontTimeline(ctx context.Context, orderID string) ([]service.TimelineEntry, error)
+	// StorefrontAccess reads the order's customer and whether a token is one
+	// the order issued (ADR 0439); NotFound when there is no such order.
+	StorefrontAccess(ctx context.Context, orderID, token string) (service.StorefrontAccess, error)
 	// OrderAsOf reads the order as it stood at a past moment (ADR 0171).
 	OrderAsOf(ctx context.Context, orderID string, at time.Time) (models.OrderAsOf, error)
 	// Journal derives the module's books over a window (ADR 0188).
@@ -283,7 +289,8 @@ type Handler struct {
 	invoicing  Invoicing
 	fulfilling Fulfilling
 	// identity proves the customer the storefront's own orders route names
-	// (ADR 0367); nil refuses that route.
+	// (ADR 0367), and the customer of an order its token does not open
+	// (ADR 0439); nil refuses the first and leaves the second to the token.
 	identity corehttp.Identity
 }
 
@@ -376,16 +383,33 @@ type listEnvelope struct {
 	NextCursor string `json:"next_cursor,omitempty"`
 }
 
-// orderDTO is the external representation of the order.
+// orderDTO is the order as the admin surface reads it: the storefront's record
+// and the two ids that record withholds.
 type orderDTO struct {
+	storeOrderDTO
+	// CustomerID is the order's customer; absent on a guest's order.
+	CustomerID string `json:"customer_id,omitempty"`
+	// CartID is the cart the order was born from.
+	CartID string `json:"cart_id,omitempty"`
+}
+
+// storeOrderDTO is the order as the storefront reads it (ADR 0439).
+//
+// # Why it is a type of its own
+//
+// It carries no cart id and no customer id, and a type that cannot hold one
+// cannot leak one, as the timeline's type cannot hold a figure (ADR 0100). The
+// cart's id is that cart's access at the storefront, and a completed cart held
+// the addresses ADR 0193 keeps on the admin record; the customer's id is the
+// lever webhook-out withholds. The e-mail stays: it is the shopper's own
+// address, and this record opens only to the order's token or its customer.
+type storeOrderDTO struct {
 	ID           string `json:"id"`
 	DisplayID    int64  `json:"display_id"`
 	Status       string `json:"status"`
 	RegionID     string `json:"region_id"`
-	CustomerID   string `json:"customer_id,omitempty"`
 	Email        string `json:"email,omitempty"`
 	CurrencyCode string `json:"currency_code"`
-	CartID       string `json:"cart_id,omitempty"`
 	// AddsToOrderID is the order this one adds to; absent on an order that
 	// adds to nothing (ADR 0192). The amounts beside it are this order's own.
 	AddsToOrderID string `json:"adds_to_order_id,omitempty"`
@@ -408,10 +432,23 @@ type orderDTO struct {
 	UpdatedAt        time.Time      `json:"updated_at"`
 }
 
-// orderDetailDTO is the external representation of the order with its line
-// items and summary.
+// orderDetailDTO is the admin record of the order with its line items and
+// summary, which [adminOrderDetailDTO] widens.
 type orderDetailDTO struct {
 	orderDTO
+	orderPartsDTO
+}
+
+// storeOrderDetailDTO is the storefront's record of the order with its line
+// items and summary (ADR 0439): [storeOrderDTO] and the same parts.
+type storeOrderDetailDTO struct {
+	storeOrderDTO
+	orderPartsDTO
+}
+
+// orderPartsDTO is what both surfaces' detail adds to the order: its lines,
+// its payment summary and its deliveries.
+type orderPartsDTO struct {
 	Items   []lineItemDTO `json:"items"`
 	Summary summaryDTO    `json:"summary"`
 	// ShippingMethods are the deliveries the order was sold (ADR 0198); an
@@ -448,13 +485,13 @@ type deliveryChangeDTO struct {
 	PaymentCollectionID string `json:"payment_collection_id,omitempty"`
 }
 
-// adminOrderDetailDTO is the order as the operator reads it: the storefront's
-// record, where it went and whom it was billed to (ADR 0193), and what its
+// adminOrderDetailDTO is the order as the operator reads it: the order and its
+// lines, where it went and whom it was billed to (ADR 0193), and what its
 // goods cost the shop (ADR 0401).
 //
-// The addresses are the admin surface's alone. The storefront reads an order
-// by its id with a key that names the shop rather than the shopper (ADR 0008),
-// and a home address is more than that read should hand anyone holding the id.
+// The addresses are the admin surface's alone (ADR 0193). The storefront's
+// record is [storeOrderDetailDTO], a type of its own that carries neither them
+// nor the cart and customer ids (ADR 0439).
 type adminOrderDetailDTO struct {
 	orderDetailDTO
 	// ShippingAddress and BillingAddress are absent when the order recorded
@@ -729,17 +766,24 @@ type claimDTO struct {
 	UpdatedAt    time.Time      `json:"updated_at"`
 }
 
-// toOrderDTO converts the model to the external representation.
+// toOrderDTO converts the model to the admin surface's record.
 func toOrderDTO(order models.Order) orderDTO {
 	return orderDTO{
+		storeOrderDTO: toStoreOrderDTO(order),
+		CustomerID:    order.CustomerID,
+		CartID:        order.CartID,
+	}
+}
+
+// toStoreOrderDTO converts the model to the storefront's record (ADR 0439).
+func toStoreOrderDTO(order models.Order) storeOrderDTO {
+	return storeOrderDTO{
 		ID:               order.ID,
 		DisplayID:        order.DisplayID,
 		Status:           order.Status.String(),
 		RegionID:         order.RegionID,
-		CustomerID:       order.CustomerID,
 		Email:            order.Email,
 		CurrencyCode:     order.CurrencyCode,
-		CartID:           order.CartID,
 		AddsToOrderID:    order.AddsToOrderID,
 		Subtotal:         order.Subtotal,
 		DiscountTotal:    order.DiscountTotal,
@@ -759,10 +803,20 @@ func toOrderDTO(order models.Order) orderDTO {
 }
 
 // toOrderDetailDTO converts the order with its line items and summary to the
-// external representation.
+// admin surface's record.
 func toOrderDetailDTO(detail models.OrderDetail) orderDetailDTO {
-	out := orderDetailDTO{
-		orderDTO:        toOrderDTO(detail.Order),
+	return orderDetailDTO{orderDTO: toOrderDTO(detail.Order), orderPartsDTO: toOrderPartsDTO(detail)}
+}
+
+// toStoreOrderDetailDTO converts the order with its line items and summary to
+// the storefront's record (ADR 0439).
+func toStoreOrderDetailDTO(detail models.OrderDetail) storeOrderDetailDTO {
+	return storeOrderDetailDTO{storeOrderDTO: toStoreOrderDTO(detail.Order), orderPartsDTO: toOrderPartsDTO(detail)}
+}
+
+// toOrderPartsDTO converts the order's lines, summary and deliveries.
+func toOrderPartsDTO(detail models.OrderDetail) orderPartsDTO {
+	out := orderPartsDTO{
 		Items:           make([]lineItemDTO, 0, len(detail.Items)),
 		Summary:         toSummaryDTO(detail.Summary, detail.Total, detail.CreditedTotal),
 		ShippingMethods: make([]shippingMethodDTO, 0, len(detail.ShippingMethods)),

@@ -279,14 +279,7 @@ func describedEndpoints() []endpointExpectation {
 			method: http.MethodPost, path: pathAdminPaymentRefund, status: "201",
 			request: refundRequest{}, response: fullRefund(),
 		},
-		{
-			method: http.MethodPost, path: pathStoreCollectSess, status: "201",
-			request: createStoreSessionRequest{}, response: fullSession(),
-		},
-		{
-			method: http.MethodPost, path: pathStoreSessionCancel, status: "204",
-		},
-		// The four collection endpoints. Until 2026-09-07 they were not in this
+		// The three collection endpoints. Until 2026-09-07 they were not in this
 		// table, and there was a reason for that: because of a component name
 		// collision they could not be described, and they were kept in a
 		// separate list as a "known gap". ADR 0036 put the module name in front
@@ -302,10 +295,6 @@ func describedEndpoints() []endpointExpectation {
 		},
 		{
 			method: http.MethodGet, path: pathAdminCollection, status: "200",
-			response: fullCollection(),
-		},
-		{
-			method: http.MethodGet, path: pathStoreCollection, status: "200",
 			response: fullCollection(),
 		},
 		// The three endpoints of store credit (ADR 0152).

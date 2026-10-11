@@ -9,7 +9,6 @@ import (
 
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	corehttp "github.com/bdrtr/gobit/core/http"
-	"github.com/bdrtr/gobit/internal/modules/payment/manual"
 	"github.com/bdrtr/gobit/internal/modules/payment/service"
 )
 
@@ -114,52 +113,14 @@ type createSessionRequest struct {
 	ProviderID string `json:"provider_id"`
 	// If Amount is not given, the session is opened for the whole of the
 	// collection's REMAINING amount. Splitting the payment across more than one
-	// session is admin work; this field DOES NOT EXIST on the store surface
-	// (see [createStoreSessionRequest]).
+	// session is admin work, and the storefront opens no session at all
+	// (ADR 0439).
 	Amount int64 `json:"amount"`
 	// IdempotencyKey is required: a second request with the same key does NOT
 	// open a NEW session.
 	IdempotencyKey string `json:"idempotency_key"`
 	// Data is free-form data passed on to the provider.
 	Data json.RawMessage `json:"data"`
-}
-
-// createStoreSessionRequest is the STORE surface's body for opening a payment
-// session.
-//
-// The amount field is absent ON PURPOSE: a session opened from the store
-// endpoint always covers the whole of the collection's remaining amount. A
-// customer being able to set the session's amount from their own browser would
-// have meant opening a session of 1 unit for an order of 50,000 and getting
-// past the payment. If the field is sent in the body, the request is rejected
-// (see [decodeBody] — unknown fields are an error).
-type createStoreSessionRequest struct {
-	ProviderID string `json:"provider_id"`
-	// IdempotencyKey is required: a second request with the same key does NOT
-	// open a NEW session.
-	IdempotencyKey string `json:"idempotency_key"`
-	// Data is free-form data passed on to the provider; keys that steer the
-	// provider's BEHAVIOR are not accepted here.
-	Data json.RawMessage `json:"data"`
-}
-
-// storeBlockedDataKeys are the data keys the store surface does NOT PASS ON to
-// the provider.
-//
-// The manual provider's test hooks (decline injection, partial authorization)
-// are read from the session's free-form data and stored with the session. If
-// they were passed through the endpoint open to the customer, the customer
-// could write the outcome of their own payment: on a collection of 50,000 they
-// could have 1 unit held and show the order as paid. The hooks stay on the
-// admin surface; whoever calls there can already trigger the capture too.
-//
-// The list is not silently FILTERED, the request is REJECTED: a swallowed field
-// is a setting the client believes it sent but that is never applied (for the
-// same reasoning see [decodeBody]).
-var storeBlockedDataKeys = []string{
-	manual.DataKeyOutcome,
-	manual.DataKeyDeclineReason,
-	manual.DataKeyAuthorizedAmount,
 }
 
 // createSession opens a payment session for the collection from the ADMIN
@@ -181,48 +142,6 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 
 	ses, err := h.svc.CreateSession(ctx, chi.URLParam(r, "id"), body.ProviderID, service.CreateSessionInput{
 		Amount:         body.Amount,
-		IdempotencyKey: body.IdempotencyKey,
-		Data:           data,
-	})
-	if err != nil {
-		corehttp.WriteError(ctx, w, err)
-		return
-	}
-	corehttp.WriteJSON(ctx, w, http.StatusCreated, singleEnvelope{Data: toSessionDTO(ses)})
-}
-
-// createStoreSession opens a payment session for the collection from the STORE
-// surface.
-//
-// It differs from the admin endpoint in two ways, and both prevent the customer
-// from steering the payment flow in their own favor: the amount is NOT taken
-// FROM THE CLIENT (it is always the whole of the remainder) and the provider's
-// behavior keys are rejected.
-func (h *Handler) createStoreSession(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	var body createStoreSessionRequest
-	if err := decodeBody(w, r, &body); err != nil {
-		corehttp.WriteError(ctx, w, err)
-		return
-	}
-
-	data, err := decodeSessionData(body.Data)
-	if err != nil {
-		corehttp.WriteError(ctx, w, err)
-		return
-	}
-	for _, key := range storeBlockedDataKeys {
-		if _, ok := data[key]; ok {
-			corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest,
-				"a %s key the store surface does not accept: %q", "data", key))
-			return
-		}
-	}
-
-	ses, err := h.svc.CreateSession(ctx, chi.URLParam(r, "id"), body.ProviderID, service.CreateSessionInput{
-		// No amount is given: the session is opened for the whole of the
-		// collection's REMAINING amount.
 		IdempotencyKey: body.IdempotencyKey,
 		Data:           data,
 	})
@@ -306,30 +225,6 @@ func (h *Handler) captureSession(w http.ResponseWriter, r *http.Request) {
 //
 // It is IDEMPOTENT: it returns 204 for a session that is already canceled too.
 func (h *Handler) cancelSession(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	if err := h.svc.CancelPayment(ctx, chi.URLParam(r, "id")); err != nil {
-		corehttp.WriteError(ctx, w, err)
-		return
-	}
-	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
-}
-
-// cancelStoreSession is the customer releasing a payment session they opened
-// themselves.
-//
-// It makes the SAME service call as [Handler.cancelSession] on the admin
-// surface; the reason it is a separate endpoint is authorization (the admin
-// route needs an admin identity and [ScopeWrite], the store route only the
-// publishable key), not a difference in behavior.
-//
-// Its reason to exist is the reservation: an open session covers the
-// collection's remaining amount, and that is what prevents a double capture.
-// Without a way to release it the customer could not change the payment METHOD
-// and would stay locked until an administrator stepped in.
-//
-// It is IDEMPOTENT: it returns 204 for a session that is already canceled too.
-func (h *Handler) cancelStoreSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	if err := h.svc.CancelPayment(ctx, chi.URLParam(r, "id")); err != nil {

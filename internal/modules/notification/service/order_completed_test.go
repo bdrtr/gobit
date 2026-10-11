@@ -78,6 +78,7 @@ func TestACompletionIsMailedToTheOrdersAddress(t *testing.T) {
 		"currency_code": "TRY",
 		"total":         "6100",
 		"item_count":    "2",
+		"order_token":   "ordtok_order_01H_1",
 	}, sent.Data, "the completion notice carries the confirmation's data")
 
 	records := store.allRecords()

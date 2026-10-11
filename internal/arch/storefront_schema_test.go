@@ -42,8 +42,9 @@ import (
 // The population is the storefront WRITE routes, taken from [storefrontSurface]
 // so that there is ONE notion of what a storefront route is. That scan resolves
 // them from PATHS, and ADR 0051 records why: a scan for handlers called
-// store-something misses the payment module's two, and a scan for types named
-// storeSomethingRequest finds only the two examples the record already cites.
+// store-something missed the payment module's two (ADR 0439 removed them), and
+// a scan for types named storeSomethingRequest finds only the two examples the
+// record already cites.
 //
 // From the route the join runs handler -> table in three hops:
 //
@@ -412,67 +413,16 @@ var storefrontStoredClaims = map[string]claimVerdict{
 			"the customer the bound identity proves before the service is asked (ADR 0190). " +
 			"The two routes carry no body, so the client names no party anywhere else",
 	},
-	"payment.payment_collections.customer_id": {
-		limb: limbConfined,
-		why: "the customer of the CART being completed, carried by the checkout flow rather " +
-			"than by any request body — no storefront payment request type has a customer_id " +
-			"field, and the gate checks that rather than taking this sentence's word for it. " +
-			"What makes it the writer's own reach is ADR 0125: a cart body naming a customer " +
-			"has to be PROVEN, so by the time a collection is opened the party is judged. The " +
-			"one configuration that unjudges it — STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM — " +
-			"is also the one in which the composition root does not register the tender that " +
-			"reads this column at all (ADR 0152), so the pair cannot be configured",
-	},
-	"payment.payment_store_credit_entries.customer_id": {
-		limb: limbConfined,
-		why: "whose money the ledger row moves, and it is never a value a request carried: an " +
-			"issue is written by an ADMIN endpoint and a hold, release or refund by the " +
-			"provider, from the session it is acting on. The session's own owner is " +
-			"payment_collections.customer_id, judged above",
-	},
-	"payment.payment_store_credit_entries.order_id": {
-		limb: limbInert,
-		why: "the order an issue compensates (ADR 0274), and no storefront write can store one: " +
-			"an issue is written by an ADMIN endpoint, and the storefront reaches this table " +
-			"only through the tender's holds and releases, rows on which the schema refuses an " +
-			"order (payment_store_credit_entries_order_on_issue). The column moves no money — " +
-			"the balance is the rows' sum whatever they name — and the one endpoint that reads " +
-			"it, the history's order filter, is admin-only and scoped",
-	},
-	"payment.payment_loyalty_entries.customer_id": {
-		limb: limbConfined,
-		why: "whose points the ledger row moves, and it is never a value a request carried: " +
-			"an earn row is written by the function that moves the collection's totals, from " +
-			"the COLLECTION it is acting on, and a spend row by the loyalty-points tender, " +
-			"from ITS session, which copied the owner from that same collection. The owner " +
-			"is payment_collections.customer_id, judged above, and a collection with no " +
-			"customer writes no row at all — a guest earns nothing rather than earning under " +
-			"an empty name, and cannot open a session on a balance that is nobody's " +
-			"(ADR 0164, ADR 0165)",
-	},
-	"payment.payment_store_credit_sessions.customer_id": {
-		limb: limbConfined,
-		why: "the owner copied from the collection when the session is opened, so it is the " +
-			"same party under the same judgement (see payment.payment_collections.customer_id). " +
-			"It is copied rather than joined because the provider may not read the module's " +
-			"own tables — the separation every provider in this tree keeps",
-	},
-	"payment.payment_loyalty_sessions.customer_id": {
-		limb: limbConfined,
-		why: "the same record as payment_store_credit_sessions.customer_id for the tender " +
-			"that spends points: the owner copied from the collection when the session is " +
-			"opened, under the same judgement, by the same state machine (ADR 0165)",
-	},
 	"order.order_returns.order_id": {
-		limb: limbInert,
-		why: "the SUBJECT of the return — what is being returned — and it arrives in the PATH. " +
-			"ADR 0051 cites this endpoint as the repository's own worked precedent for the " +
-			"INERT limb: a record anyone holding the order id can write, which moves no stock " +
-			"and no money until an operator receives it, and the three endpoints that act on it " +
-			"(receive, refund, cancel) are registered on the scoped admin router. It is the " +
-			"same column the review module REFUSED, and the difference is what it is read to " +
-			"mean: here it says what the request is about, where on a review it would have said " +
-			"who wrote it",
+		limb: limbConfined,
+		why: "the SUBJECT of the return — what is being returned — and it arrives in the PATH, " +
+			"which opens only to a caller presenting the order's access token or proving its " +
+			"customer (ADR 0439), so the units a request holds are the writer's own order's. " +
+			"ADR 0051 cited this endpoint as its worked INERT precedent while anyone holding " +
+			"the id could write it, and the request held the line's returnable units against " +
+			"the owner, which an inert write does not. It is the same column the review module " +
+			"REFUSED, and the difference is what it is read to mean: here it says what the " +
+			"request is about, where on a review it would have said who wrote it",
 	},
 }
 

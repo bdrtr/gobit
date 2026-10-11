@@ -99,11 +99,12 @@ func TestTheDocumentedFirstRunReachesAnOrder(t *testing.T) {
 	out := runDocumentedScript(t, script)
 	printed := nonEmptyLines(out)
 
-	// Ten lines: eight statuses, the cart's total and the order. A different count
-	// means the block changed shape and the positions below are reading the wrong
-	// lines — which would make every assertion meaningless while looking fine.
-	require.Lenf(t, printed, 10,
-		"the block printed %d lines and ten were expected.\n--- output ---\n%s",
+	// Eleven lines: eight statuses, the cart's total, the order and its status
+	// read with its token. A different count means the block changed shape and
+	// the positions below are reading the wrong lines — which would make every
+	// assertion meaningless while looking fine.
+	require.Lenf(t, printed, 11,
+		"the block printed %d lines and eleven were expected.\n--- output ---\n%s",
 		len(printed), out)
 
 	for name, step := range map[string]struct {
@@ -168,5 +169,13 @@ func TestTheDocumentedFirstRunReachesAnOrder(t *testing.T) {
 			"the completion answered without an order_id, so the jq path printed null. "+
 				"Every binding above reported success, which leaves the completion itself "+
 				"or the manual payment provider.\n--- output ---\n%s", out)
+	})
+
+	t.Run("the shopper reads the order with its token", func(t *testing.T) {
+		assert.Equalf(t, "pending", strings.TrimSpace(printed[10]),
+			"the order read with the completion's token printed %q. \"null\" is an error "+
+				"envelope: the completion answered no order_token, or the order's storefront "+
+				"route did not take it from X-Order-Token (ADR 0439).\n--- output ---\n%s",
+			strings.TrimSpace(printed[10]), out)
 	})
 }

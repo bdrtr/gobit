@@ -5,6 +5,7 @@ package e2e
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
@@ -104,11 +105,12 @@ func TestAnOrderKeepsTheMarginItWasPlacedAt(t *testing.T) {
 	assert.Equal(t, placed, page.Data[0].PlacedMargin, "the list reads the margin the order was placed at")
 
 	stored := strconv.FormatInt(unitCost, 10)
-	for name, path := range map[string]string{
-		"the storefront order":   "/store/v1/orders/" + order.OrderID,
-		"the storefront product": catalogPath(testChannelID, "/products/"+variant.ProductID),
+	for name, rec := range map[string]*httptest.ResponseRecorder{
+		"the storefront order": shopperOrderRequest(t, order.OrderID, http.MethodGet,
+			"/store/v1/orders/"+order.OrderID, ""),
+		"the storefront product": storefrontRequest(t, http.MethodGet,
+			catalogPath(testChannelID, "/products/"+variant.ProductID), ""),
 	} {
-		rec := storefrontRequest(t, http.MethodGet, path, "")
 		require.Equal(t, http.StatusOK, rec.Code, "%s: %s", name, rec.Body.String())
 		require.Contains(t, rec.Body.String(), variantID, "%s names the variant", name)
 		assert.NotContains(t, strings.ToLower(rec.Body.String()), "cost", "%s carries a cost", name)

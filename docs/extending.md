@@ -353,8 +353,10 @@ beside the bus.
 | `order.return_canceled` | `order_id`, `return_id`, `canceled_at` |
 | `cart.created` / `cart.completed` | `cart_id`, `region_id`, `currency_code`, `occurred_at` |
 
-`plugins/webhookout` lists the same fields, `customer_id` withheld, as
-`TopicFields`, and its census reads them out of the publishers, so a receiver's
+`plugins/webhookout` lists the same fields, `customer_id` and `cart_id`
+withheld, as `TopicFields`; a cart event's id names its cart by a digest rather
+than by the id, which is the cart's access ([ADR 0439](adr/0439-an-id-gobit-hands-out-opens-nothing-at-the-storefront.md)). Its census reads
+the fields out of the publishers, so a receiver's
 filter or field list can name only a field the topic carries. This table is
 held to the same census (`TestTheEventTableIsThePublishedPayloads`), so a field
 a publisher gains without a row saying so fails the build.

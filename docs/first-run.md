@@ -198,13 +198,21 @@ curl -s localhost:9000/store/v1/carts/$CART \
 
 # 12) Pay and become an order. expected_total is MANDATORY: the amount the
 #     customer approved is declared, and a cart whose total has moved since is
-#     refused with 409 rather than charged.
-ORDER=$(curl -s localhost:9000/store/v1/carts/$CART/complete \
+#     refused with 409 rather than charged. The answer carries the order's
+#     access token, once: keep it where the shopper's order page reads it, and
+#     out of any URL.
+DONE=$(curl -s localhost:9000/store/v1/carts/$CART/complete \
   -H "x-publishable-api-key: $PK" -H 'content-type: application/json' \
-  -d '{"payment_provider_id":"manual","payment_data":{"manual_outcome":"authorize"},"expected_total":81700}' \
-  | jq -r .data.order_id)
+  -d '{"payment_provider_id":"manual","payment_data":{"manual_outcome":"authorize"},"expected_total":81700}')
+ORDER=$(echo "$DONE" | jq -r .data.order_id)
+ORDER_TOKEN=$(echo "$DONE" | jq -r .data.order_token)
 
 echo "order $ORDER"
+
+# 13) The shopper's order page reads the order with its token. The order id
+#     alone opens nothing: gobit sends it to webhook receivers.
+curl -s localhost:9000/store/v1/orders/$ORDER \
+  -H "x-publishable-api-key: $PK" -H "X-Order-Token: $ORDER_TOKEN" | jq -r .data.status
 ```
 
 ## What this does NOT set up

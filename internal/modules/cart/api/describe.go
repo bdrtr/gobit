@@ -86,8 +86,14 @@ func Describe(d *openapi.Doc) {
 
 	d.Describe(http.MethodGet, "/store/v1/carts/{id}", openapi.Operation{
 		Summary: "Returns the cart with its line items, addresses and shipping methods.",
+		Description: "The cart's id is its access, and gobit hands it to no one but the storefront " +
+			"holding the cart: webhooks withhold it (ADR 0439). A COMPLETED cart is answered 404 " +
+			"\"cart_not_found\", as an unknown id is, here and on every other storefront route on " +
+			"the cart, reads and writes alike; its addresses are the order's now, and the shopper " +
+			"reads the order with the token the completion answered.",
 		Responses: map[string]any{
 			"200": openapi.Response("The cart and its children", d.Item(cartDetailDTO{})),
+			"404": openapi.ErrorResponse("No such cart, or the cart is completed (\"cart_not_found\")."),
 		},
 	})
 
@@ -116,7 +122,8 @@ func Describe(d *openapi.Doc) {
 			"It is refused with 409 when the two carts are in different regions or " +
 			"currencies (a price is quoted FOR one of each), when the source belongs to " +
 			"another customer, when the two do not add to the same order (or both to " +
-			"none, ADR 0192), and when either cart is completed. \n\n" +
+			"none, ADR 0192). A completed cart, in the path or as the source, is the unknown " +
+			"cart's 404, as on every storefront cart route (ADR 0439). \n\n" +
 			"The lines are priced in this cart's sales channel (ADR 0397).",
 		RequestBody: d.RequestBody(mergeCartRequest{}),
 		Responses: map[string]any{
@@ -181,7 +188,15 @@ func Describe(d *openapi.Doc) {
 			"and payment_provider_id cannot be a balance pay_first_with names (ADR 0269). " +
 			"An offline method the shop names in PAYMENT_OFFLINE_METHODS — a bank transfer, cash on " +
 			"delivery — is authorized and not captured: the order is placed owing its part, which " +
-			"outstanding reports, and the shop captures it when the money arrives (ADR 0284).",
+			"outstanding reports, and the shop captures it when the money arrives (ADR 0284). " +
+			"\n\n" +
+			"The answer carries \"order_token\", the order's access token: send it in the " +
+			"\"X-Order-Token\" header to GET /store/v1/orders/{id}, its timeline and its return " +
+			"requests, which the order id alone does not open (ADR 0439). It is the only copy — " +
+			"gobit keeps a digest — so keep it where the shopper's order page can read it and out " +
+			"of any URL. A request repeated with the same Idempotency-Key answers the recorded " +
+			"response, token included. The token is absent when it could not be issued; the " +
+			"order mail carries one of its own.",
 		RequestBody: d.RequestBody(completeCartRequest{}),
 		Responses: map[string]any{
 			"200": openapi.Response("The resulting order, its total and what it still owes", d.Item(completeCartDTO{})),
@@ -512,18 +527,20 @@ const additionNote = "adds_to_order_id opens the cart to add to that order (ADR 
 	"payment and invoice. It needs customer_id, which has to be the order's customer, " +
 	"and the order has to be pending and in the cart's currency and not an addition " +
 	"itself. The order module answers before the cart is opened and again when it is " +
-	"checked out, so an order closed in between refuses the checkout before any payment."
+	"checked out, so an order closed in between refuses the checkout before any payment. " +
+	"Before the cart is opened it tells nothing about an order that is not the customer's: " +
+	"no customer_id, or another customer's, is answered the unknown order's 404 (ADR 0439)."
 
 // withAdditionRefusals adds the two answers a cart opened to add to an order can
 // get beyond the endpoint's own.
 func withAdditionRefusals(responses map[string]any) map[string]any {
 	responses["404"] = openapi.ErrorResponse(
-		"The country is served by no region, or adds_to_order_id names no order.")
+		"The country is served by no region, or adds_to_order_id names no order of the " +
+			"customer the body proves (\"order_not_found\", also for no customer_id).")
 	responses["409"] = openapi.ErrorResponse(
-		"adds_to_order_id names an order this cart may not add to: code " +
-			"\"order_addition_needs_customer\" (no customer_id), " +
-			"\"order_addition_customer_mismatch\", \"order_addition_currency_mismatch\", " +
-			"\"order_addition_parent_not_pending\" or \"order_addition_parent_is_addition\".")
+		"adds_to_order_id names an order of the customer this cart may not add to: code " +
+			"\"order_addition_currency_mismatch\", \"order_addition_parent_not_pending\" or " +
+			"\"order_addition_parent_is_addition\".")
 
 	return responses
 }

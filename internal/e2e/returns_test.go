@@ -140,12 +140,11 @@ func TestAReturnedUnitComesBackToStockAndItsRefundReachesTheOrder(t *testing.T) 
 
 	// --- 1) the CUSTOMER asks, from the storefront, and nothing moves yet ---
 	//
-	// A request is a request. The endpoint is reachable with a publishable key
-	// and nothing else (ADR 0008 leaves proving the order is yours to the
-	// embedder), which is only defensible while the request itself moves no
+	// A request is a request. The endpoint is reachable with the order's
+	// token or its customer's proof (ADR 0439), and the request itself moves no
 	// stock and no money. That is the property asserted here rather than
 	// assumed.
-	requested := storefrontRequest(t, http.MethodPost,
+	requested := shopperOrderRequest(t, placed.OrderID, http.MethodPost,
 		"/store/v1/orders/"+placed.OrderID+"/returns",
 		`{"reason":"one of the two arrived scratched","lines":[{"order_line_item_id":"`+
 			lineID+`","quantity":1}]}`)
@@ -303,7 +302,7 @@ func TestASecondReceiveIsRefused(t *testing.T) {
 	require.NoError(t, err, "the fixture order could not be read back")
 	require.Len(t, order.Items, 1, "precondition: the fixture order has a single line")
 
-	requested := storefrontRequest(t, http.MethodPost,
+	requested := shopperOrderRequest(t, placed.OrderID, http.MethodPost,
 		"/store/v1/orders/"+placed.OrderID+"/returns",
 		`{"lines":[{"order_line_item_id":"`+order.Items[0].ID+`","quantity":1}]}`)
 	require.Equal(t, http.StatusCreated, requested.Code,
@@ -543,7 +542,7 @@ func TestACustomerSendsGoodsBackInAReturnParcel(t *testing.T) {
 	require.Equal(t, http.StatusCreated, out.Code, out.Body.String())
 	move(idOf(out), "ship", "deliver")
 
-	requested := storefrontRequest(t, http.MethodPost, "/store/v1/orders/"+placed.OrderID+"/returns",
+	requested := shopperOrderRequest(t, placed.OrderID, http.MethodPost, "/store/v1/orders/"+placed.OrderID+"/returns",
 		`{"lines":[{"order_line_item_id":"`+lineID+`","quantity":2}]}`)
 	require.Equal(t, http.StatusCreated, requested.Code, requested.Body.String())
 	var opened afterSalesRecordResponse

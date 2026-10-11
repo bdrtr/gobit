@@ -80,7 +80,7 @@ func TestAnOperatorBringsAReturnBackFromThePanel(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, http.StatusOK, rec.Code, "%s: %s", step, rec.Body.String())
 	}
-	requested := storefrontRequest(t, http.MethodPost, "/store/v1/orders/"+placed.OrderID+"/returns",
+	requested := shopperOrderRequest(t, placed.OrderID, http.MethodPost, "/store/v1/orders/"+placed.OrderID+"/returns",
 		`{"lines":[{"order_line_item_id":"`+lineID+`","quantity":2}]}`)
 	require.Equal(t, http.StatusCreated, requested.Code, requested.Body.String())
 	var asked afterSalesRecordResponse

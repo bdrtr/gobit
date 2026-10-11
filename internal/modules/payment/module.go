@@ -55,7 +55,8 @@
 //   - "payment_collection.query" — the read provider opened to the Query layer
 //     (ADR 0004).
 //   - /admin/v1/payment-collections … — the admin API.
-//   - /store/v1/payment-collections/{id} … — the customer's payment flow.
+//   - /store/v1/payment-providers and a signed-in customer's own balances —
+//     the storefront's; it takes no collection or session id (ADR 0439).
 package payment
 
 import (

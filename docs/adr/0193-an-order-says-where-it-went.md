@@ -6,7 +6,7 @@ billing address where the request leaves it empty. It costs a second record
 shape on the admin surface, and it gives the addresses B11 kept the readers B11
 named (D140).
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0439](0439-an-id-gobit-hands-out-opens-nothing-at-the-storefront.md), whose storefront order record carries no cart id and whose completed cart answers every storefront route the unknown cart's 404
 - **Date:** 2026-09-26
 
 Measurement: [measurements/0193](../measurements/0193-an-address-nobody-read.md)

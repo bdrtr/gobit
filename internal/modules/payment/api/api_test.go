@@ -280,84 +280,6 @@ func TestCreateSessionReturns201AndPassesData(t *testing.T) {
 	assert.Equal(t, "1000000000000", value.String())
 }
 
-// TestStoreSessionAcceptsNoAmount verifies that the customer CANNOT decide
-// THEMSELVES the amount they will pay.
-//
-// This was the exact scenario of the finding: a session opened with
-// {"amount":1} led to 1 unit being captured from a collection of 50,000 and to
-// the order looking paid. The field DOES NOT EXIST AT ALL in the store body;
-// it is rejected as an unrecognized field.
-func TestStoreSessionAcceptsNoAmount(t *testing.T) {
-	svc := &fakePayments{session: models.PaymentSession{ID: "payses_1", Amount: 1000}}
-	r := newTestRouter(svc)
-
-	rec := do(t, r, http.MethodPost, "/store/v1/payment-collections/paycol_1/payment-sessions",
-		`{"provider_id":"manual","idempotency_key":"key-1","amount":1}`)
-
-	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
-	assert.Zero(t, svc.lastCreateSession.IdempotencyKey, "the request must NEVER reach the service")
-}
-
-// TestStoreSessionCoversTheWholeRemainingAmount verifies that the store
-// endpoint DOES NOT PASS an amount to the service; zero means "the whole of
-// the collection's remainder".
-func TestStoreSessionCoversTheWholeRemainingAmount(t *testing.T) {
-	svc := &fakePayments{session: models.PaymentSession{ID: "payses_1", Amount: 1000}}
-	r := newTestRouter(svc)
-
-	rec := do(t, r, http.MethodPost, "/store/v1/payment-collections/paycol_1/payment-sessions",
-		`{"provider_id":"manual","idempotency_key":"key-1"}`)
-
-	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	assert.Zero(t, svc.lastCreateSession.Amount, "the amount must not be taken from the client")
-	assert.Equal(t, "key-1", svc.lastCreateSession.IdempotencyKey)
-}
-
-// TestStoreSessionRejectsProviderBehaviorKeys verifies that the customer
-// cannot write the OUTCOME of their own payment.
-//
-// The keys are stored with the session and decide the outcome of the
-// authorization; had they passed through the store endpoint, the customer
-// could have had 1 unit blocked and shown the order as paid. Instead of being
-// silently filtered they are REJECTED: a swallowed field is a setting the
-// client believes it sent but that is not applied.
-func TestStoreSessionRejectsProviderBehaviorKeys(t *testing.T) {
-	bodies := map[string]string{
-		"partial authorization": `{"provider_id":"manual","idempotency_key":"k",` +
-			`"data":{"manual_authorized_amount":1}}`,
-		"outcome": `{"provider_id":"manual","idempotency_key":"k","data":{"manual_outcome":"authorize"}}`,
-		"decline reason": `{"provider_id":"manual","idempotency_key":"k",` +
-			`"data":{"manual_decline_reason":"x"}}`,
-	}
-
-	for name, body := range bodies {
-		t.Run(name, func(t *testing.T) {
-			svc := &fakePayments{session: models.PaymentSession{ID: "payses_1"}}
-			r := newTestRouter(svc)
-
-			rec := do(t, r, http.MethodPost,
-				"/store/v1/payment-collections/paycol_1/payment-sessions", body)
-
-			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
-			assert.Empty(t, svc.lastCreateSession.Data, "the request must NEVER reach the service")
-		})
-	}
-}
-
-// TestStoreSessionPassesProviderSpecificData verifies that the rule, which
-// rests on a denylist rather than an allowlist, does not block LEGITIMATE
-// data; fields such as a card token have to reach the provider.
-func TestStoreSessionPassesProviderSpecificData(t *testing.T) {
-	svc := &fakePayments{session: models.PaymentSession{ID: "payses_1"}}
-	r := newTestRouter(svc)
-
-	rec := do(t, r, http.MethodPost, "/store/v1/payment-collections/paycol_1/payment-sessions",
-		`{"provider_id":"manual","idempotency_key":"key-1","data":{"card_token":"tok_1"}}`)
-
-	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	assert.Equal(t, "tok_1", svc.lastCreateSession.Data["card_token"])
-}
-
 // TestCreateSessionMalformedDataReturns422 verifies that a data field that is
 // not an object is rejected.
 func TestCreateSessionMalformedDataReturns422(t *testing.T) {
@@ -445,10 +367,6 @@ func TestProviderList(t *testing.T) {
 // Had there been a capture endpoint on the store side, money could have been
 // taken from a cart whose order never came into being; authorization, capture
 // and refund belong to the order completion workflow.
-//
-// Cancellation is NOT on this list and must not be: it moves no money, it
-// releases the reservation the customer opened THEMSELVES (see
-// TestStoreSurfaceExposesSessionCancel).
 func TestStoreSurfaceDoesNotExposeCapture(t *testing.T) {
 	r := newTestRouter(&fakePayments{})
 
@@ -463,25 +381,28 @@ func TestStoreSurfaceDoesNotExposeCapture(t *testing.T) {
 	}
 }
 
-// TestStoreSurfaceExposesSessionCancel verifies that the customer can release
-// their own payment session.
-//
-// Regression: the reservation that prevents a double capture is held at the
-// collection level — an open session takes up the collection's remaining
-// amount. While the storefront had no way to release it, a customer who picked
-// "credit card" and then wanted to switch to "bank transfer" stayed locked
-// until an ADMINISTRATOR canceled the session by hand.
-//
-// That a cancellation is not a money movement is what sets it apart from
-// authorize/capture/refund; those three stay closed to the store.
-func TestStoreSurfaceExposesSessionCancel(t *testing.T) {
-	fake := &fakePayments{}
+// TestTheStorefrontTakesNoCollectionOrSessionID is ADR 0439's payment half:
+// gobit hands a collection's id to every receiver of payment.captured and
+// payment.refunded, and the storefront routes that took one — reading the
+// collection, opening a session on it, canceling a session — answered whoever
+// held it. No storefront called them, so they are gone rather than gated.
+func TestTheStorefrontTakesNoCollectionOrSessionID(t *testing.T) {
+	fake := &fakePayments{collection: models.PaymentCollection{ID: "paycol_1", Amount: 1000}}
 	r := newTestRouter(fake)
 
-	rec := do(t, r, http.MethodPost, "/store/v1/payment-sessions/payses_1/cancel", "")
+	for _, request := range []struct{ method, path, body string }{
+		{http.MethodGet, "/store/v1/payment-collections/paycol_1", ""},
+		{http.MethodPost, "/store/v1/payment-collections/paycol_1/payment-sessions",
+			`{"provider_id":"manual","idempotency_key":"key-1"}`},
+		{http.MethodPost, "/store/v1/payment-sessions/payses_1/cancel", ""},
+	} {
+		rec := do(t, r, request.method, request.path, request.body)
 
-	assert.Equal(t, http.StatusNoContent, rec.Code,
-		"the customer has to be able to release their own reservation; otherwise the payment method cannot be changed")
+		assert.Equal(t, http.StatusNotFound, rec.Code, "%s %s is a storefront route again: %s",
+			request.method, request.path, rec.Body.String())
+	}
+	assert.False(t, fake.cancelCalled, "a storefront request canceled a session")
+	assert.Zero(t, fake.lastCreateSession.IdempotencyKey, "a storefront request opened a session")
 }
 
 // TestSessionDTOCarriesDeclineReason verifies that the diagnostic field shows
@@ -600,8 +521,7 @@ func TestRequestWithoutPrincipalGets401(t *testing.T) {
 // The identity of /store/v1 is the publishable key and that key by definition
 // CARRIES NO scope. Closing the store endpoint too while adding the admin
 // scopes would have brought the whole storefront down; the risk is real,
-// because the provider list and the collection read endpoints share the SAME
-// handler on the two surfaces.
+// because the provider list shares the SAME handler on the two surfaces.
 func TestStoreEndpointsRequireNoScope(t *testing.T) {
 	svc := &fakePayments{
 		providerIDs: []string{"manual"},
@@ -612,7 +532,6 @@ func TestStoreEndpointsRequireNoScope(t *testing.T) {
 
 	for _, path := range []string{
 		"/store/v1/payment-providers",
-		"/store/v1/payment-collections/pcol_1",
 	} {
 		t.Run(path, func(t *testing.T) {
 			rec := doAs(t, r, http.MethodGet, path, "", storefront)

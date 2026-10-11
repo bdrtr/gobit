@@ -84,10 +84,9 @@
 // corehttp.IdentityName) and the customer module refuses a storefront claim it
 // does not back. This package takes that contract for the two bodies that NAME
 // a customer and NOT for the cart's own id (ADR 0057) — the section below says
-// why the two are different questions. The same declaration is written in
-// the order module too (order/api storeGetOrder), and real authorization is the
-// EMBEDDING APPLICATION's job rather than a later phase of this framework's
-// (ADR 0008).
+// why the two are different questions. The order module took the opposite
+// turn for its own id, because gobit hands an order's id to third parties: an
+// order opens to its access token or its customer's proof (ADR 0439).
 //
 // The model has RULES that are not free, and this package obeys them:
 //
@@ -97,6 +96,15 @@
 //   - The cart id has to be carried like a SECRET. Its leaking into a log, into
 //     the Referer header or into third-party scripts is the leaking of the
 //     access itself.
+//   - gobit hands a cart's id only to the shopper whose storefront holds the
+//     cart (ADR 0439). The webhooks withhold it, no other storefront record
+//     carries it, and the cart events' ids name it by a digest; what still
+//     carries it is gobit's own logs and the shop's own pages.
+//   - A COMPLETED cart is not reached at the storefront: every storefront
+//     route on it answers the 404 an unknown id gets
+//     ([Handler.completedCartRefused]). Its addresses are the order's now,
+//     which the admin record alone carries (ADR 0193), and the shopper reads
+//     the order through its token.
 //
 // # What the model DOES NOT COVER: customer_id
 //
@@ -291,6 +299,10 @@ type Carts interface {
 
 	// RemoveShippingMethod removes the shipping method.
 	RemoveShippingMethod(ctx context.Context, cartID, methodID string) error
+
+	// ListCartsByIDs returns the carts' headers in one query; the storefront
+	// asks it whether a cart is completed before it answers (ADR 0439).
+	ListCartsByIDs(ctx context.Context, ids []string) ([]models.Cart, error)
 }
 
 // CartOpening is the surface used by this package of the flow that OPENS the

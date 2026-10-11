@@ -204,6 +204,11 @@ type CompleteCartInput struct {
 	// PlacedBy is the operator placing the order, as the guard ring proved
 	// them; empty on a shopper's checkout (ADR 0298). The order records it.
 	PlacedBy string
+	// IssueOrderToken asks for an access token for the order once it is
+	// placed, for the shopper whose storefront completed the cart (ADR 0439).
+	// The operator's completion asks for none: its order reaches the shopper
+	// through the mail, which carries a token of its own.
+	IssueOrderToken bool
 }
 
 // CompleteCartResult holds the fields of the completed order that concern the
@@ -255,6 +260,14 @@ type CompleteCartResult struct {
 	// a reason to roll the flow back (see the package comment). If the field is
 	// set the order is VALID, but a human must look at it.
 	Warnings []string `json:"warnings,omitempty"`
+	// OrderToken is the order's access token when the input asked for one
+	// (ADR 0439); empty otherwise, and when none could be issued.
+	//
+	// It is NOT part of the execution record, and that is why it is "-": the
+	// order keeps only a token's digest, and a plaintext in the saga's output
+	// would sit in the workflow tables for as long as the record does. It is
+	// issued after the saga, so a replayed completion issues a new one.
+	OrderToken string `json:"-"`
 }
 
 // CompleteCart turns the cart into an order.
@@ -335,12 +348,35 @@ func (w *Workflows) CompleteCart(ctx context.Context, in CompleteCartInput) (Com
 	if err != nil {
 		return CompleteCartResult{}, err
 	}
+	if in.IssueOrderToken {
+		out.OrderToken = w.issueOrderToken(ctx, out.OrderID)
+	}
 
 	w.log.InfoContext(ctx, "cart turned into an order",
 		"cart_id", out.CartID, "order_id", out.OrderID, "payment_id", out.PaymentID,
 		"amount", out.Amount, "currency_code", out.CurrencyCode,
 		"warnings", len(out.Warnings))
 	return out, nil
+}
+
+// issueOrderToken asks the order module for an access token for the placed
+// order, or answers none.
+//
+// A failure does not fail the completion: the order is placed and its money
+// taken, and an error here would send the shopper to retry a checkout that
+// succeeded. The order mail carries a token of its own, so the shopper still
+// reaches the order; the log says which order went without.
+func (w *Workflows) issueOrderToken(ctx context.Context, orderID string) string {
+	token, err := w.orders.IssueOrderAccessToken(ctx, orderID)
+	if err != nil {
+		w.log.ErrorContext(ctx, "the order was placed and no access token could be issued for it; "+
+			"the completion answers without one",
+			"order_id", orderID, "error", err)
+
+		return ""
+	}
+
+	return token
 }
 
 // sagaSteps builds the saga's step sequence.

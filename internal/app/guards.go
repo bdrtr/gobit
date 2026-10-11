@@ -12,6 +12,7 @@ import (
 	"encoding/base64"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -40,6 +41,10 @@ const (
 // codeGuardBackendMissing reports that a shared backend was requested while no
 // Redis client is present.
 const codeGuardBackendMissing = "guard_backend_unavailable"
+
+// codeGuardIdentitySetup reports that the customer identity the store ring
+// keys its idempotency records on could not be resolved (ADR 0439).
+const codeGuardIdentitySetup = "guard_identity_setup_failed"
 
 // temporarySecretBytes is the byte length of the random secret generated for
 // development; it matches the output length of HS256.
@@ -104,6 +109,7 @@ func guardStack(
 	rdb *redis.Client,
 	pool *db.Pool,
 	log *slog.Logger,
+	identity corehttp.Identity,
 ) ([]func(http.Handler) http.Handler, *corehttp.CallbackRegistry, error) {
 	warnAboutRateLimit(cfg, log)
 	warnAboutCatalogCache(cfg, log)
@@ -119,6 +125,7 @@ func guardStack(
 	}
 
 	opts := guardOptions(cfg, authn, auditor, log)
+	opts.IdempotencyProof = storeIdempotencyProof(identity)
 
 	if cfg.GuardBackend == config.BackendRedis {
 		if rdb == nil {
@@ -249,10 +256,12 @@ func guardOptions(
 		// in every browser. So all shoppers share one namespace, and the key
 		// that selects a record inside it is a header the CLIENT chooses.
 		//
-		// Every other storefront POST survives that, because the fingerprint
-		// includes the PATH and those paths carry the cart id: a second shopper
-		// reusing the key on their own cart gets 409 idempotency_key_reuse, not
-		// somebody else's data. Cart creation is the one endpoint whose path
+		// A storefront POST whose path carries the cart id survives that,
+		// because the fingerprint includes the PATH: a second shopper reusing
+		// the key on their own cart gets 409 idempotency_key_reuse, not somebody
+		// else's data. A path naming an order or a customer carries no access,
+		// and those records are keyed on the request's proof as well
+		// ([storeIdempotencyProof], ADR 0439). Cart creation is the one endpoint whose path
 		// carries no capability and whose response CREATES one — so a second
 		// shopper sending the same key and the same body was handed the first
 		// shopper's cart id, which is a capability URL (there is no ownership
@@ -265,6 +274,44 @@ func guardOptions(
 		// creation. That is an abandoned row. The alternative was handing a
 		// stranger someone's cart.
 		IdempotencyExempt: []string{graph.Path, cartapi.StoreCartsPath},
+	}
+}
+
+// storeIdempotencyProof is what a storefront request proves beyond the
+// publishable key, for the store ring's record namespace (ADR 0439): the order
+// access token it presents and the customer the bound identity proves.
+//
+// Both are proofs a route under the store prefix decides on, and neither is in
+// the path: an order's routes open to the token or the customer, and a
+// customer's routes to the customer. Keyed on the publishable key, the path and
+// the body alone, a record of one of them was replayed to a caller presenting
+// neither. A request presenting nothing keeps the shared namespace it had.
+//
+// A cart's routes ask NOTHING: the cart's id in the path is their access, so
+// their records are keyed as they always were, and an identity outage does not
+// reach them — a retried line or completion is replayed while the session
+// store is down. Asking the identity there made a cart's idempotency depend on
+// it (the follow-up review of ADR 0439).
+//
+// An identity that cannot reach a verdict is an error, and the ring refuses the
+// write with it — the class the order routes answer an outage with — rather
+// than run it unrecorded; identity nil, as the guard-stack tests build it,
+// proves nobody.
+func storeIdempotencyProof(identity corehttp.Identity) corehttp.IdempotencyProofFunc {
+	return func(r *http.Request) (string, error) {
+		if strings.HasPrefix(r.URL.Path, cartapi.StoreCartsPath+"/") {
+			return "", nil
+		}
+		customer, err := corehttp.ProvenCustomerIfAny(identity, r)
+		if err != nil {
+			return "", err
+		}
+		token := r.Header.Get(corehttp.OrderTokenHeader)
+		if token == "" && customer == "" {
+			return "", nil
+		}
+
+		return "order-token:" + token + "\x00customer:" + customer, nil
 	}
 }
 

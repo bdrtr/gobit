@@ -99,6 +99,20 @@ func (f *fakePromotions) RemovePromotionCode(_ context.Context, cartID, code str
 // The fake satisfying the surface the handler expects is verified at compile time.
 var _ api.Carts = (*fakeCarts)(nil)
 
+// ListCartsByIDs answers the detail's cart header for its own id, so the
+// storefront's completed-cart gate reads what the test set up (ADR 0439); the
+// scripted err is the handler's to meet, not the gate's.
+func (f *fakeCarts) ListCartsByIDs(_ context.Context, ids []string) ([]models.Cart, error) {
+	out := []models.Cart{}
+	for _, id := range ids {
+		if f.detail.ID != "" && f.detail.ID == id {
+			out = append(out, f.detail.Cart)
+		}
+	}
+
+	return out, nil
+}
+
 // GetCart returns the cart with its children.
 func (f *fakeCarts) GetCart(_ context.Context, cartID string) (models.CartDetail, error) {
 	f.gotCartID = cartID
@@ -1674,4 +1688,84 @@ func TestACouponCannotBeAppliedWithoutTheFlow(t *testing.T) {
 		`{"code":"SUMMER20"}`)
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+}
+
+// TestACompletedCartIsNotReadAtTheStorefront is ADR 0439's cart half: a
+// completed cart's addresses, e-mail and customer are the order's now, so the
+// storefront read answers it word for word what an unknown cart gets, and the
+// operator's read still answers it.
+func TestACompletedCartIsNotReadAtTheStorefront(t *testing.T) {
+	completedAt := time.Now()
+	svc := &fakeCarts{detail: models.CartDetail{
+		Cart: models.Cart{
+			ID: "cart_1", RegionID: "reg_1", CurrencyCode: "TRY", Email: "shopper@example.test",
+			CompletedAt: &completedAt,
+		},
+		ShippingAddress: &models.CartAddress{
+			ID: "addr_1", CartID: "cart_1", Type: models.AddressShipping, Address1: "9 Far Road",
+		},
+	}}
+	h := newServer(t, svc)
+
+	rec := doRequest(t, h, http.MethodGet, "/store/v1/carts/cart_1", "")
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "9 Far Road")
+	assert.NotContains(t, rec.Body.String(), "shopper@example.test")
+
+	unknown := doRequest(t, newServer(t, &fakeCarts{
+		err: errors.NotFound("cart_not_found", "cart not found: %s", "cart_1"),
+	}), http.MethodGet, "/store/v1/carts/cart_1", "")
+	require.Equal(t, http.StatusNotFound, unknown.Code)
+	refused, ok := bodyMap(t, rec)["error"].(map[string]any)
+	require.True(t, ok)
+	missing, ok := bodyMap(t, unknown)["error"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, missing["code"], refused["code"], "the refusal is told apart from an unknown cart")
+	assert.Equal(t, missing["message"], refused["message"], "the refusal is told apart from an unknown cart")
+
+	admin := doRequest(t, h, http.MethodGet, "/admin/v1/carts/cart_1", "")
+	assert.Equal(t, http.StatusOK, admin.Code, "the operator reads a completed cart: %s", admin.Body.String())
+}
+
+// TestEveryStorefrontRouteRefusesACompletedCart sweeps the storefront's cart
+// routes (ADR 0439): a completed cart answers each the 404 an unknown cart gets,
+// before its handler reads a body or asks a flow — the option list included,
+// which answered 200 after the cart's own read was closed (the review of
+// 2026-10-11), and the writes, which told the cart completed with their 409.
+func TestEveryStorefrontRouteRefusesACompletedCart(t *testing.T) {
+	completedAt := time.Now()
+	svc := &fakeCarts{detail: models.CartDetail{Cart: models.Cart{
+		ID: "cart_1", RegionID: "reg_1", CurrencyCode: "TRY", CompletedAt: &completedAt,
+	}}}
+	h := newServer(t, svc)
+	unknown := doRequest(t, newServer(t, &fakeCarts{
+		err: errors.NotFound("cart_not_found", "cart not found: %s", "cart_1"),
+	}), http.MethodGet, "/store/v1/carts/cart_1", "")
+	want, ok := bodyMap(t, unknown)["error"].(map[string]any)
+	require.True(t, ok)
+
+	for _, route := range []struct{ method, path, body string }{
+		{http.MethodGet, "/store/v1/carts/cart_1", ""},
+		{http.MethodPost, "/store/v1/carts/cart_1", `{"email":"x@example.test"}`},
+		{http.MethodDelete, "/store/v1/carts/cart_1", ""},
+		{http.MethodPost, "/store/v1/carts/cart_1/merge", `{"source_cart_id":"cart_2"}`},
+		{http.MethodPost, "/store/v1/carts/cart_1/promotions", `{"code":"SPRING"}`},
+		{http.MethodDelete, "/store/v1/carts/cart_1/promotions/SPRING", ""},
+		{http.MethodPost, "/store/v1/carts/cart_1/line-items", `{"variant_id":"var_1","quantity":1}`},
+		{http.MethodPatch, "/store/v1/carts/cart_1/line-items/li_1", `{"quantity":2}`},
+		{http.MethodDelete, "/store/v1/carts/cart_1/line-items/li_1", ""},
+		{http.MethodPut, "/store/v1/carts/cart_1/shipping-address", `{"first_name":"A","country_code":"TR"}`},
+		{http.MethodPut, "/store/v1/carts/cart_1/billing-address", `{"first_name":"A","country_code":"TR"}`},
+		{http.MethodGet, "/store/v1/carts/cart_1/shipping-options", ""},
+		{http.MethodPost, "/store/v1/carts/cart_1/shipping-methods", `{"shipping_option_id":"so_1"}`},
+		{http.MethodDelete, "/store/v1/carts/cart_1/shipping-methods/csm_1", ""},
+		{http.MethodPost, "/store/v1/carts/cart_1/complete", `{"payment_provider_id":"manual","expected_total":1}`},
+	} {
+		rec := doRequest(t, h, route.method, route.path, route.body)
+		require.Equal(t, http.StatusNotFound, rec.Code, "%s %s: %s", route.method, route.path, rec.Body.String())
+		got, ok := bodyMap(t, rec)["error"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, want["code"], got["code"], "%s %s", route.method, route.path)
+		assert.Equal(t, want["message"], got["message"], "%s %s", route.method, route.path)
+	}
 }

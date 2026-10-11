@@ -3,7 +3,7 @@
 **Summary:** The outbound webhook's signature, headers and envelope are published as `core/webhook`, which the sender signs, heads and marshals every delivery with, and the topics and the fields each carries are described in the served `/openapi.json` under `webhooks`, from the values the plugin sends with.
 It costs ten published names and one method on `openapi.Doc`, kept until 1.0.0, and `plugins/webhookout`'s nine signature names become deprecated aliases.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0439](0439-an-id-gobit-hands-out-opens-nothing-at-the-storefront.md), whose served webhooks describe the cart topics without `cart_id`
 - **Date:** 2026-10-10
 - **Extends:** [0026](0026-the-published-surface-is-fourteen-packages.md), whose surface gains `core/webhook`; [0035](0035-the-schema-vocabulary-is-published.md), whose document gains `webhooks`
 

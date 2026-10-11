@@ -90,6 +90,8 @@ func TestOrderPlacedReadsTheEmailFromTheRECORDNotTheEVENT(t *testing.T) {
 		"currency_code": "TRY",
 		"total":         "6100",
 		"item_count":    "2",
+		// The mail's own access token, issued as it was built (ADR 0439).
+		"order_token": "ordtok_order_01H_1",
 	}, sent.Data, "the template data has to come from the order and ALL its values have to be strings")
 
 	records := store.allRecords()
@@ -233,4 +235,26 @@ func TestOrderPlacedIgnoresUnrecognizedFields(t *testing.T) {
 	require.NoError(t, svc.OrderPlaced(context.Background(), orderPlacedEvent("order_01H")))
 
 	assert.Equal(t, 1, prov.callCount())
+}
+
+// TestAnOrderMailCarriesATokenOfItsOwn is ADR 0439's mail half: each mail is
+// built with a new access token for the order, so its link opens the order,
+// and a token that cannot be issued fails the mail before anything is sent
+// rather than mailing a link that opens nothing.
+func TestAnOrderMailCarriesATokenOfItsOwn(t *testing.T) {
+	contacts := &fakeContacts{body: testOrderBody}
+	svc, _, prov := setupWithContacts(t, contacts)
+
+	require.NoError(t, svc.OrderPlaced(context.Background(), orderPlacedEvent("order_01H")))
+	require.Equal(t, 1, prov.callCount())
+	assert.Equal(t, "ordtok_order_01H_1", prov.lastNotification().Data["order_token"])
+
+	failing := &fakeContacts{body: testOrderBody, tokenErr: errors.Unavailable("order_down", "down")}
+	svc, store, prov := setupWithContacts(t, failing)
+
+	err := svc.OrderPlaced(context.Background(), orderPlacedEvent("order_01H"))
+	require.Error(t, err)
+	assert.Equal(t, errors.KindUnavailable, errors.KindOf(err), "the class of the failure is kept: %v", err)
+	assert.Zero(t, prov.callCount(), "a mail went out without its token")
+	assert.Empty(t, store.allRecords(), "the delivery was claimed for a mail that was never built")
 }

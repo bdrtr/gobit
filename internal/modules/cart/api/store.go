@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -85,7 +86,8 @@ type createCartRequest struct {
 	// It needs a customer, and the customer has to be the order's: a guest
 	// proves nothing that ties a second purchase to the first. The order module
 	// answers whether the order may be added to before the cart is opened, and
-	// again when the cart is checked out.
+	// again when the cart is checked out; before, it answers anyone but the
+	// order's customer the unknown order's 404 (ADR 0439).
 	AddsToOrderID string `json:"adds_to_order_id"`
 	// Metadata is the cart's free-form extra data (campaign source, storefront
 	// session).
@@ -185,16 +187,74 @@ func (h *Handler) cart(ctx context.Context, cartID string) (models.Cart, error) 
 	return detail.Cart, nil
 }
 
-// storeGetCart returns the cart with its children.
+// storeGetCart returns the cart with its children; a completed one is the
+// unknown cart's 404 ([Handler.completedCartRefused]).
 func (h *Handler) storeGetCart(w http.ResponseWriter, r *http.Request) {
+	if h.completedCartRefused(w, r) {
+		return
+	}
 	ctx := r.Context()
 
-	detail, err := h.svc.GetCart(ctx, cartID(r))
+	id := cartID(r)
+	detail, err := h.svc.GetCart(ctx, id)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toCartDetailDTO(detail)})
+}
+
+// completedCartRefused answers a storefront request on a COMPLETED cart the 404
+// an unknown id gets, and reports whether it did (ADR 0439). Every storefront
+// route on a cart asks it first, the reads and the writes alike.
+//
+// A completed cart's addresses, e-mail and customer are the order's now, and
+// the order keeps its addresses on the admin record (ADR 0193); a cart id read
+// off a log or an old page must not reach them, nor learn that the cart exists
+// and completed: the option list told it, and a write's 409 cart_completed did.
+// The shopper reads the order through its token, and a storefront that still
+// holds the cart forgets it. A retried completion learns it already ran from
+// its Idempotency-Key replay, or from the order the shopper's page holds.
+//
+// The operator's doors reuse some of these handlers, and an operator reads a
+// completed cart as what it is: a request off the storefront's path is not
+// asked. The read is the cart's header alone, one query.
+func (h *Handler) completedCartRefused(w http.ResponseWriter, r *http.Request) bool {
+	if !strings.HasPrefix(r.URL.Path, StoreCartsPath+"/") {
+		return false
+	}
+
+	ctx := r.Context()
+	if err := h.completedCart(ctx, cartID(r)); err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return true
+	}
+
+	return false
+}
+
+// completedCart answers a completed cart's id the unknown cart's 404, and nil
+// for any other; it is the path's check and a merge's source's.
+func (h *Handler) completedCart(ctx context.Context, id string) error {
+	carts, err := h.svc.ListCartsByIDs(ctx, []string{id})
+	if err != nil {
+		return err
+	}
+	if len(carts) == 1 && carts[0].Completed() {
+		return storeCartNotFound(id)
+	}
+
+	return nil
+}
+
+// codeStoreCartNotFound is the code an unknown cart is answered with, which
+// the storefront answers a completed one with too.
+const codeStoreCartNotFound = "cart_not_found"
+
+// storeCartNotFound is the refusal of a completed cart's read: word for word
+// what an unknown id is answered.
+func storeCartNotFound(id string) error {
+	return coreerrors.NotFound(codeStoreCartNotFound, "cart not found: %s", id)
 }
 
 // updateCartRequest is the body of POST /store/v1/carts/{id}.
@@ -231,6 +291,9 @@ type updateCartRequest struct {
 // that ALREADY has an owner is not handed to a second one
 // (service.CodeCustomerMismatch).
 func (h *Handler) storeUpdateCart(w http.ResponseWriter, r *http.Request) {
+	if h.completedCartRefused(w, r) {
+		return
+	}
 	ctx := r.Context()
 
 	var body updateCartRequest
@@ -279,12 +342,23 @@ type mergeCartRequest struct {
 // What the SERVICE refuses is the case that would add some: a source cart owned
 // by a customer other than the target's (service.CodeCustomerMismatch).
 func (h *Handler) storeMergeCart(w http.ResponseWriter, r *http.Request) {
+	if h.completedCartRefused(w, r) {
+		return
+	}
 	ctx := r.Context()
 
 	var body mergeCartRequest
 	if err := decodeBody(w, r, &body); err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
+	}
+	// A completed source is answered as an unknown one: its 409 told whoever
+	// holds a cart id that the cart exists and completed (ADR 0439).
+	if body.SourceCartID != "" {
+		if err := h.completedCart(ctx, body.SourceCartID); err != nil {
+			corehttp.WriteError(ctx, w, err)
+			return
+		}
 	}
 
 	id := cartID(r)
@@ -325,6 +399,9 @@ type applyPromotionCodeRequest struct {
 // call to find out the new total, with a window in between where the screen
 // shows a coupon beside the old amount.
 func (h *Handler) storeApplyPromotionCode(w http.ResponseWriter, r *http.Request) {
+	if h.completedCartRefused(w, r) {
+		return
+	}
 	ctx := r.Context()
 
 	var body applyPromotionCodeRequest
@@ -348,6 +425,9 @@ func (h *Handler) storeApplyPromotionCode(w http.ResponseWriter, r *http.Request
 
 // storeRemovePromotionCode takes a coupon code off the cart and reprices it.
 func (h *Handler) storeRemovePromotionCode(w http.ResponseWriter, r *http.Request) {
+	if h.completedCartRefused(w, r) {
+		return
+	}
 	ctx := r.Context()
 
 	flow, err := h.promotions()
@@ -381,6 +461,9 @@ func (h *Handler) writeCart(ctx context.Context, w http.ResponseWriter, cartID s
 
 // storeDeleteCart soft deletes the cart.
 func (h *Handler) storeDeleteCart(w http.ResponseWriter, r *http.Request) {
+	if h.completedCartRefused(w, r) {
+		return
+	}
 	ctx := r.Context()
 
 	if err := h.svc.DeleteCart(ctx, cartID(r)); err != nil {
@@ -454,6 +537,9 @@ type addOnRequest struct {
 // the pricer cannot be resolved the line item is NOT added at all
 // (see [Handler.pricing]).
 func (h *Handler) storeAddLineItem(w http.ResponseWriter, r *http.Request) {
+	if h.completedCartRefused(w, r) {
+		return
+	}
 	ctx := r.Context()
 
 	var body addLineItemRequest
@@ -520,6 +606,9 @@ type updateLineItemRequest struct {
 // returns a bodyless 204: presenting the record of a removed line item in the
 // response would mean handing the client a resource that no longer exists.
 func (h *Handler) storeUpdateLineItem(w http.ResponseWriter, r *http.Request) {
+	if h.completedCartRefused(w, r) {
+		return
+	}
 	ctx := r.Context()
 
 	var body updateLineItemRequest
@@ -650,6 +739,9 @@ func encodeAddOns(addOns []addOnRequest) (json.RawMessage, error) {
 
 // storeRemoveLineItem removes the line item from the cart.
 func (h *Handler) storeRemoveLineItem(w http.ResponseWriter, r *http.Request) {
+	if h.completedCartRefused(w, r) {
+		return
+	}
 	ctx := r.Context()
 
 	id := cartID(r)
@@ -761,6 +853,9 @@ type completeCartFlowRequest struct {
 	// PlacedBy is the operator completing the cart, set by the operator's
 	// completion from the caller's identity (ADR 0298).
 	PlacedBy string `json:"placed_by,omitempty"`
+	// IssueOrderToken asks for the order's access token; the storefront's
+	// completion sets it and the operator's does not (ADR 0439).
+	IssueOrderToken bool `json:"issue_order_token,omitempty"`
 }
 
 // completeCartFlowResult is the schema of the JSON returned from the completion
@@ -771,14 +866,16 @@ type completeCartFlowResult struct {
 	CurrencyCode string `json:"currency_code"`
 	Amount       int64  `json:"amount"`
 	Outstanding  int64  `json:"outstanding"`
+	OrderToken   string `json:"order_token"`
 }
 
 // completeCartDTO is the completed cart's outward representation.
 //
-// The response carries the order's ID, its total and what it still owes,
-// nothing else: the payment session and reservation ids are internal
-// structure, and the warnings are the operator's business (the flow logs
-// them). The order's detail is read with GET /store/v1/orders/{id}.
+// The response carries the order's ID, its total, what it still owes and, on
+// the storefront, the order's access token, nothing else: the payment session
+// and reservation ids are internal structure, and the warnings are the
+// operator's business (the flow logs them). The order's detail is read with
+// GET /store/v1/orders/{id}, presenting the token (ADR 0439).
 type completeCartDTO struct {
 	OrderID      string `json:"order_id"`
 	CartID       string `json:"cart_id"`
@@ -787,6 +884,12 @@ type completeCartDTO struct {
 	// Outstanding is what the order still owes: the part of an offline method
 	// the customer pays later, zero when the checkout took the whole (ADR 0284).
 	Outstanding int64 `json:"outstanding"`
+	// OrderToken opens the order at the storefront, sent in the
+	// X-Order-Token header (ADR 0439). It is the only copy this answer
+	// carries and the order keeps its digest alone; it is absent from the
+	// operator's completion, and from a storefront's whose token could not be
+	// issued, in which case the order mail's opens the order.
+	OrderToken string `json:"order_token,omitempty"`
 }
 
 // storeCompleteCart turns the cart into an order.
@@ -822,6 +925,9 @@ type completeCartDTO struct {
 // on the same cart. That is why a client whose network drops repeating the
 // request does not produce a second order.
 func (h *Handler) storeCompleteCart(w http.ResponseWriter, r *http.Request) {
+	if h.completedCartRefused(w, r) {
+		return
+	}
 	ctx := r.Context()
 
 	var body completeCartRequest
@@ -847,6 +953,9 @@ func (h *Handler) storeCompleteCart(w http.ResponseWriter, r *http.Request) {
 		// already proved it holds.
 		SalesChannelIDs: corehttp.SalesChannelIDs(ctx),
 		ExpectedTotal:   *body.ExpectedTotal,
+		// The shopper who completed the cart is the one who will open the
+		// order (ADR 0439).
+		IssueOrderToken: true,
 	})
 }
 
@@ -869,6 +978,7 @@ func (h *Handler) completeCart(ctx context.Context, w http.ResponseWriter, in co
 		CurrencyCode: result.CurrencyCode,
 		Total:        result.Amount,
 		Outstanding:  result.Outstanding,
+		OrderToken:   result.OrderToken,
 	}})
 }
 
@@ -908,6 +1018,9 @@ func (h *Handler) complete(ctx context.Context, in completeCartFlowRequest) (com
 
 // storeSetShippingAddress writes the cart's shipping address.
 func (h *Handler) storeSetShippingAddress(w http.ResponseWriter, r *http.Request) {
+	if h.completedCartRefused(w, r) {
+		return
+	}
 	ctx := r.Context()
 
 	var body addressRequest
@@ -932,6 +1045,9 @@ func (h *Handler) storeSetShippingAddress(w http.ResponseWriter, r *http.Request
 
 // storeSetBillingAddress writes the cart's billing address.
 func (h *Handler) storeSetBillingAddress(w http.ResponseWriter, r *http.Request) {
+	if h.completedCartRefused(w, r) {
+		return
+	}
 	ctx := r.Context()
 
 	var body addressRequest
@@ -970,6 +1086,9 @@ type addShippingMethodRequest struct {
 
 // storeAddShippingMethod adds a shipping method to the cart.
 func (h *Handler) storeAddShippingMethod(w http.ResponseWriter, r *http.Request) {
+	if h.completedCartRefused(w, r) {
+		return
+	}
 	h.addShippingMethod(w, r, false)
 }
 
@@ -1030,6 +1149,9 @@ func (h *Handler) addShippingMethod(w http.ResponseWriter, r *http.Request, oper
 
 // storeRemoveShippingMethod removes the shipping method from the cart.
 func (h *Handler) storeRemoveShippingMethod(w http.ResponseWriter, r *http.Request) {
+	if h.completedCartRefused(w, r) {
+		return
+	}
 	ctx := r.Context()
 
 	id := cartID(r)
@@ -1102,6 +1224,9 @@ type deliveryDaysDTO struct {
 // when the cart meets the rule, and every option it lists is one the shipping
 // method write accepts.
 func (h *Handler) listShippingOptions(w http.ResponseWriter, r *http.Request) {
+	if h.completedCartRefused(w, r) {
+		return
+	}
 	h.writeShippingOptions(w, r, false)
 }
 

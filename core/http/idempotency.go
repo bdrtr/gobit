@@ -179,7 +179,38 @@ type IdempotencyStore interface {
 // The rule that follows: when installing this middleware on a new surface, the
 // question to ask is not "is it authenticated" but "does the resolved identity
 // name THE CALLER or the INSTALLATION the caller is connected to".
+//
+// # A path is not always the caller's proof
+//
+// The two defenses above hold only while the id in the path is the caller's
+// access. An order's id is not (ADR 0439): gobit hands it to webhook
+// receivers, and the order's routes open to a token in a header or a proven
+// customer instead. With the namespace the store's alone, a stranger replaying
+// the owner's key, path and body was answered the owner's recorded return, and
+// one writing first under the owner's key recorded a refusal the owner was then
+// answered. [GuardOptions.IdempotencyProof] closes that class: the store ring
+// mixes what the request proves into the namespace, so a record is replayed
+// only to a caller presenting the same proof, and refuses a request whose
+// proof cannot be read rather than run it unrecorded.
 func Idempotency(store IdempotencyStore) func(http.Handler) http.Handler {
+	return idempotency(store, nil)
+}
+
+// IdempotencyProofFunc names what a request proves beyond its principal: an
+// order's access token, the customer an identity proves. It answers "" for a
+// request that proves nothing more, and an error when the proof could not be
+// read, in which case the request is REFUSED with that error and nothing runs.
+//
+// Refused, and not served without a record: a write served unrecorded during
+// an outage is a write a retry makes twice — a second return, a line added
+// twice — and a record keyed on a proof that could not be read could be
+// another caller's. The refusal writes nothing, so the client's retry under
+// the same key, once the proof can be read, is the request's first run.
+type IdempotencyProofFunc func(r *http.Request) (string, error)
+
+// idempotency is [Idempotency] with the request's proof mixed into the
+// namespace; a nil proof leaves the namespace the principal's alone.
+func idempotency(store IdempotencyStore, proof IdempotencyProofFunc) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		if store == nil {
 			return next
@@ -229,6 +260,15 @@ func Idempotency(store IdempotencyStore) func(http.Handler) http.Handler {
 			// with the caller's bucket; the reasoning is in the godoc's "The identity
 			// namespace" section.
 			bucket := idempotencyBucket(r.Context())
+			if proof != nil {
+				proven, err := proof(r)
+				if err != nil {
+					WriteError(r.Context(), w, err)
+
+					return
+				}
+				bucket = provenBucket(bucket, proven)
+			}
 			digest := fingerprint(bucket, r, body)
 			key := storeKey(bucket, rawKey)
 
@@ -437,6 +477,20 @@ func idempotencyBucket(ctx context.Context) string {
 	}
 
 	return anonymousIdempotencyBucket
+}
+
+// provenBucket narrows a bucket to the caller's proof.
+//
+// The proof enters as a SHA-256: it may be a credential (an order's token), and
+// the store key is written to the store — Redis included — for the record's
+// whole lifetime. A request proving nothing keeps the bucket it had.
+func provenBucket(bucket, proven string) string {
+	if proven == "" {
+		return bucket
+	}
+	sum := sha256.Sum256([]byte(proven))
+
+	return bucket + "|proof:" + hex.EncodeToString(sum[:])
 }
 
 // storeKey combines the bucket and the client's key into a single store key.

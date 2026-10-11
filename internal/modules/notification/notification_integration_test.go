@@ -166,6 +166,11 @@ func (s *fakeOrders) OrderContactJSON(_ context.Context, orderID string) (json.R
 	return json.RawMessage(s.body), nil
 }
 
+// IssueOrderAccessToken answers a token naming the order (ADR 0439).
+func (s *fakeOrders) IssueOrderAccessToken(_ context.Context, orderID string) (string, error) {
+	return "ordtok_" + orderID, nil
+}
+
 // orderContactBody produces a contact response with the given id and address.
 func orderContactBody(orderID, email string) string {
 	return fmt.Sprintf(`{"order_id":%q,"display_id":"1042","email":%q,`+

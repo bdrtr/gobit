@@ -218,8 +218,12 @@ has been left inconsistent.
   leave it to them to decide where the order ships from.
 
 The response carries the order's identity, its total and what it still owes
-(`outstanding`, the part of an offline method, ADR 0284); the payment session,
-collection and reservation ids and the operator's warnings are NOT PUBLISHED.
+(`outstanding`, the part of an offline method, ADR 0284), and `order_token`, the
+order's access token, once: the order's storefront routes answer it in
+`X-Order-Token`, or the identity's proof of the order's customer, and the order
+id alone opens nothing, because gobit sends it to webhook receivers
+([ADR 0439](adr/0439-an-id-gobit-hands-out-opens-nothing-at-the-storefront.md)). The payment session, collection and reservation ids and the
+operator's warnings are NOT PUBLISHED.
 
 ### Where the same criterion is not applied yet
 
@@ -234,7 +238,10 @@ code's godoc.
   identity is the publishable key and that is not a secret; there is no customer
   session. The model's own rule is enforced too: there is NO LIST ENDPOINT on the
   storefront side, because a list endpoint would turn knowing one id into reading
-  every cart. What the model does NOT cover is the `customer_id` in the bodies:
+  every cart. And gobit hands the id to nobody but the storefront holding the
+  cart: webhooks withhold it, no other storefront record carries it, and every
+  storefront route answers a completed cart the unknown cart's 404 ([ADR 0439](adr/0439-an-id-gobit-hands-out-opens-nothing-at-the-storefront.md)). What the model
+  does NOT cover is the `customer_id` in the bodies:
   a capability says "I may reach the id I hold", not "I am that customer" — and
   the cart's customer determines which company's window a b2b spending limit is
   drawn from. Since

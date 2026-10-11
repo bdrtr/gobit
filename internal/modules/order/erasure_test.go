@@ -43,6 +43,10 @@ import (
 //     product_title and components, the name of a shipping method or a
 //     delivery change). A catalog copy and a shipping option's name, the same
 //     for every buyer.
+//   - AN ACCESS TOKEN'S DIGEST (order_access_tokens.token_hash, ADR 0439). A
+//     SHA-256 of 256 random bits says nothing about the person and opens
+//     nothing by itself; an erasure deletes the rows anyway, so the person's
+//     links stop opening the order.
 var notPersonalColumns = map[string][]string{
 	"orders": {
 		"id", "display_id", "status", "region_id", "currency_code", "cart_id",
@@ -111,6 +115,9 @@ var notPersonalColumns = map[string][]string{
 	"order_delivery_changes": {
 		"id", "order_id", "shipping_method_id", "shipping_option_id", "name", "amount",
 		"difference", "credit_line_id", "created_at", "payment_collection_id",
+	},
+	"order_access_tokens": {
+		"order_id", "token_hash", "created_at",
 	},
 }
 

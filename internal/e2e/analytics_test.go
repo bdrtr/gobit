@@ -117,7 +117,7 @@ func TestTheFunnelSeesACartOpenAndBecomeAnOrder(t *testing.T) {
 		map[string]int64{taxedCurrency: 30_000}, 5)
 
 	cartID, _ := prepareCart(ctx, t, customerID, variantID, 1)
-	awaitRecorded(t, cartsvc.EventCartCreated+":"+cartID)
+	awaitRecorded(t, cartsvc.EventID(cartsvc.EventCartCreated, cartID))
 
 	afterOpen := readFunnel(t)
 	createdAfterOpen, _, _ := regionCounts(t, afterOpen)
@@ -136,7 +136,7 @@ func TestTheFunnelSeesACartOpenAndBecomeAnOrder(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, result.OrderID)
-	awaitRecorded(t, cartsvc.EventCartCompleted+":"+cartID, ordersvc.EventOrderPlaced+":"+result.OrderID)
+	awaitRecorded(t, cartsvc.EventID(cartsvc.EventCartCompleted, cartID), ordersvc.EventOrderPlaced+":"+result.OrderID)
 
 	afterOrder := readFunnel(t)
 	createdAfter, completedAfter, placedAfter := regionCounts(t, afterOrder)
@@ -171,7 +171,7 @@ func TestAnAbandonedCartIsAnOpeningWithNoCompletion(t *testing.T) {
 	variantID, _ := newStockedVariant(ctx, t, "E2E Abandoned Product",
 		map[string]int64{taxedCurrency: 30_000}, 5)
 	cartID, _ := prepareCart(ctx, t, customerID, variantID, 1)
-	awaitRecorded(t, cartsvc.EventCartCreated+":"+cartID)
+	awaitRecorded(t, cartsvc.EventID(cartsvc.EventCartCreated, cartID))
 
 	createdAfter, completedAfter, _ := regionCounts(t, readFunnel(t))
 

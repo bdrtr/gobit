@@ -45,7 +45,11 @@ import (
 //
 //	type OrderContactReader interface {
 //	    OrderContactJSON(ctx context.Context, orderID string) (json.RawMessage, error)
+//	    IssueOrderAccessToken(ctx context.Context, orderID string) (string, error)
 //	}
+//
+// The second method is the one WRITE the notification side makes: each order
+// mail carries a new access token for the order (ADR 0439).
 //
 // Composite data (the cart's snapshot) travels as JSON. The field names are
 // declared EXPLICITLY below; they MUST be exactly the same as the schema on the
@@ -698,6 +702,18 @@ func (i *Interop) OrderContactJSON(ctx context.Context, orderID string) (json.Ra
 		Total:        strconv.FormatInt(detail.Total, 10),
 		ItemCount:    strconv.Itoa(len(detail.Items)),
 	})
+}
+
+// IssueOrderAccessToken makes a new access token for the order and returns
+// it, the only copy (ADR 0439). The checkout asks for the one its storefront
+// completion answers with, and the notification module for the one each order
+// mail carries; NotFound when there is no such order.
+//
+// It is a separate call from [Interop.OrderContactJSON] because a read that
+// wrote a credential would hand one to every reader of the contact, the gift
+// card sale's included.
+func (i *Interop) IssueOrderAccessToken(ctx context.Context, orderID string) (string, error) {
+	return i.svc.IssueAccessToken(ctx, orderID)
 }
 
 // interopInvoiceItem is one line of an order as an invoice has to print it.

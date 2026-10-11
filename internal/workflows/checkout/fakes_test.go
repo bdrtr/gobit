@@ -526,6 +526,22 @@ type stubOrders struct {
 	// linesReads counts the reads.
 	linesFn    func(read int) (json.RawMessage, error)
 	linesReads int
+
+	// tokenErr, when set, makes IssueOrderAccessToken fail; tokens lists the
+	// orders a token was issued for, in order (ADR 0439).
+	tokenErr error
+	tokens   []string
+}
+
+// IssueOrderAccessToken answers "ordtok_<order id>", or tokenErr.
+func (s *stubOrders) IssueOrderAccessToken(_ context.Context, orderID string) (string, error) {
+	s.rec.add("order:token")
+	if s.tokenErr != nil {
+		return "", s.tokenErr
+	}
+	s.tokens = append(s.tokens, orderID)
+
+	return "ordtok_" + orderID, nil
 }
 
 // DispatchableLinesJSON answers the order's lines.

@@ -110,7 +110,6 @@ func Describe(d *openapi.Doc) {
 
 	describeSessions(d)
 	describeCaptures(d)
-	describeStore(d)
 
 	// The four collection endpoints; why they are in a separate file and why
 	// they went undescribed until ADR 0036 is in describe_collection.go.
@@ -228,37 +227,6 @@ func describeCaptures(d *openapi.Doc) {
 		Responses: map[string]any{
 			// A refund produces a SEPARATE record; the handler writes 201.
 			"201": openapi.Response("The resulting refund record", d.Item(refundDTO{})),
-		},
-	})
-}
-
-// describeStore describes the store surface's payment endpoints.
-//
-// The surface's narrowness must show in the schema too: there is NO capture
-// endpoint here and the session-opening body ([createStoreSessionRequest])
-// carries no amount. Had the schema shown the admin body, a client developer
-// would send a field the server rejects (see [decodeBody] — unknown fields are
-// an error).
-func describeStore(d *openapi.Doc) {
-	d.Describe(http.MethodPost, pathStoreCollectSess, openapi.Operation{
-		Summary: "Opens a payment session on the customer's behalf for the collection's remaining amount.",
-		Description: amountNote + " The amount is NOT taken from the client: the " +
-			"session always covers the whole remaining amount of the collection. If " +
-			"amount is sent in the body the request is rejected; provider behavior " +
-			"keys inside data are not accepted either.",
-		RequestBody: d.RequestBody(createStoreSessionRequest{}),
-		Responses: map[string]any{
-			"201": openapi.Response("The opened payment session", d.Item(sessionDTO{})),
-		},
-	})
-
-	d.Describe(http.MethodPost, pathStoreSessionCancel, openapi.Operation{
-		Summary: "Abandons a payment session the customer opened.",
-		Description: "This is how the payment METHOD is changed: an open session " +
-			"takes up the collection's remaining amount. IDEMPOTENT: it returns 204 " +
-			"for an already canceled session too.",
-		Responses: map[string]any{
-			"204": emptyResponse("Session abandoned"),
 		},
 	})
 }

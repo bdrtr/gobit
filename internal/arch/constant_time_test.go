@@ -77,8 +77,9 @@ var notSecretComparisons = map[string][]string{
 
 // constantTimeSites are the files holding the five comparisons the known
 // limits named before ADR 0257 (a TOTP code, an argon2id derived key, two
-// cookie MACs and a token digest) and the two signed callbacks (PayTR's and the
-// outgoing webhooks', whose check is published in core/webhook since ADR 0435).
+// cookie MACs and a token digest), the two signed callbacks (PayTR's and the
+// outgoing webhooks', whose check is published in core/webhook since ADR 0435)
+// and an order's access token (ADR 0439).
 // The import-derived population has to reach each of them, or the gate protects
 // none.
 var constantTimeSites = []string{
@@ -88,6 +89,8 @@ var constantTimeSites = []string{
 	"internal/modules/auth/models/token.go",
 	"plugins/paymentpaytr/hash.go",
 	"core/webhook/signature.go",
+	// An order's access token digest (ADR 0439).
+	"internal/modules/order/models/access_token.go",
 }
 
 // isTrivialOperand is a side of a comparison that holds no secret: a literal,

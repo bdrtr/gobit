@@ -4,7 +4,7 @@
 with the path's customer's orders, newest first and paged, once the
 installation's customer identity proves the request is that customer.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0439](0439-an-id-gobit-hands-out-opens-nothing-at-the-storefront.md), whose records name neither the cart nor the customer, and whose single orders open to the same proof
 - **Date:** 2026-10-02
 
 ## Context

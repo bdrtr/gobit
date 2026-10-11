@@ -263,6 +263,7 @@ core/http HeaderOnSuccess
 core/http HealthCheck
 core/http Idempotency
 core/http IdempotencyKeyHeader
+core/http IdempotencyProofFunc
 core/http IdempotencyReplayedHeader
 core/http IdempotencyStore
 core/http IdempotencyStore.Abort
@@ -286,6 +287,7 @@ core/http NewMemoryIdempotencyStore
 core/http NewMemoryLimiter
 core/http NewRouter
 core/http NewServer
+core/http OrderTokenHeader
 core/http Principal
 core/http Principal.HasScope
 core/http PrincipalFromContext

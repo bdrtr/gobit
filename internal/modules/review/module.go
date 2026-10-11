@@ -17,9 +17,9 @@
 // Decision A15 in docs/gaps.md asks whether the storefront may accept content
 // from a party this framework cannot identify, and it carries one discriminator:
 // does a human stand between the write and its effect? The repository's
-// precedent for a yes is the order module's storefront return request — written
-// by anyone holding the order id, moving no stock and no money, doing nothing
-// until an operator acts. A review published on APPROVAL has that exact shape,
+// precedent for a yes was the order module's storefront return request, as it
+// stood until ADR 0439 — written by anyone holding the order id, moving no
+// stock and no money, doing nothing until an operator acts. A review published on APPROVAL has that exact shape,
 // so the return request's argument covers it unchanged. A review published on
 // SUBMISSION does not, and would put an anonymous writer directly onto the
 // shop's product page.

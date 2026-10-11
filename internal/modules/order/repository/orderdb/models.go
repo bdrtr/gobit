@@ -38,6 +38,12 @@ type Order struct {
 	SalesChannelID       *string
 }
 
+type OrderAccessToken struct {
+	OrderID   string
+	TokenHash []byte
+	CreatedAt pgtype.Timestamptz
+}
+
 type OrderAddress struct {
 	ID              string
 	OrderID         string

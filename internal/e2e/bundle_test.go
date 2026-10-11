@@ -135,7 +135,7 @@ func TestAGiftBoxSellsFromItsParts(t *testing.T) {
 	requireStockEventually(ctx, t, towelItem, 8, "a written-off box puts its towel back")
 	requireStockEventually(ctx, t, soapItem, 6, "and its two soaps")
 
-	requested := storefrontRequest(t, http.MethodPost, "/store/v1/orders/"+placed.OrderID+"/returns",
+	requested := shopperOrderRequest(t, placed.OrderID, http.MethodPost, "/store/v1/orders/"+placed.OrderID+"/returns",
 		`{"reason":"a gift nobody wanted","lines":[{"order_line_item_id":"`+lineID+`","quantity":1}]}`)
 	require.Equal(t, http.StatusCreated, requested.Code, requested.Body.String())
 	var opened afterSalesRecordResponse

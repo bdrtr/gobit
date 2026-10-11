@@ -130,3 +130,29 @@ func TestTheTelephoneOrderWritesAskForTheWriteScope(t *testing.T) {
 		assert.Zero(t, flow.calls)
 	}
 }
+
+// TestOnlyTheStorefrontsCompletionAsksForTheOrdersToken is ADR 0439's
+// completion half: the shopper who completed the cart is the one who opens
+// the order, so the storefront's completion asks the flow for the token and
+// answers it, and the operator's asks for none and answers none.
+func TestOnlyTheStorefrontsCompletionAsksForTheOrdersToken(t *testing.T) {
+	answer := `{"order_id":"order_1","cart_id":"cart_1","currency_code":"TRY","amount":3600,` +
+		`"outstanding":0,"order_token":"ordtok_1"}`
+
+	shop := &fakeCheckout{response: json.RawMessage(answer)}
+	rec := doRequest(t, newServerWithFlows(t, withLineItem(), api.Flows{Checkout: shop}),
+		http.MethodPost, "/store/v1/carts/cart_1/complete", `{"payment_provider_id":"manual","expected_total":3600}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	sent := map[string]any{}
+	require.NoError(t, json.Unmarshal(shop.got, &sent))
+	assert.Equal(t, true, sent["issue_order_token"], "the storefront's completion asks for no token")
+	assert.Equal(t, "ordtok_1", object(t, bodyMap(t, rec)["data"])["order_token"], "the token is not answered")
+
+	desk := &fakeCheckout{response: json.RawMessage(answer)}
+	rec = doRequestAs(t, newServerWithFlows(t, withOperatorsLineItem(), api.Flows{Checkout: desk}),
+		&adminWriter, http.MethodPost, "/admin/v1/carts/cart_1/complete", telephoneCompletion)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	sent = map[string]any{}
+	require.NoError(t, json.Unmarshal(desk.got, &sent))
+	assert.NotContains(t, sent, "issue_order_token", "the operator's completion asked for the shopper's token")
+}

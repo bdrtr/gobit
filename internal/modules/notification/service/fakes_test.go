@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
@@ -240,6 +241,23 @@ type fakeContacts struct {
 	requested string
 	// calls is the number of reads.
 	calls int
+	// tokenErr, when set, makes the token issue fail; tokens counts the
+	// tokens issued (ADR 0439).
+	tokenErr error
+	tokens   int
+}
+
+// IssueOrderAccessToken answers "ordtok_<order id>_<n>", or tokenErr.
+func (c *fakeContacts) IssueOrderAccessToken(_ context.Context, orderID string) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.tokenErr != nil {
+		return "", c.tokenErr
+	}
+	c.tokens++
+
+	return fmt.Sprintf("ordtok_%s_%d", orderID, c.tokens), nil
 }
 
 func (c *fakeContacts) OrderContactJSON(_ context.Context, orderID string) (json.RawMessage, error) {

@@ -43,6 +43,10 @@ const OrderInteropName = "order.interop"
 // surface would not satisfy this interface.
 type OrderContactReader interface {
 	OrderContactJSON(ctx context.Context, orderID string) (json.RawMessage, error)
+	// IssueOrderAccessToken makes a new access token for the order and
+	// returns the only copy (ADR 0439): each order mail carries its own, so
+	// the link in it opens the order at the storefront.
+	IssueOrderAccessToken(ctx context.Context, orderID string) (string, error)
 }
 
 // orderContact is the JSON schema of the "order.interop" response.
@@ -117,6 +121,15 @@ func (l *lazyOrderContacts) OrderContactJSON(
 		return nil, err
 	}
 	return reader.OrderContactJSON(ctx, orderID)
+}
+
+// IssueOrderAccessToken asks the order surface for a new access token.
+func (l *lazyOrderContacts) IssueOrderAccessToken(ctx context.Context, orderID string) (string, error) {
+	reader, err := l.resolve()
+	if err != nil {
+		return "", err
+	}
+	return reader.IssueOrderAccessToken(ctx, orderID)
 }
 
 // resolve resolves the order surface from the container and stores the result.

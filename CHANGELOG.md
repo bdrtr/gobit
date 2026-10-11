@@ -11,6 +11,81 @@ design. It is fixed with `1.0.0`.
 
 ### Breaking changes
 
+- **An id gobit hands out opens nothing at the storefront** (ADR 0439, D280,
+  D281, D282, D283). gobit sends an order's id to every webhook receiver of an
+  order topic, a cart's id with `cart.created` and `cart.completed`, and a
+  payment collection's id with `payment.captured` and `payment.refunded`, and
+  the storefront answered each of those ids to the publishable key alone: a
+  receiver read a shopper's e-mail, lines, totals and tracking numbers, opened
+  a return that held the owner's units, read a completed cart's addresses and
+  a live cart's home address and phone, moved a live cart's delivery, and read
+  a collection's figures. **For storefronts**, what has to change:
+  - `GET /store/v1/orders/{id}`, `GET /store/v1/orders/{id}/timeline` and
+    `POST /store/v1/orders/{id}/returns` answer `404 order_not_found`, word for
+    word what an unknown id gets, unless the request sends one of the order's
+    access tokens in the `X-Order-Token` header or the installation's customer
+    identity proves the order's customer. A signed-in shopper whose session
+    your identity reads needs no change.
+  - `POST /store/v1/carts/{id}/complete` answers `order_token`, once. Keep it
+    where the guest's order page reads it on the server — an HttpOnly cookie
+    scoped to that order's page — and send it as `X-Order-Token`. Never put it
+    in a URL: gobit's request log writes the path, and third-party scripts on
+    the page read the address bar. A repeat of the completion under the same
+    `Idempotency-Key` answers the recorded response, token included.
+  - Each order mail's template data (`order.placed`, `order.completed`) gains
+    `order_token`, a new token per mail. A template that links the shopper to
+    the order page puts it in the link, and the storefront turns the token in
+    the link into the cookie and redirects, so the address bar loses it.
+  - The storefront order record and the records of
+    `GET /store/v1/customers/{id}/orders` no longer carry `cart_id` or
+    `customer_id`; the admin records keep both.
+  - Every storefront route on a COMPLETED cart — `GET /store/v1/carts/{id}`,
+    its option list and every write, the completion included — answers
+    `404 cart_not_found`, as an unknown cart does; a write no longer answers
+    `409 cart_completed`. Forget the cart once its completion answers; a
+    retried completion learns it ran from its `Idempotency-Key` replay.
+  - `POST /store/v1/carts` with `adds_to_order_id` answers `404 order_not_found`
+    for a body naming no customer or another customer than the order's;
+    `order_addition_needs_customer` and `order_addition_customer_mismatch` no
+    longer reach the storefront before a cart is opened.
+  - The three order routes answer `Cache-Control: no-store` and vary on
+    `X-Order-Token`. An `Idempotency-Key` on a storefront write off a cart is
+    replayed only to a request presenting the same order token and proving the
+    same customer, so a key shared across shoppers no longer shares a record,
+    and a retry whose proof changed (signed in or out, a token sent once and
+    not again) is not replayed. While the identity cannot answer, such a keyed
+    write is refused with its 503 and writes nothing; retry it with the same
+    key. A cart's routes are keyed on their path as before.
+  - A merge whose source cart is completed answers `404 cart_not_found`, as an
+    unknown source does.
+  - `GET /store/v1/payment-collections/{id}`,
+    `POST /store/v1/payment-collections/{id}/payment-sessions` and
+    `POST /store/v1/payment-sessions/{id}/cancel` are gone from the storefront;
+    a storefront pays through the cart's completion. The admin routes stay.
+  - `X-Order-Token` is in the CORS allow-list, as `corehttp.OrderTokenHeader`.
+    Regenerate a client from `/openapi.json` for the header and the records.
+  An order placed before the upgrade issued no token: a guest's no longer
+  opens at the storefront, and its old mail's link with it; a registered
+  customer's opens to the proof. **For webhook receivers:** `cart.created` and
+  `cart.completed` no longer carry `cart_id`, which they name under
+  `redacted`, and their `event_id` names the cart by a digest
+  (`cart.created:<32 hex>`) rather than by its id, so a receiver still pairs a
+  cart's two events. A registration whose filter on either topic names
+  `cart_id` hears nothing of that topic after the upgrade; change it with
+  `PATCH /admin/v1/webhooks/{id}` to drop the filter. Deliveries queued before
+  the upgrade, and cart events waiting in the outbox, still carry `cart_id` and
+  the old `event_id`, and a receiver keeps the cart ids it was sent: those
+  carts stay open to it until they complete. Drain the webhook queue before the
+  upgrade where that matters. **For operators:** `POST /admin/v1/carts` with
+  `adds_to_order_id` answers `404 order_not_found` for a body naming no
+  customer or another customer than the order's, where it answered
+  `409 order_addition_needs_customer` or `order_addition_customer_mismatch`;
+  the order's own customer opens the cart as before. Order migration 000044 adds
+  `order_access_tokens`, which keeps a SHA-256 of each token; an erasure deletes
+  the tokens of every order of the person, retained ones included. An order
+  mail whose token cannot be issued is not sent: the handler fails and the bus
+  asks again, as for a contact that cannot be read.
+
 - **A webhook delivery follows a redirect only when it keeps the POST**
   (ADR 0435, D272). **For operators:** the sender used to follow every
   redirect. A receiver answering 301, 302 or 303 got a GET with no body, and
@@ -27,6 +102,14 @@ design. It is fixed with `1.0.0`.
 
 ### Added
 
+- **The store's idempotency ring keys a record on what a request proves**
+  (ADR 0439, D280). **For embedders building their own guard stack:**
+  `corehttp.GuardOptions.IdempotencyProof`, an `IdempotencyProofFunc`, names
+  what a store request proves beyond the publishable key; the ring mixes it,
+  as a digest, into the record's namespace, and refuses a request whose proof
+  cannot be read. The zero value keys the ring on the principal alone, as
+  before; gobit's own server passes the order token and the proven customer,
+  and nothing for a cart's routes.
 - **A parcel's delivery and a return's opening and withdrawal are on the bus**
   (ADR 0437, D276, D277). **For integrators:** marking a parcel delivered
   publishes `fulfillment.delivered` (`fulfillment_id`, `reference`,

@@ -125,7 +125,10 @@ func TestAFieldListNarrowsTheBodyThatIsQueued(t *testing.T) {
 	}
 	assert.Equal(t, map[string]any{"order_id": "ord_9", "total": "1500"}, bodies[topicOrderPlaced].Data)
 	assert.Equal(t, []string{"customer_id"}, bodies[topicOrderPlaced].Redacted)
-	assert.Len(t, bodies[topicCartCreated].Data, 3, "a topic with no field list is sent whole")
+	assert.Equal(t, map[string]any{"currency_code": "TRY", "region_id": "reg_1"}, bodies[topicCartCreated].Data,
+		"a topic with no field list is sent whole, less what is withheld")
+	assert.Equal(t, []string{"cart_id"}, bodies[topicCartCreated].Redacted,
+		"a cart's id is its access, and the receiver is told it was withheld (ADR 0439)")
 
 	var stored string
 	require.NoError(t, testPool.Pool().QueryRow(t.Context(),
@@ -256,21 +259,22 @@ func TestARegistrationCarriesItsNarrowing(t *testing.T) {
 
 	created := call(t, h, http.MethodPost, "/admin/v1/webhooks", `{"url":"https://narrow.test/hook",
 		"topics":["cart.created"],"filters":{"cart.created":{"region_id":["reg_1"]}},
-		"fields":{"cart.created":["cart_id"]}}`)
+		"fields":{"cart.created":["currency_code"]}}`)
 	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
 	var registered struct {
 		Data createResponse `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(created.Body.Bytes(), &registered))
 	assert.Equal(t, topicFilters{topicCartCreated: {"region_id": {"reg_1"}}}, registered.Data.Filters)
-	assert.Equal(t, topicFields{topicCartCreated: {"cart_id"}}, registered.Data.Fields)
+	assert.Equal(t, topicFields{topicCartCreated: {"currency_code"}}, registered.Data.Fields)
 
 	require.NoError(t, m.onEvent(t.Context(), cartEvent("cart_x", "reg_2")))
 	require.NoError(t, m.onEvent(t.Context(), cartEvent("cart_y", "reg_1")))
 	var stored string
 	require.NoError(t, testPool.Pool().QueryRow(t.Context(),
 		`SELECT payload::text FROM webhook_delivery WHERE endpoint_id = $1`, registered.Data.ID).Scan(&stored))
-	assert.JSONEq(t, `{"cart_id": "cart_y"}`, stored, "one delivery, reg_1's, with the listed field alone")
+	assert.JSONEq(t, `{"currency_code": "TRY"}`, stored, "one delivery, reg_1's, with the listed field alone")
+	assert.NotContains(t, stored, "cart_y", "the cart's id was queued for a receiver (ADR 0439)")
 
 	refused := call(t, h, http.MethodPost, "/admin/v1/webhooks", `{"url":"https://narrow.test/hook",
 		"topics":["cart.created"],"filters":{"cart.created":{"total":["1"]}}}`)

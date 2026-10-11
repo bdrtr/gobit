@@ -5,7 +5,7 @@ and list the fields it is sent, and an operator can change its topics, filters,
 fields and description in place. The fields a filter or a list may name are the
 ones each topic carries, read out of the publishers by a census.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0439](0439-an-id-gobit-hands-out-opens-nothing-at-the-storefront.md), under which a receiver can no longer filter or list `cart_id`
 - **Date:** 2026-09-27
 
 Measurement: [measurements/0218](../measurements/0218-a-receiver-that-asked-for-less.md)

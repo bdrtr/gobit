@@ -36,10 +36,10 @@ import (
 // # Why the population is resolved from PATHS and not from names
 //
 // The obvious scan is for handlers called store-something. Measured on
-// 2026-09-08, that misses the payment module, whose two storefront handlers are
-// createStoreSession and cancelStoreSession; and a scan for request types named
-// storeSomethingRequest finds exactly two in the whole tree, which are the two
-// worked examples the ADR already cites. Either would have produced a gate that
+// 2026-09-08, that missed the payment module, whose two storefront handlers were
+// createStoreSession and cancelStoreSession until ADR 0439 removed them; and a
+// scan for request types named storeSomethingRequest finds exactly two in the
+// whole tree, which are the two worked examples the ADR already cites. Either would have produced a gate that
 // passes because it is looking in the wrong place. The routes are therefore
 // resolved by their PATH, through the constants the registrations use.
 

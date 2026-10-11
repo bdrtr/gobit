@@ -34,7 +34,7 @@ func TestAParcelsDeliveryAndAReturnsMovesReachAWebhookReceiver(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, delivered.Code, "body: %s", delivered.Body.String())
 
-	requested := storefrontRequest(t, http.MethodPost, "/store/v1/orders/"+orderID+"/returns",
+	requested := shopperOrderRequest(t, orderID, http.MethodPost, "/store/v1/orders/"+orderID+"/returns",
 		`{"lines":[{"order_line_item_id":"`+lineID+`","quantity":1}],"reason":"too small"}`)
 	require.Equal(t, http.StatusCreated, requested.Code, requested.Body.String())
 	var opened afterSalesRecordResponse
@@ -137,7 +137,7 @@ func TestAReturnsOpeningReachesAReceiverWithoutThePass(t *testing.T) {
 		assert.NoError(t, <-stopped)
 	})
 
-	requested := storefrontRequest(t, http.MethodPost, "/store/v1/orders/"+orderID+"/returns",
+	requested := shopperOrderRequest(t, orderID, http.MethodPost, "/store/v1/orders/"+orderID+"/returns",
 		`{"lines":[{"order_line_item_id":"`+lineID+`","quantity":1}]}`)
 	require.Equal(t, http.StatusCreated, requested.Code, requested.Body.String())
 	var opened afterSalesRecordResponse

@@ -4,18 +4,18 @@
 //
 //   - /admin/v1 — manages ALL stages of the payment: opening a collection,
 //     opening a session, authorization, capture, cancellation and refund.
-//   - /store/v1 — the LEAST surface the customer's payment flow needs: reading
-//     the collection and opening a session at a provider. Authorization and
-//     capture are NOT TRIGGERED by the store; the order completion workflow
-//     runs them (plan Phase 6). A customer being able to trigger a capture from
-//     their own browser would mean money being taken from a cart whose order
-//     never came into being.
+//   - /store/v1 — the provider list and a signed-in customer's own balances.
+//     Authorization and capture are NOT TRIGGERED by the store; the order
+//     completion workflow runs them (plan Phase 6). A customer being able to
+//     trigger a capture from their own browser would mean money being taken
+//     from a cart whose order never came into being.
 //
-// The same reasoning also narrows the BODY of the session-opening endpoint on
-// the store surface: the amount is not taken from the client (it is always the
-// whole of the collection's remainder) and the provider's behavior keys are
-// rejected. An endpoint that cannot trigger the capture but can write the
-// payment's amount or outcome would open the same gate from the back.
+// The storefront has no route that takes a collection or a session id
+// (ADR 0439). It had three — reading a collection, opening a session on one
+// and canceling a session — which answered whoever held the id, and gobit
+// hands a collection's id to every receiver of payment.captured and
+// payment.refunded; no storefront, example or test outside this package
+// called them. A storefront pays through its cart's completion.
 //
 // # Scopes
 //
@@ -105,18 +105,7 @@ const (
 	pathAdminPayment          = "/admin/v1/payments/{id}"
 	pathAdminPaymentRefund    = "/admin/v1/payments/{id}/refunds"
 
-	pathStoreProviders   = "/store/v1/payment-providers"
-	pathStoreCollection  = "/store/v1/payment-collections/{id}"
-	pathStoreCollectSess = "/store/v1/payment-collections/{id}/payment-sessions"
-	// pathStoreSessionCancel is the customer releasing a session they opened
-	// THEMSELVES.
-	//
-	// The reservation is held at the collection level (an open session covers
-	// the collection's remaining amount) — that is what prevents a double
-	// capture. Without a way to release it, a customer who chose "credit card"
-	// on the storefront and then wanted to switch to "bank transfer" would stay
-	// locked until an ADMINISTRATOR canceled the session by hand.
-	pathStoreSessionCancel = "/store/v1/payment-sessions/{id}/cancel"
+	pathStoreProviders = "/store/v1/payment-providers"
 )
 
 // maxBodyBytes is the upper bound for the request body. Without a bound a
@@ -312,12 +301,6 @@ func (h *Handler) Routes(r chi.Router) {
 	write.Post(pathAdminPaymentRefund, h.refundPayment)
 
 	r.Get(pathStoreProviders, h.listProviders)
-	r.Get(pathStoreCollection, h.getCollection)
-	// Opening a session exists on both surfaces but it is NOT the same handler:
-	// the store endpoint does not leave the amount and the provider behavior to
-	// the client.
-	r.Post(pathStoreCollectSess, h.createStoreSession)
-	r.Post(pathStoreSessionCancel, h.cancelStoreSession)
 
 	// A customer reads their own balances, and only their own (ADR 0253).
 	r.Get(pathStoreOwnStoreCredit, h.ownStoreCreditBalance)

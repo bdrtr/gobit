@@ -171,6 +171,10 @@ type fakeStore struct {
 	// rollback of a transaction is handled per key by recordUndo.
 	erased map[string]time.Time
 
+	// tokens are the digests of the access tokens each order issued
+	// (ADR 0439), in the order they were issued.
+	tokens map[string][][]byte
+
 	// hookCreateOrder, when it is set, is called ONCE at the BEGINNING of
 	// CreateOrder and is cleared afterwards.
 	//
@@ -200,7 +204,49 @@ func newFakeStore() *fakeStore {
 		replItems:       map[string]models.ReplacementItem{},
 		cancels:         map[string]models.OrderLineCancellation{},
 		erased:          map[string]time.Time{},
+		tokens:          map[string][][]byte{},
 	}
+}
+
+// RecordAccessToken keeps a token's digest; an unknown order is NotFound, as
+// the foreign key makes it.
+func (f *fakeStore) RecordAccessToken(ctx context.Context, orderID string, digest []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if _, ok := f.orders[orderID]; !ok {
+		return errors.NotFound(service.CodeOrderNotFound, "order not found")
+	}
+	f.recordUndo(ctx, undoEntry(f.tokens, orderID))
+	f.tokens[orderID] = append(slices.Clone(f.tokens[orderID]), slices.Clone(digest))
+
+	return nil
+}
+
+// AccessTokenDigests returns the order's digests.
+func (f *fakeStore) AccessTokenDigests(_ context.Context, orderID string) ([][]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return slices.Clone(f.tokens[orderID]), nil
+}
+
+// WithdrawAccessTokens deletes the orders' digests.
+func (f *fakeStore) WithdrawAccessTokens(ctx context.Context, orderIDs []string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var withdrawn int64
+	for _, id := range orderIDs {
+		if len(f.tokens[id]) == 0 {
+			continue
+		}
+		f.recordUndo(ctx, undoEntry(f.tokens, id))
+		withdrawn += int64(len(f.tokens[id]))
+		delete(f.tokens, id)
+	}
+
+	return withdrawn, nil
 }
 
 // That the fake store satisfies the surface the service expects is verified at

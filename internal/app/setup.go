@@ -20,6 +20,7 @@ import (
 	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/adminui"
 	"github.com/bdrtr/gobit/internal/core/config"
+	"github.com/bdrtr/gobit/internal/core/identity"
 	"github.com/bdrtr/gobit/internal/core/workflow"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
 	"github.com/bdrtr/gobit/internal/jobs/outboxrelay"
@@ -580,7 +581,12 @@ func openApplication(
 	// routes come from plugins that do not exist yet, so it guards nothing
 	// until it is mounted — and refuses to recognize a path before then, which
 	// is what makes a callback arriving mid-startup fail closed.
-	guards, callbacks, err := guardStack(cfg, authn, panelRing, redisClient, pool, log)
+	// The storefront's customer identity, resolved when the first keyed store
+	// write arrives, after the modules registered it: the store ring keys its
+	// records on the customer it proves (ADR 0439).
+	storeIdentity := identity.New(c, log, "guards", codeGuardIdentitySetup,
+		"no customer identity is bound; storefront idempotency records are keyed on an order's token alone")
+	guards, callbacks, err := guardStack(cfg, authn, panelRing, redisClient, pool, log, storeIdentity)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -50,7 +50,7 @@ func TestAnOperatorCorrectsWhereAnOrderShips(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "Engines Ltd", billing["company"], "the billing address is untouched")
 
-	timeline := storefrontRequest(t, http.MethodGet, "/store/v1/orders/"+orderID+"/timeline", "")
+	timeline := shopperOrderRequest(t, orderID, http.MethodGet, "/store/v1/orders/"+orderID+"/timeline", "")
 	require.Equal(t, http.StatusOK, timeline.Code, "body: %s", timeline.Body.String())
 	assert.Contains(t, timeline.Body.String(), `"order.shipping_address_corrected"`,
 		"the customer who rang sees that it was done")

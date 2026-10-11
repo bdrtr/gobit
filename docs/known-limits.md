@@ -59,8 +59,9 @@ past and is not corrected retroactively.
   eats the request body. It opens no signature and never could, so a green run
   means the shape is not wrong rather than that the session scheme is sound —
   and nothing makes an embedder run it. `POST /store/v1/customers` is outside the set because it mints the record;
-  so is the order module's storefront read, which names a cart rather than a
-  person.
+  the order module's storefront routes name an order rather than a person, and
+  ask its access token or its customer's proof
+  ([ADR 0439](adr/0439-an-id-gobit-hands-out-opens-nothing-at-the-storefront.md)).
 - **Since [ADR 0127](adr/0127-a-working-identity-ships-outside-the-module.md)
   there IS one to bind, and what it does not close is written here rather than
   discovered.** `contrib/identity-session` is a working customer identity in a Go
@@ -153,7 +154,33 @@ past and is not corrected retroactively.
   right of access. The storefront therefore has no list endpoint, because a list
   endpoint would turn knowing one identifier into reading every cart. The rules
   of the model, and what it does NOT cover, are written with the cart flows in
-  [`docs/commerce-flows.md`](commerce-flows.md).
+  [`docs/commerce-flows.md`](commerce-flows.md). gobit hands the id to the
+  storefront holding the cart and to nobody else
+  ([ADR 0439](adr/0439-an-id-gobit-hands-out-opens-nothing-at-the-storefront.md)), but it still writes it into its own logs — the request log
+  writes the path — and a shop's pages carry it wherever the storefront puts it;
+  there it is still the cart's access.
+- **An order opens to its token or its customer, and the token has no expiry.**
+  Since [ADR 0439](adr/0439-an-id-gobit-hands-out-opens-nothing-at-the-storefront.md) the storefront's order routes ask one of the order's
+  access tokens or the identity's proof of its customer. An order placed before
+  that record issued no token, so a guest's opens to nothing at the storefront
+  and a customer's to the proof alone, and an old mail's link opens nothing. A
+  token stays valid as long as the order, and an erasure of the person, which
+  withdraws the tokens of every order of theirs, retained ones included, is the
+  only thing that withdraws it; a link forwarded with a mail opens the order for
+  whoever receives it. A completion repeated under the same `Idempotency-Key`,
+  path and body answers its recorded response, token included, so the
+  idempotency record holds the plaintext for the key's lifetime
+  (`IDEMPOTENCY_TTL`), in Redis where `GUARD_BACKEND=redis`. A completion
+  repeated without a key, for a cart the checkout placed an order for and could
+  not mark completed, replays the saga's recorded result and issues a NEW token
+  to whoever holds the cart's id. During an identity outage a keyed storefront
+  write off a cart is refused with the identity's 503 and writes nothing, and
+  succeeds when retried once the session reads; a cart's routes ask the identity
+  nothing. A retry whose proof changed — the shopper signed in or out, or sent
+  the order's token once and not again — is not replayed, and a completion
+  retried so is answered the completed cart's 404; its order token is in the
+  order mail. The order id itself still travels in webhooks, logs and the
+  shop's URLs, where it names the order without opening it.
 - **An admin session names its browser, not its place.** Since
   [ADR 0276](adr/0276-a-session-names-the-browser-that-opened-it.md) a session
   lists the `User-Agent` of the sign-in that opened it, as the browser gave it,

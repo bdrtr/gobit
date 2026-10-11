@@ -42,7 +42,9 @@ const corsMaxAge = 10 * time.Minute
 // asking side is the one being checked.
 //
 // It carries If-None-Match, the request half of the catalog's validator pair
-// (ADR 0391), so a script on an allowed origin can revalidate a read itself.
+// (ADR 0391), so a script on an allowed origin can revalidate a read itself,
+// and [OrderTokenHeader], so one can open the order its shopper just placed
+// (ADR 0439).
 var corsAllowedHeaders = []string{
 	"Content-Type",
 	"Accept",
@@ -50,7 +52,18 @@ var corsAllowedHeaders = []string{
 	IdempotencyKeyHeader,
 	requestIDHeader,
 	"If-None-Match",
+	OrderTokenHeader,
 }
+
+// OrderTokenHeader is the header a storefront request presents an order's
+// access token in (ADR 0439).
+//
+// The order module's storefront routes read it; the core names it because the
+// browser allow-list above has to, and a header a script cannot send is a
+// route a browser storefront cannot call. It is a header rather than a query
+// parameter because the request log writes the path, and a token in the path
+// would be a token in every log line.
+const OrderTokenHeader = "X-Order-Token"
 
 // corsExposedHeaders are the response headers a browser may read: the request
 // id, and the ETag that is the response half of the validator pair (ADR 0391).

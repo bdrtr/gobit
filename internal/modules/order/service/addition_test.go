@@ -181,7 +181,11 @@ func TestAnAdditionIsRefusedAndNothingIsWritten(t *testing.T) {
 }
 
 // TestCheckAdditionAsksWhatTheWriteAsks holds the early answer to the same
-// rules, and to the same codes, without a lock.
+// rules, and to the same codes, without a lock — except whose order it is.
+// The early answer is the storefront's, to whoever holds the order's id, so a
+// request naming no customer or another is answered word for word what an
+// unknown id is (ADR 0439); the write, which the checkout makes, keeps its own
+// codes.
 func TestCheckAdditionAsksWhatTheWriteAsks(t *testing.T) {
 	for _, tc := range additionCases() {
 		t.Run(tc.name, func(t *testing.T) {
@@ -191,8 +195,16 @@ func TestCheckAdditionAsksWhatTheWriteAsks(t *testing.T) {
 			err := e.svc.CheckAddition(context.Background(), parentID, tc.customer, tc.currency)
 
 			require.Error(t, err)
-			assert.Equal(t, tc.kind, errors.KindOf(err))
-			assert.Equal(t, tc.code, errors.CodeOf(err))
+			kind, code := tc.kind, tc.code
+			if code == service.CodeAdditionNeedsCustomer || code == service.CodeAdditionCustomerMismatch {
+				kind, code = errors.KindNotFound, service.CodeOrderNotFound
+				var refusal *errors.Error
+				require.ErrorAs(t, err, &refusal)
+				assert.Equal(t, "order not found: "+parentID, refusal.Message,
+					"the refusal says something an unknown id's answer does not")
+			}
+			assert.Equal(t, kind, errors.KindOf(err))
+			assert.Equal(t, code, errors.CodeOf(err))
 		})
 	}
 
