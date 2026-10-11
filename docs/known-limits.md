@@ -860,6 +860,17 @@ past and is not corrected retroactively.
   and no cart, checkout, order or customer type
   ([ADR 0414](adr/0414-graphql-reads-the-catalog-and-nothing-else.md)); a client
   that reads the catalog there reads everything else over REST.
+- **A plugin's startup report reads its tables before they are migrated.**
+  `payment-paytr`, `webhook-out` and `webpush` count what they hold — pending
+  payments, receivers, subscriptions — from their module's `Register`, which
+  `Registry.Bootstrap` runs before the migrations: the order
+  [ADR 0045](adr/0045-pgvector-arrives-as-an-opt-in-extension-module.md) keeps
+  so that a module can refuse a cluster before any ledger is touched. On a
+  database the plugin has never seen, and for `webhook-out` on one an upgrade
+  adds a column its count reads, that start logs "… could not be counted at
+  startup" with `relation does not exist` and reports nothing. The tables are
+  migrated a moment later and nothing else is affected; the next start reports,
+  and `payment-paytr`'s hourly job reports within the hour (D288).
 
 ## Payment on the provider's own page
 
