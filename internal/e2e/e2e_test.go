@@ -81,6 +81,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -129,6 +130,7 @@ import (
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 	segmentwf "github.com/bdrtr/gobit/internal/workflows/segment"
 	stockalertwf "github.com/bdrtr/gobit/internal/workflows/stockalert"
+	"github.com/bdrtr/gobit/plugins/webpush"
 )
 
 // postgresImage is the database image the tests share; the SAME version is used
@@ -545,8 +547,8 @@ func runWithPostgres(m *testing.M) int {
 // The names are read off config.Config's env tags rather than listed here: a
 // list would miss the next setting, and the setting it missed is the one a
 // developer's shell or a runner's environment would then decide for the ground.
-// Plugin settings are not cleared: the one plugin on the ground that reads any,
-// PayTR, is given every one it reads by [groundEnvironment].
+// Plugin settings are not cleared: the plugins on the ground that read any,
+// PayTR and web push, are given every one they read by [groundEnvironment].
 func clearConfigEnvironment() error {
 	names := envTagNames(reflect.TypeFor[config.Config]())
 	if len(names) == 0 {
@@ -580,8 +582,9 @@ func envTagNames(t reflect.Type) []string {
 }
 
 // groundEnvironment is the configuration the ground runs under, on top of a
-// cleared environment; paytrURL is where the fake PayTR listens.
-func groundEnvironment(dsn, paytrURL string) map[string]string {
+// cleared environment; paytrURL is where the fake PayTR listens, and push is
+// the web-push plugin's key and copy.
+func groundEnvironment(dsn, paytrURL string, push groundPush) map[string]string {
 	return map[string]string{
 		"DATABASE_URL": dsn,
 		// The shared profile: what staging and production run, less the one
@@ -619,7 +622,44 @@ func groundEnvironment(dsn, paytrURL string) map[string]string {
 		"PAYTR_FAILURE_URL":   "https://shop.example.test/checkout/failed",
 		"PAYTR_TEST_MODE":     "true",
 		"PAYTR_BASE_URL":      paytrURL,
+		// Every setting the web-push plugin reads; it refuses to install
+		// without any of them.
+		"WEBPUSH_VAPID_PRIVATE_KEY": push.privateKey,
+		"WEBPUSH_VAPID_SUBJECT":     "mailto:ops@shop.example.test",
+		"WEBPUSH_TEMPLATE_DIR":      push.templates,
 	}
+}
+
+// groundPush is what the web-push plugin reads at Setup: a signing key and a
+// directory of push copy.
+type groundPush struct {
+	// privateKey is the raw P-256 scalar, base64url, minted for this run as
+	// `gobit webpush-key` mints one.
+	privateKey string
+	// templates is a temporary directory holding the one template the plugin
+	// pushes, an order's confirmation.
+	templates string
+}
+
+// newGroundPush mints the key and writes the copy; the caller removes the
+// directory.
+func newGroundPush() (groundPush, error) {
+	privateKey, _, err := webpush.GenerateKey()
+	if err != nil {
+		return groundPush{}, fmt.Errorf("could not mint the web-push key: %w", err)
+	}
+	dir, err := os.MkdirTemp("", "gobit-e2e-push-")
+	if err != nil {
+		return groundPush{}, fmt.Errorf("could not create the push template directory: %w", err)
+	}
+	copyText := `{{define "title"}}Order {{.display_id}}{{end}}{{define "body"}}It is placed.{{end}}`
+	if err := os.WriteFile(filepath.Join(dir, "order.placed.tmpl"), []byte(copyText), 0o600); err != nil {
+		_ = os.RemoveAll(dir)
+
+		return groundPush{}, fmt.Errorf("could not write the push template: %w", err)
+	}
+
+	return groundPush{privateKey: privateKey, templates: dir}, nil
 }
 
 // setUpHarness opens the installation and prepares the fixtures.
@@ -630,12 +670,21 @@ func setUpHarness(ctx context.Context, dsn string) (func(), error) {
 	if err := clearConfigEnvironment(); err != nil {
 		return nil, err
 	}
-	// The fake PayTR is up before the installation opens, because the
-	// plugin is configured with its address (paytr_checkout_test.go).
+	// The web-push key and copy, and the fake PayTR, are there before the
+	// installation opens, because each plugin reads them at Setup
+	// (paytr_checkout_test.go).
+	push, err := newGroundPush()
+	if err != nil {
+		return nil, err
+	}
 	fakePayTRServer = newFakePayTR()
-	for name, value := range groundEnvironment(dsn, fakePayTRServer.URL) {
+	release := func() {
+		fakePayTRServer.Close()
+		_ = os.RemoveAll(push.templates)
+	}
+	for name, value := range groundEnvironment(dsn, fakePayTRServer.URL, push) {
 		if err := os.Setenv(name, value); err != nil {
-			fakePayTRServer.Close()
+			release()
 
 			return nil, fmt.Errorf("could not set %s: %w", name, err)
 		}
@@ -647,13 +696,13 @@ func setUpHarness(ctx context.Context, dsn string) (func(), error) {
 		Plugins: []coreplugin.Plugin{carrierSpyPlugin{}, observersPlugin{}},
 	})
 	if err != nil {
-		fakePayTRServer.Close()
+		release()
 
 		return nil, fmt.Errorf("could not open the installation: %w", err)
 	}
 	stop := func() {
 		closeInstallation()
-		fakePayTRServer.Close()
+		release()
 	}
 	installation = opened
 	ctr, testRouter, testModules = opened.Container, opened.Router, opened.Modules

@@ -9,6 +9,28 @@ design. It is fixed with `1.0.0`.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The web-push plugin's routes are in `/openapi.json` with their bodies**
+  (D290, D291). Its four storefront routes and three admin routes entered the
+  served document with a path, a method and no body, so a client generated
+  from it sent nothing to `POST /store/v1/webpush/subscribe` and read nothing
+  back; they are described now. **For integrators:** the answers of
+  `GET /store/v1/webpush/vapid-key`, `POST /store/v1/webpush/subscribe`,
+  `GET /admin/v1/webpush/subscriptions` and `POST /admin/v1/webpush/broadcast`
+  carry their values under `data`, the envelope every other endpoint answers
+  with. **For contributors:** an integration test opens each plugin in the
+  catalog alone and fails, naming it, when one that binds a route, a callback
+  or a panel screen does not stand on the end-to-end ground, where the
+  authorization matrix and the schema and store-access gates read it.
+
+### Deprecated
+
+- **The web-push answers' top-level keys** (D291). `public_key`, `id`,
+  `subscriptions` and the broadcast's `attempted`, `delivered`, `removed` and
+  `failed` stand where they stood, beside `data`, until a later release
+  removes them; a storefront reading `.public_key` moves to `.data.public_key`.
+
 ## [0.12.0] — 2026-10-11
 
 ### Breaking changes

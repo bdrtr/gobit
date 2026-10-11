@@ -24,6 +24,7 @@ import (
 	"github.com/bdrtr/gobit/plugins/paymentpaytr"
 	"github.com/bdrtr/gobit/plugins/searchpg"
 	"github.com/bdrtr/gobit/plugins/webhookout"
+	"github.com/bdrtr/gobit/plugins/webpush"
 )
 
 // This file proves end to end that the search PLUGIN works in the real system:
@@ -109,11 +110,20 @@ const searchIndexTable = "searchpg_product"
 // place in the tree where the cart module's real events meet a real consumer.
 //
 // The PayTR plugin is the box's one provider whose customer pays on its own
-// page, and its checkout is paytr_checkout_test.go (ADR 0438). It is the only
-// one that reads settings: [groundEnvironment] gives it every one it reads,
-// pointed at the fake PayTR [setUpHarness] starts. Before it stood here, its
-// callback and its pending list were outside every audit the ground runs.
-var groundPlugins = []string{searchpg.Name, analytics.Name, webhookout.Name, paymentpaytr.Name}
+// page, and its checkout is paytr_checkout_test.go (ADR 0438).
+// [groundEnvironment] gives it every setting it reads, pointed at the fake
+// PayTR [setUpHarness] starts. Before it stood here, its callback and its
+// pending list were outside every audit the ground runs (D286).
+//
+// The web-push plugin binds storefront and admin routes of its own, and it
+// stood outside every audit the ground runs for the reason PayTR did (D290);
+// [groundEnvironment] gives it a key minted for the run and one template.
+//
+// Every plugin in the catalog that binds a route, a callback or a panel screen
+// stands here, and internal/app's
+// TestEveryPluginThatBindsARouteStandsOnTheGround says so by name when one
+// does not.
+var groundPlugins = []string{searchpg.Name, analytics.Name, webhookout.Name, paymentpaytr.Name, webpush.Name}
 
 // searchWord produces a search word that appears nowhere else in the catalog.
 //

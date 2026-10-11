@@ -456,7 +456,12 @@ the caller "it was not applied".
 A package under `plugins/<name>/` implementing `coreplugin.Plugin`; the contract
 comes from `core/provider` and the registration point from `coreplugin.Host`. A
 catalog line is added to `pluginCatalog` (`internal/app/plugins.go`) and
-selected with `PLUGINS`. The core and the modules **do not change**.
+selected with `PLUGINS`. The core and the modules **do not change**. A plugin
+that binds a route, a callback or a panel screen also takes a line in the
+end-to-end ground's `groundPlugins` (`internal/e2e`), with every setting it
+reads in `groundEnvironment`, so the authorization matrix and the schema and
+store-access gates read it; an integration test in `internal/app` names the
+plugin until it does (D290).
 
 Installation has two phases: `Install` before the modules (so a module a plugin
 brings in also goes through the life cycle), `Start` after the modules (a

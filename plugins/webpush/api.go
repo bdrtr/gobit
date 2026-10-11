@@ -61,6 +61,86 @@ type broadcastRequest struct {
 	Data map[string]string `json:"data"`
 }
 
+// The answers below are under "data", the envelope every described endpoint
+// answers with, which the schema gate holds every description to. Each
+// answered beside it alone before the plugin was described (D291), and still
+// carries the same values there, deprecated, so a storefront or a script
+// reading the old keys keeps working until it moves.
+
+// keyResponse is the body of the application server key's read.
+type keyResponse struct {
+	// Data is the key.
+	Data serverKey `json:"data"`
+	// serverKey is Data at the top level, where it was before; deprecated.
+	serverKey
+}
+
+// serverKey is the application server key.
+type serverKey struct {
+	// PublicKey is the uncompressed P-256 point, base64url, that a storefront
+	// passes to PushManager.subscribe() as applicationServerKey.
+	PublicKey string `json:"public_key"`
+}
+
+// subscribedResponse is the body of a subscription's answer.
+type subscribedResponse struct {
+	// Data names the stored device.
+	Data subscribedDevice `json:"data"`
+	// subscribedDevice is Data at the top level, where it was before;
+	// deprecated.
+	subscribedDevice
+}
+
+// subscribedDevice names a stored device.
+type subscribedDevice struct {
+	// ID is the device's row id, the one the admin surface deletes it by.
+	ID string `json:"id"`
+}
+
+// deviceListResponse is the body of the admin listing.
+type deviceListResponse struct {
+	// Data are the devices, in id order.
+	Data []deviceRecord `json:"data"`
+	// Subscriptions is Data under its old name; deprecated.
+	Subscriptions []deviceRecord `json:"subscriptions"`
+}
+
+// deviceRecord is one device as the operator sees it, without its endpoint.
+type deviceRecord struct {
+	// ID is the device's row id.
+	ID string `json:"id"`
+	// CustomerID is the customer the storefront claimed the device for, empty
+	// for a device nobody claimed.
+	CustomerID string `json:"customer_id"`
+	// Locale selects the device's template, empty for the default.
+	Locale string `json:"locale"`
+	// VAPIDFingerprint names the signing key the device subscribed under.
+	VAPIDFingerprint string `json:"vapid_fingerprint"`
+}
+
+// broadcastResponse is the body of a broadcast's answer.
+type broadcastResponse struct {
+	// Data are the counts.
+	Data broadcastCounts `json:"data"`
+	// broadcastCounts is Data at the top level, where it was before;
+	// deprecated.
+	broadcastCounts
+}
+
+// broadcastCounts are what a broadcast did.
+type broadcastCounts struct {
+	// Attempted is how many devices the broadcast tried.
+	Attempted int `json:"attempted"`
+	// Delivered is how many of them a push service accepted the message for.
+	Delivered int `json:"delivered"`
+	// Removed is how many could never be sent to again — gone at the push
+	// service, subscribed under another key, or holding unusable keys — and
+	// were deleted.
+	Removed int `json:"removed"`
+	// Failed is how many failed otherwise; those devices are kept.
+	Failed int `json:"failed"`
+}
+
 // handleVAPIDKey serves the application server key.
 //
 // # Why the key is served rather than configured on both sides
@@ -73,9 +153,8 @@ type broadcastRequest struct {
 //
 // Serving it from the private key makes the two impossible to separate.
 func (m *webpushModule) handleVAPIDKey(w http.ResponseWriter, r *http.Request) {
-	corehttp.WriteJSON(r.Context(), w, http.StatusOK, map[string]string{
-		"public_key": m.opts.publicKey,
-	})
+	key := serverKey{PublicKey: m.opts.publicKey}
+	corehttp.WriteJSON(r.Context(), w, http.StatusOK, keyResponse{Data: key, serverKey: key})
 }
 
 // handleSubscribe stores a device.
@@ -130,7 +209,8 @@ func (m *webpushModule) handleSubscribe(w http.ResponseWriter, r *http.Request) 
 	// The endpoint is NOT echoed back. It is a capability — whoever holds it
 	// can push to that browser — and a response body travels through proxies
 	// and browser caches that the request body does not.
-	corehttp.WriteJSON(ctx, w, http.StatusCreated, map[string]string{"id": id})
+	device := subscribedDevice{ID: id}
+	corehttp.WriteJSON(ctx, w, http.StatusCreated, subscribedResponse{Data: device, subscribedDevice: device})
 }
 
 // handleUnsubscribe removes a device.
@@ -214,20 +294,20 @@ func (m *webpushModule) handleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items := make([]map[string]string, 0, len(devices))
+	items := make([]deviceRecord, 0, len(devices))
 	for _, d := range devices {
-		items = append(items, map[string]string{
-			"id":          d.ID,
-			"customer_id": d.CustomerID,
-			"locale":      d.Locale,
+		items = append(items, deviceRecord{
+			ID:         d.ID,
+			CustomerID: d.CustomerID,
+			Locale:     d.Locale,
 			// The fingerprint is shown because it answers the one question a
 			// shrinking audience raises: were these minted under the key we
 			// still hold?
-			"vapid_fingerprint": d.Fingerprint,
+			VAPIDFingerprint: d.Fingerprint,
 		})
 	}
 
-	corehttp.WriteJSON(ctx, w, http.StatusOK, map[string]any{"subscriptions": items})
+	corehttp.WriteJSON(ctx, w, http.StatusOK, deviceListResponse{Data: items, Subscriptions: items})
 }
 
 // handleDelete removes one device by its row id.
@@ -281,12 +361,13 @@ func (m *webpushModule) handleBroadcast(w http.ResponseWriter, r *http.Request) 
 
 	total := m.broadcast(ctx, req)
 
-	corehttp.WriteJSON(ctx, w, http.StatusOK, map[string]int{
-		"attempted": total.Attempted,
-		"delivered": total.Delivered,
-		"removed":   total.Gone,
-		"failed":    total.Failed,
-	})
+	counts := broadcastCounts{
+		Attempted: total.Attempted,
+		Delivered: total.Delivered,
+		Removed:   total.Gone,
+		Failed:    total.Failed,
+	}
+	corehttp.WriteJSON(ctx, w, http.StatusOK, broadcastResponse{Data: counts, broadcastCounts: counts})
 }
 
 // broadcast walks the registry a page at a time and pushes to each page.
