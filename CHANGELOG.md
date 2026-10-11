@@ -67,7 +67,10 @@ design. It is fixed with `1.0.0`.
     a storefront pays through the cart's completion, or opens the payment and
     cancels it under the cart (ADR 0438, below). The admin routes stay.
   - `X-Order-Token` is in the CORS allow-list, as `corehttp.OrderTokenHeader`.
-    Regenerate a client from `/openapi.json` for the header and the records.
+    Regenerate a client from `/openapi.json` for the header and the records:
+    the storefront order components are renamed, `Order` to `OrderStoreOrder`
+    and `OrderDetail` to `OrderStoreOrderDetail`, and
+    `PaymentCreateStoreSessionRequest` is gone with its route.
   An order placed before the upgrade issued no token: a guest's no longer
   opens at the storefront, and its old mail's link with it; a registered
   customer's opens to the proof. **For webhook receivers:** `cart.created` and
@@ -104,6 +107,48 @@ design. It is fixed with `1.0.0`.
   301, 302 or 303 at its final address. A delivery already queued keeps the URL
   it was queued with, and a redrive sends it there again.
 
+
+### Security
+
+- **An order's id opened the order at the storefront, and gobit handed the
+  ids out** (ADR 0439, D280, D281, D282, D283). `GET /store/v1/orders/{id}`
+  answered an order, its customer's e-mail, its lines, totals and tracking
+  numbers, to the publishable key, which is not a secret, and the id alone;
+  the order's timeline and its return route did the same, a return holding the
+  owner's units; a completed cart answered its addresses and a live one its
+  home address and phone to its id; `GET /store/v1/payment-collections/{id}`
+  answered a collection's figures. `webhook-out` sends those ids to every
+  receiver of a topic: an order's with the order topics, a parcel's
+  `reference`, a cart's with `cart.created` and `cart.completed`, a
+  collection's with `payment.captured` and `payment.refunded`. A marketplace's
+  evaluation of gobit found it.
+
+  **Affected:** every release. The storefront order read answers the id alone
+  from v0.1.0 on, and the timeline and the return route wherever a release
+  carries them. gobit itself has handed the ids to third parties since
+  `995ef737` (2026-09-06), so v0.9.0, v0.10.0 and v0.11.0 in an installation
+  that binds `webhook-out`; elsewhere an id reached whoever the shop sent it
+  to.
+
+  **Remedy:** upgrade to v0.12.0, and stop every v0.11.0 instance before the
+  first v0.12.0 instance starts: an old instance behind the same balancer
+  still answers the order routes to the id, issues no order token and sends
+  `cart_id` to receivers. Drop `cart_id` filters from webhook registrations
+  and drain the queue (Breaking changes above). An application that builds
+  its own guard stack with `corehttp.APIGuards` sets
+  `GuardOptions.IdempotencyProof`: left nil, the store's idempotency ring keys
+  a record on the publishable key alone, as before, and a stranger who replays
+  an owner's `Idempotency-Key`, path and body is answered the owner's
+  recorded response. An installation opened through gobit's own assembly has
+  it set.
+
+  **Looking for abuse:** gobit's request log writes each request's method,
+  path and status, and the proxy in front of gobit its address. Search them for
+  `/store/v1/orders/`, `/store/v1/carts/` and `/store/v1/payment-collections/`
+  requests from addresses the storefront does not use, and for
+  `POST /store/v1/orders/{id}/returns` above all; check each such return
+  against its order's customer. `GET /admin/v1/webhooks` lists the receivers
+  that were sent the ids of their topics.
 ### Added
 
 - **The store's idempotency ring keys a record on what a request proves**
@@ -172,7 +217,9 @@ design. It is fixed with `1.0.0`.
   dead-letter alarm, and its listing line mostly reads "nothing due".
   Deliveries keep no order and arrive at least once; the delivery id is the
   key a receiver drops a repeat by. Migration 000004 of the plugin adds two
-  columns and an index.
+  columns and builds a partial index on `webhook_delivery` as the
+  installation starts, without `CONCURRENTLY`, so writes to that table wait
+  for it.
 
 ### Fixed
 
@@ -232,8 +279,11 @@ design. It is fixed with `1.0.0`.
   completed through the storefront's completion naming its session or refunded
   with `POST /admin/v1/payment-sessions/{id}/cancel`. A second PayTR session
   opened on a collection PayTR already reported refused or refunded is refused
-  with 409 `paytr_order_id_taken`. Payment migration 000017 adds the report
-  queue and a partial index. **For plugin authors:** `core/plugin` publishes
+  with 409 `paytr_order_id_taken`. Payment migration 000017 adds two tables,
+  `payment_session_reports`, the report queue, and `payment_session_answers`,
+  the completion secrets' digests, and builds a partial index on
+  `payment_sessions` as the installation starts, without `CONCURRENTLY`, so
+  writes to that table wait for it. **For plugin authors:** `core/plugin` publishes
   `PaymentReportsName`, `PaymentReports` and `Host.PaymentReports`, the door a
   provider whose customer pays on its own page reports a payment through.
 - **Every event's moment is the moment its record stores** (ADR 0437, D278).
