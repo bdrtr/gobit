@@ -263,6 +263,16 @@ customer's employer and spending limit, and a cart body opens a cart in the
 customer's name. The b2b and cart modules each log a WARN on first use saying
 which of the two the installation chose. Binding a verifier is what closes it.
 
+**The `web-push` plugin's subscription asks the same question** since
+[ADR 0440](adr/0440-a-push-device-is-a-push-services-and-its-customers.md):
+`POST /store/v1/webpush/subscribe` with a `customer_id` binds the device only
+to the customer the identity proves, through the same comparison, and stores
+nothing otherwise; with nothing bound it is `401 identity_not_bound`, and
+`STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM` does not reach it. Its `endpoint`
+is the address the server later POSTs to, so it is stored only at a browser
+vendor's push service or one `WEBPUSH_PUSH_SERVICES` lists, the sender connects
+to a built-in one only at a public address, and it follows no redirect.
+
 A cart that names NOBODY is a guest cart and is never asked, which is why a shop
 with no identity bound still sells; `POST /store/v1/customers` is outside the set
 because it MINTS the record, and the order module's storefront read names a cart

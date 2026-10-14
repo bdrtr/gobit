@@ -9,6 +9,101 @@ design. It is fixed with `1.0.0`.
 
 ## [Unreleased]
 
+### Breaking changes
+
+- **A push device is a push service's and its customer's** (ADR 0440, D292,
+  D293). **For storefronts:** `POST /store/v1/webpush/subscribe` with a
+  `customer_id` binds the device only when the request proves that customer
+  through the installation's customer identity: send the proof your identity
+  reads (its session cookie or header), as on the customer's other routes.
+  Without one the route answers `401 identity_refused` or your identity's own
+  code, for another customer `403 identity_mismatch`, and with no identity
+  bound `401 identity_not_bound`; nothing is stored. A body naming no customer
+  is not asked. An endpoint that is not an https URL at a browser's push
+  service answers `422 webpush_endpoint_refused`; a browser's own
+  `PushSubscription` passes. `POST /store/v1/webpush/unbind` is unchanged.
+  The upgrade unbinds every device (Security below), so post each signed-in
+  shopper's subscription again with the proof, for instance from
+  `PushManager.getSubscription()` on the first page after sign-in. **For
+  operators:** `WEBPUSH_PUSH_SERVICES` adds push services to the browsers' own
+  (`fcm.googleapis.com`, `android.googleapis.com`,
+  `*.push.services.mozilla.com`, `*.push.apple.com`, `*.notify.windows.com`),
+  as exact origins reached wherever their names resolve; plain http is
+  accepted for a loopback origin only. A storefront whose devices use another
+  push service lists it before upgrading, or those devices are removed at
+  their next push. The sender reaches a built-in push service only at a public
+  address, still through `HTTPS_PROXY` where one is set, and a redirect is now
+  a failed push. With no identity bound, devices subscribe bound to nobody and
+  receive broadcasts only.
+
+### Security
+
+- **A storefront request pointed gobit's push sender at any address, and bound
+  a device to any customer** (ADR 0440, D292, D293, D294). The web-push
+  plugin's `POST /store/v1/webpush/subscribe` answers the publishable key,
+  which is not a secret. It stored any absolute http(s) `endpoint`, and an
+  operator's broadcast and the bound customer's `order.placed` made gobit
+  POST to it: a service on the shop's loopback or private network, a cloud's
+  metadata address, and wherever a redirect pointed; the broadcast's counts and
+  a 404's removal told the subscriber how it went. Its `customer_id` was
+  stored as written, so a stranger who knew a customer's id subscribed a
+  device of their own and received that customer's order confirmations, with
+  the display id, the item count and the order id. A customer id is no secret:
+  the storefront's cart record carries it to the shop's pages and every script
+  on them, the customer's storefront routes put it in their paths, which
+  gobit's request log writes, and until v0.12.0 every receiver of `cart.created`
+  read it off the cart. A push that could not be delivered was logged with its
+  endpoint, which is the capability to push to that browser. Found reviewing
+  web-push on the end-to-end ground (D290).
+
+  **Affected:** v0.9.0, v0.10.0, v0.11.0 and v0.12.0 in an installation whose
+  `PLUGINS` names `web-push`; the plugin arrived with `a24ee833`
+  (2026-09-04).
+
+  **Remedy:** upgrade, and stop every older instance before the first new one
+  starts: an old instance behind the same balancer still stores any endpoint,
+  binds any named customer and sends wherever it is pointed. The upgrade's
+  migration 000003 unbinds every device, since a binding made on the
+  storefront's word cannot be told from a stranger's: it moves each customer
+  id to a new column, `unproven_customer_id`, and leaves `updated_at` as it
+  was, so the evidence below survives the upgrade. Nothing pushes by that
+  column and an erasure deletes by it; once the bindings are reviewed,
+  `UPDATE webpush_subscription SET unproven_customer_id = '';` empties it.
+  A device keeps its broadcasts and gets its customer's confirmations again
+  once the storefront posts its subscription with a proof (Breaking changes
+  above). A device whose endpoint the new rule refuses is removed, unsent, at
+  its next push.
+
+  **Looking for abuse:** `webpush_subscription` keeps each device's `id`,
+  `endpoint`, `customer_id`, `created_at` and `updated_at`; gobit's request
+  log writes each request's method, path and status, and the proxy in front of
+  gobit its address. The devices whose endpoint is not a push service's, with
+  the address each one pointed gobit at:
+
+  ```sql
+  SELECT id, customer_id, origin, created_at, updated_at
+  FROM (SELECT id, customer_id, created_at, updated_at,
+               substring(endpoint from '^[A-Za-z]+://[^/?#]+') AS origin,
+               lower(substring(endpoint from '^https://([^/?#:@]+)(?::443)?/')) AS host
+        FROM webpush_subscription) d
+  WHERE host IS NULL
+     OR NOT (host IN ('fcm.googleapis.com', 'android.googleapis.com')
+             OR host ~ '\.(push\.services\.mozilla\.com|push\.apple\.com|notify\.windows\.com)$');
+  ```
+
+  The bindings, a customer's devices together, after the upgrade:
+  `SELECT unproven_customer_id, id, created_at, updated_at FROM
+  webpush_subscription WHERE unproven_customer_id <> '' ORDER BY
+  unproven_customer_id, created_at;` (before it, the same query reads
+  `customer_id`). A device bound
+  to a customer who did not subscribe it is the attack's shape: compare its
+  `created_at` and `updated_at` with the `POST /store/v1/webpush/subscribe`
+  lines of the request log and their addresses, and with when and where the
+  customer signed in by your identity's own records. A v0.9.0 to v0.12.0
+  instance logged `a push could not be delivered` with an error naming the
+  endpoint it could not reach; one whose host is not a push service's is a
+  device pointed elsewhere.
+
 ### Fixed
 
 - **The web-push plugin's routes are in `/openapi.json` with their bodies**

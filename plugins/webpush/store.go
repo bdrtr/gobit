@@ -291,7 +291,7 @@ func (s *store) deleteByCustomer(ctx context.Context, customerID string) (int64,
 
 	tag, err := s.pool.Exec(ctx, `
 		DELETE FROM webpush_subscription
-		WHERE customer_id = $1`, customerID)
+		WHERE customer_id = $1 OR unproven_customer_id = $1`, customerID)
 	if err != nil {
 		return 0, wrapDB(err, "the customer's devices could not be deleted")
 	}

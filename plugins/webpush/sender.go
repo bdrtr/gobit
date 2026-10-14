@@ -5,9 +5,11 @@ import (
 	"context"
 	"crypto/ecdh"
 	"crypto/ecdsa"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"sync"
 	"time"
@@ -48,10 +50,13 @@ const (
 
 // sender pushes one message to one device.
 type sender struct {
-	client  *http.Client
-	key     *ecdsa.PrivateKey
-	subject string
-	now     func() time.Time
+	// client dials through a guard and follows no redirect ([newPushClient]).
+	client *http.Client
+	// services is the rule a device's endpoint is held to before a push.
+	services pushServices
+	key      *ecdsa.PrivateKey
+	subject  string
+	now      func() time.Time
 }
 
 // outcome is what happened to one device.
@@ -82,14 +87,21 @@ const (
 // browsers can, one visit at a time.
 //
 // 429 and 5xx do not delete either; they are the push service's problem and it
-// will be over.
+// will be over. Nor does a redirect, which the client does not follow
+// ([refuseRedirect]).
+//
+// # The endpoint is in no error
+//
+// The client's error names the URL it was asked for, and the URL is the
+// device's capability; the error a failed push is logged with is the cause
+// beneath it, which names the address it could not reach and not the path.
 func (s *sender) send(ctx context.Context, sub subscription, body []byte, topic string) (outcome, error) {
 	ctx, cancel := context.WithTimeout(ctx, perDeviceTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, sub.Endpoint, bytes.NewReader(body))
 	if err != nil {
-		return outcomeFailed, coreerrors.Wrap(err, coreerrors.KindInvalid, codeSendFailed,
+		return outcomeFailed, coreerrors.Wrap(withoutURL(err), coreerrors.KindInvalid, codeSendFailed,
 			"the push request could not be built")
 	}
 
@@ -116,7 +128,7 @@ func (s *sender) send(ctx context.Context, sub subscription, body []byte, topic 
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return outcomeFailed, coreerrors.Wrap(err, coreerrors.KindUnavailable, codeSendFailed,
+		return outcomeFailed, coreerrors.Wrap(withoutURL(err), coreerrors.KindUnavailable, codeSendFailed,
 			"the push service could not be reached")
 	}
 	defer resp.Body.Close() //nolint:errcheck // the outcome is decided by the status
@@ -138,6 +150,11 @@ func (s *sender) send(ctx context.Context, sub subscription, body []byte, topic 
 				"a refused token is a key or clock fault affecting every device, not a dead "+
 				"subscription: %s", resp.StatusCode, string(detail))
 
+	case resp.StatusCode >= 300 && resp.StatusCode < 400:
+		return outcomeFailed, coreerrors.Unavailable(codeSendFailed,
+			"the push service answered a redirect (status %d), which the sender does not follow",
+			resp.StatusCode)
+
 	case resp.StatusCode == http.StatusTooManyRequests:
 		return outcomeFailed, coreerrors.Unavailable(codeSendFailed,
 			"the push service is rate limiting (status 429)")
@@ -146,6 +163,17 @@ func (s *sender) send(ctx context.Context, sub subscription, body []byte, topic 
 		return outcomeFailed, coreerrors.Unavailable(codeSendFailed,
 			"the push service refused the message with status %d: %s", resp.StatusCode, string(detail))
 	}
+}
+
+// withoutURL is the cause beneath the client's *url.Error, which names the
+// endpoint, or err as it came.
+func withoutURL(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr.Err != nil {
+		return urlErr.Err
+	}
+
+	return err
 }
 
 // fanOutResult counts what a fan-out did.
@@ -223,6 +251,17 @@ func deliver(
 	render func(sub subscription) ([]byte, error),
 	topic string,
 ) (outcome, error) {
+	// A row whose endpoint is not a push service's is never sent to (ADR
+	// 0440). It was stored before the rule, or the operator has since taken
+	// its push service off the list; either way no push can go there, and a
+	// row stored by somebody pointing the sender at an address of their
+	// choosing is what the rule is for. The reason names the host.
+	if why := s.services.refusal(sub.Endpoint); why != "" {
+		removeDeadRow(ctx, st, log, sub, "the endpoint is not a push service's: "+why)
+
+		return outcomeGone, nil
+	}
+
 	// A row minted under a signing key we no longer hold can only ever answer
 	// 401, and 401 never deletes. Without this check the rotation leaves a
 	// graveyard that grows and is invisible; with it the graveyard drains

@@ -47,6 +47,8 @@
 //	WEBPUSH_VAPID_PRIVATE_KEY=<base64url of the raw 32-byte P-256 scalar>
 //	WEBPUSH_VAPID_SUBJECT=mailto:ops@example.test
 //	WEBPUSH_TEMPLATE_DIR=/etc/gobit/push
+//	# Optional: push services beyond the browsers' own (ADR 0440).
+//	WEBPUSH_PUSH_SERVICES=https://push.example.test
 package webpush
 
 import (
@@ -175,6 +177,14 @@ func (p *Plugin) Setup(_ context.Context, h *coreplugin.Host) error {
 		return err
 	}
 
+	// The operator's push services are optional: the browsers' own are built
+	// in (ADR 0440).
+	listed, _ := h.Setting(settingPushServices)
+	services, err := parsePushServices(listed)
+	if err != nil {
+		return err
+	}
+
 	log := h.Logger()
 
 	// Neither the private key nor its base64 form is logged. The PUBLIC key is,
@@ -188,6 +198,7 @@ func (p *Plugin) Setup(_ context.Context, h *coreplugin.Host) error {
 		"fingerprint", fingerprintOf(publicKey),
 		"subject", subject,
 		"templates", templateNames(templates),
+		"listed_push_services", len(services.listed),
 	)
 
 	p.mod = newModule(moduleOptions{
@@ -196,6 +207,7 @@ func (p *Plugin) Setup(_ context.Context, h *coreplugin.Host) error {
 		fingerprint: fingerprintOf(publicKey),
 		subject:     subject,
 		templates:   templates,
+		services:    services,
 		log:         log.With("module", ModuleName),
 	})
 

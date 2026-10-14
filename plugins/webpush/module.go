@@ -6,7 +6,6 @@ import (
 	"embed"
 	"io/fs"
 	"log/slog"
-	"net/http"
 	"strings"
 	"time"
 
@@ -45,7 +44,9 @@ type moduleOptions struct {
 	fingerprint string
 	subject     string
 	templates   templateSet
-	log         *slog.Logger
+	// services is the rule a device's endpoint is held to (ADR 0440).
+	services pushServices
+	log      *slog.Logger
 }
 
 // webpushModule is the module the plugin brings.
@@ -53,6 +54,9 @@ type webpushModule struct {
 	opts   moduleOptions
 	store  *store
 	sender *sender
+	// identity is the installation's customer identity, resolved on first use
+	// (ADR 0440).
+	identity *identityBinding
 	// now is the clock an order's age is judged by.
 	now func() time.Time
 }
@@ -94,11 +98,13 @@ func (m *webpushModule) Register(ctx context.Context, c *container.Container) er
 
 	m.store = newStore(pool.Pool())
 	m.sender = &sender{
-		client:  &http.Client{},
-		key:     m.opts.key,
-		subject: m.opts.subject,
-		now:     time.Now,
+		client:   newPushClient(m.opts.services),
+		services: m.opts.services,
+		key:      m.opts.key,
+		subject:  m.opts.subject,
+		now:      time.Now,
 	}
+	m.identity = &identityBinding{c: c, log: m.opts.log}
 
 	m.reportRegistry(ctx)
 
@@ -320,8 +326,9 @@ func (m *webpushModule) onOrderPlaced(ctx context.Context, e eventbus.Event) err
 	// The default template carries the display id and the item count and NOT
 	// the money, and that is a decision rather than an omission: a push renders
 	// on a locked screen where anyone holding the phone can read it, and the
-	// customer-to-device binding is an unverified claim (ADR 0008). An
-	// installation that wants the amount can put it in its own template.
+	// identity proved who subscribed the device, not who holds it now
+	// (ADR 0440). An installation that wants the amount can put it in its own
+	// template.
 	data := map[string]string{
 		fieldOrderID:   orderID,
 		fieldDisplayID: field(e, fieldDisplayID),

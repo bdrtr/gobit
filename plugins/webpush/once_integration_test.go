@@ -40,7 +40,7 @@ func TestTheOutboxsTwoDeliveriesPushOnce(t *testing.T) {
 
 	st := newStore(pool.Pool())
 	push := newPushServer(t, http.StatusCreated)
-	m := newTestModule(t, st)
+	m := newTestModule(t, st, push)
 	device(t, st, push.URL+"/p/online", "cust_1", m.opts.fingerprint)
 
 	bus := eventbus.NewInMemory(slog.New(slog.DiscardHandler))
@@ -114,7 +114,7 @@ func onlineCustomer(t *testing.T) (*webpushModule, *pushServer) {
 
 	st := freshStore(t)
 	push := newPushServer(t, http.StatusCreated)
-	m := newTestModule(t, st)
+	m := newTestModule(t, st, push)
 	device(t, st, push.URL+"/p/online", "cust_1", m.opts.fingerprint)
 
 	return m, push
@@ -219,7 +219,7 @@ func TestTwoOrdersArePushedEach(t *testing.T) {
 func TestAnEventWithNobodyToPushToLeavesNoRecord(t *testing.T) {
 	st := freshStore(t)
 	push := newPushServer(t, http.StatusCreated)
-	m := newTestModule(t, st)
+	m := newTestModule(t, st, push)
 	event := placedEvent("cust_1")
 
 	require.NoError(t, m.onOrderPlaced(t.Context(), event))
@@ -252,7 +252,7 @@ func isolatedStore(t *testing.T, prefix string) (*store, *db.Pool) {
 func TestARecordThatCannotBeWrittenAsksForTheRetry(t *testing.T) {
 	st, pool := isolatedStore(t, "webpush_norecord")
 	push := newPushServer(t, http.StatusCreated)
-	m := newTestModule(t, st)
+	m := newTestModule(t, st, push)
 	device(t, st, push.URL+"/p/online", "cust_1", m.opts.fingerprint)
 
 	_, err := pool.Pool().Exec(t.Context(), `DROP TABLE webpush_claimed_event`)
@@ -349,7 +349,7 @@ func TestAnEventWithoutAnIDPushesNothing(t *testing.T) {
 func TestARecordThatCannotForgetStillPushes(t *testing.T) {
 	st, pool := isolatedStore(t, "webpush_noforget")
 	push := newPushServer(t, http.StatusCreated)
-	m := newTestModule(t, st)
+	m := newTestModule(t, st, push)
 	device(t, st, push.URL+"/p/online", "cust_1", m.opts.fingerprint)
 
 	// A statement-level trigger fires on a DELETE that matches no row, which is

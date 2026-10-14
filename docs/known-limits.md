@@ -37,7 +37,10 @@ past and is not corrected retroactively.
   interface the framework publishes and does not implement; the embedding
   application registers its own from an ordinary module, in the container, under
   the name `corehttp.IdentityName` (`"core.identity"`). Bound, it decides all
-  fifteen: a request naming somebody else gets `403 identity_mismatch`.
+  fifteen: a request naming somebody else gets `403 identity_mismatch`. The
+  `web-push` plugin's subscription asks it too when its body names a customer,
+  and with nothing bound refuses whatever the trust setting below says
+  ([ADR 0440](adr/0440-a-push-device-is-a-push-services-and-its-customers.md)).
 - **With NO identity bound all fifteen refuse, and until ADR 0125 four of them
   did not.** Every one of them answers `401 identity_not_bound` — closed rather
   than open, which is
@@ -1243,6 +1246,15 @@ past and is not corrected retroactively.
   whose `placed_at` cannot be read: a delivery of it that arrives after the
   record has forgotten its id, a day later, pushes it again
   ([ADR 0389](adr/0389-an-order-confirmation-is-pushed-at-most-once.md)).
+
+- **A push service gobit does not list is refused, and one reached through a
+  proxy is the proxy's to resolve.** The `web-push` plugin stores an endpoint
+  only at the push services of Chrome, Firefox, Safari and Edge or at an origin
+  `WEBPUSH_PUSH_SERVICES` lists, so a browser whose vendor runs another push
+  service subscribes nowhere until the operator lists it; and a push sent
+  through `HTTPS_PROXY` is resolved by the proxy, so the check that a built-in
+  host answers at a public address is the proxy's to make
+  ([ADR 0440](adr/0440-a-push-device-is-a-push-services-and-its-customers.md)).
 
 - **No lane proves a generated project works at the version it PINS.** Every
   out-of-tree proof rewrites the generated `go.mod` to point at the checkout, so

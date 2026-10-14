@@ -627,12 +627,18 @@ func groundEnvironment(dsn, paytrURL string, push groundPush) map[string]string 
 		"WEBPUSH_VAPID_PRIVATE_KEY": push.privateKey,
 		"WEBPUSH_VAPID_SUBJECT":     "mailto:ops@shop.example.test",
 		"WEBPUSH_TEMPLATE_DIR":      push.templates,
+		// The fake push service, listed as an operator lists one: a
+		// device's endpoint is admitted only at a browser's push service or
+		// a listed one (ADR 0440).
+		"WEBPUSH_PUSH_SERVICES": push.service,
 	}
 }
 
-// groundPush is what the web-push plugin reads at Setup: a signing key and a
-// directory of push copy.
+// groundPush is what the web-push plugin reads at Setup: a signing key, a
+// directory of push copy and the push service it may send to.
 type groundPush struct {
+	// service is the fake push service's origin (webpush_test.go).
+	service string
 	// privateKey is the raw P-256 scalar, base64url, minted for this run as
 	// `gobit webpush-key` mints one.
 	privateKey string
@@ -652,7 +658,8 @@ func newGroundPush() (groundPush, error) {
 	if err != nil {
 		return groundPush{}, fmt.Errorf("could not create the push template directory: %w", err)
 	}
-	copyText := `{{define "title"}}Order {{.display_id}}{{end}}{{define "body"}}It is placed.{{end}}`
+	copyText := `{{define "title"}}Order {{.display_id}}{{end}}{{define "body"}}It is placed.{{end}}` +
+		`{{define "url"}}/orders/{{.order_id}}{{end}}`
 	if err := os.WriteFile(filepath.Join(dir, "order.placed.tmpl"), []byte(copyText), 0o600); err != nil {
 		_ = os.RemoveAll(dir)
 
@@ -670,16 +677,19 @@ func setUpHarness(ctx context.Context, dsn string) (func(), error) {
 	if err := clearConfigEnvironment(); err != nil {
 		return nil, err
 	}
-	// The web-push key and copy, and the fake PayTR, are there before the
-	// installation opens, because each plugin reads them at Setup
-	// (paytr_checkout_test.go).
+	// The web-push key, copy and push service, and the fake PayTR, are there
+	// before the installation opens, because each plugin reads them at Setup
+	// (paytr_checkout_test.go, webpush_test.go).
 	push, err := newGroundPush()
 	if err != nil {
 		return nil, err
 	}
+	groundPushService = newFakePushService()
+	push.service = groundPushService.URL
 	fakePayTRServer = newFakePayTR()
 	release := func() {
 		fakePayTRServer.Close()
+		groundPushService.Close()
 		_ = os.RemoveAll(push.templates)
 	}
 	for name, value := range groundEnvironment(dsn, fakePayTRServer.URL, push) {

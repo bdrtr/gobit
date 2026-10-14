@@ -14,8 +14,9 @@
 
 -- customer_id carries NO FOREIGN KEY (Principle 2.2: no cross-module FK).
 -- A constraint here would bind the customer table to a plugin and would make
--- deleting a customer fail on a device row. It is free text, and its truth is
--- the same unverified claim ADR 0008 governs.
+-- deleting a customer fail on a device row. It is free text, and since ADR 0440
+-- (migration 000003) it holds only a customer the installation's identity
+-- proved when the device subscribed.
 CREATE TABLE IF NOT EXISTS webpush_subscription (
     -- id is the row's identity (wps_...). It is what the admin remediation
     -- endpoint deletes by.

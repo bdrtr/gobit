@@ -78,10 +78,11 @@ import (
 //   - plugins/. [storefrontSurface] walks internal/modules, and the webpush
 //     plugin additionally registers its three storefront POSTs under a chi
 //     Route PREFIX, which that resolver does not follow. The plugin is not
-//     silently outside the rule: ADR 0051 records it as its SECOND open defect,
-//     a standing authority by construction, and the closing rows are an A15 row
-//     in docs/gaps.md and ADR 0029's third obligation. Its declaration half was
-//     closed on 2026-09-07 (docs/gaps.md D30); the shape was not.
+//     silently outside the rule: ADR 0051 recorded it as its SECOND open
+//     defect, a standing authority by construction. Its declaration half was
+//     closed on 2026-09-07 (docs/gaps.md D30), and its shape by ADR 0440: a
+//     device is bound only to the customer the request proves, so the
+//     authority it stands on is that customer's own.
 //   - A write another MODULE performs on this route's behalf. Checkout is the
 //     case: POST /store/v1/carts/{id}/complete runs a saga that writes an order,
 //     and POST /store/v1/carts/{id}/payment-sessions opens a payment collection

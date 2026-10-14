@@ -191,11 +191,10 @@ const customerResourcePath = "/store/v1/customers/{id}"
 // # What it does NOT cover
 //
 // Plugins. The scan walks internal/modules/*/api, and plugins/webpush mounts a
-// storefront POST whose body carries a customer_id — the same class, a
-// different tree, and a defect ADR 0051 records for reasons of its own (it is a
-// standing authority, which proving the claim would not fix). Widening the walk
-// to plugins/ would fail this gate on a defect it cannot close, so the row
-// stays where it is decided.
+// storefront POST whose body carries a customer_id under a chi Route prefix,
+// which the route resolver does not follow. Since ADR 0440 that subscription
+// reaches the same comparison and binds a device only to the customer it
+// proves; the plugin's own tests and internal/e2e hold it, not this walk.
 func TestNoStorefrontSurfaceActsOnACustomerItCannotProve(t *testing.T) {
 	t.Parallel()
 

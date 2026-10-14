@@ -471,6 +471,11 @@ installation that has bound an identity or one that has not — the guest path i
 what the storefront is for. Naming a customer is what puts the burden of proof
 on the claim.
 
+A plugin's route asks the same question through the same comparison: the
+`web-push` plugin's `POST /store/v1/webpush/subscribe`, when its body carries a
+`customer_id`, binds the device only to the customer your identity proves
+([ADR 0440](adr/0440-a-push-device-is-a-push-services-and-its-customers.md)).
+
 All fifteen refuse when you have bound nothing, and four of them did not until
 ADR 0125: b2b's two reads and the two cart bodies served the claim unchecked, so
 an installation that bound no verifier kept them working with the claim in them

@@ -369,9 +369,17 @@ func newPushServer(t *testing.T, status int) *pushServer {
 	return p
 }
 
-// newTestModule builds a module wired to the fake service.
-func newTestModule(t *testing.T, st *store) *webpushModule {
+// newTestModule builds a module wired to the fake services, each listed as
+// the operator lists a push service (ADR 0440).
+func newTestModule(t *testing.T, st *store, services ...*pushServer) *webpushModule {
 	t.Helper()
+
+	origins := make([]string, 0, len(services))
+	for _, p := range services {
+		origins = append(origins, p.URL)
+	}
+	listed, err := parsePushServices(strings.Join(origins, ","))
+	require.NoError(t, err)
 
 	privateKey, publicKey, err := GenerateKey()
 	require.NoError(t, err)
@@ -391,14 +399,16 @@ func newTestModule(t *testing.T, st *store) *webpushModule {
 		fingerprint: fingerprintOf(publicKey),
 		subject:     "mailto:ops@example.test",
 		templates:   templates,
+		services:    listed,
 		log:         slog.New(slog.DiscardHandler),
 	})
 	m.store = st
 	m.sender = &sender{
-		client:  &http.Client{},
-		key:     key,
-		subject: "mailto:ops@example.test",
-		now:     time.Now,
+		client:   newPushClient(listed),
+		services: listed,
+		key:      key,
+		subject:  "mailto:ops@example.test",
+		now:      time.Now,
 	}
 
 	return m
@@ -435,7 +445,7 @@ func placedEvent(customerID string) eventbus.Event {
 func TestAGoneSubscriptionIsRemoved(t *testing.T) {
 	st := freshStore(t)
 	push := newPushServer(t, http.StatusGone)
-	m := newTestModule(t, st)
+	m := newTestModule(t, st, push)
 
 	device(t, st, push.URL+"/p/dead", "cust_1", m.opts.fingerprint)
 
@@ -462,7 +472,7 @@ func TestARefusedTokenNEVERRemovesASubscription(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			st := freshStore(t)
 			push := newPushServer(t, status)
-			m := newTestModule(t, st)
+			m := newTestModule(t, st, push)
 
 			device(t, st, push.URL+"/p/live", "cust_1", m.opts.fingerprint)
 
@@ -484,7 +494,7 @@ func TestARefusedTokenNEVERRemovesASubscription(t *testing.T) {
 func TestASubscriptionFromAnotherKeyIsDrained(t *testing.T) {
 	st := freshStore(t)
 	push := newPushServer(t, http.StatusCreated)
-	m := newTestModule(t, st)
+	m := newTestModule(t, st, push)
 
 	device(t, st, push.URL+"/p/oldkey", "cust_1", "a fingerprint from a key that is gone")
 
@@ -503,7 +513,7 @@ func TestASubscriptionFromAnotherKeyIsDrained(t *testing.T) {
 func TestTheRequestCarriesEveryMandatoryHeader(t *testing.T) {
 	st := freshStore(t)
 	push := newPushServer(t, http.StatusCreated)
-	m := newTestModule(t, st)
+	m := newTestModule(t, st, push)
 
 	device(t, st, push.URL+"/p/live", "cust_1", m.opts.fingerprint)
 
@@ -527,7 +537,7 @@ func TestTheRequestCarriesEveryMandatoryHeader(t *testing.T) {
 func TestAGuestOrderPushesNothing(t *testing.T) {
 	st := freshStore(t)
 	push := newPushServer(t, http.StatusCreated)
-	m := newTestModule(t, st)
+	m := newTestModule(t, st, push)
 
 	device(t, st, push.URL+"/p/somebody", "cust_1", m.opts.fingerprint)
 
@@ -545,7 +555,7 @@ func TestAGuestOrderPushesNothing(t *testing.T) {
 func TestAFailedPushDoesNotFailTheEvent(t *testing.T) {
 	st := freshStore(t)
 	push := newPushServer(t, http.StatusInternalServerError)
-	m := newTestModule(t, st)
+	m := newTestModule(t, st, push)
 
 	device(t, st, push.URL+"/p/broken", "cust_1", m.opts.fingerprint)
 

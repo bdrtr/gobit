@@ -86,6 +86,12 @@ func (m *webpushModule) PersonalData() personaldata.Declaration {
 					"device that subscribed before signing in",
 				OnErasure: personaldata.Emptied,
 			},
+			{
+				Table: tableSubscription, Column: "unproven_customer_id", Kind: personaldata.Named,
+				Why: "the customer a storefront named for this device before a binding needed " +
+					"a proof (ADR 0440), kept as evidence for the operator and never pushed to",
+				OnErasure: personaldata.Emptied,
+			},
 		},
 	}
 }

@@ -38,10 +38,10 @@ type subscribeRequest struct {
 		P256DH string `json:"p256dh"`
 		Auth   string `json:"auth"`
 	} `json:"keys"`
-	// CustomerID is the storefront's CLAIM about who is signed in. It is
-	// believed, and ADR 0008 governs why: gobit offers no surface that verifies
-	// a customer's identity, and a half-built identity layer is more dangerous
-	// than none. The admin surface exists so an operator can undo a bad claim.
+	// CustomerID names the customer to bind the device to, and the request has
+	// to prove it: the installation's customer identity is asked, and a device
+	// is bound only to the customer it proves (ADR 0440). Empty binds nobody
+	// and keeps the binding a device already has.
 	CustomerID string `json:"customer_id"`
 	// Locale selects the template; empty means the default.
 	Locale string `json:"locale"`
@@ -109,8 +109,8 @@ type deviceListResponse struct {
 type deviceRecord struct {
 	// ID is the device's row id.
 	ID string `json:"id"`
-	// CustomerID is the customer the storefront claimed the device for, empty
-	// for a device nobody claimed.
+	// CustomerID is the customer the identity proved when the device was
+	// bound, empty for a device bound to nobody.
 	CustomerID string `json:"customer_id"`
 	// Locale selects the device's template, empty for the default.
 	Locale string `json:"locale"`
@@ -134,8 +134,8 @@ type broadcastCounts struct {
 	// Delivered is how many of them a push service accepted the message for.
 	Delivered int `json:"delivered"`
 	// Removed is how many could never be sent to again — gone at the push
-	// service, subscribed under another key, or holding unusable keys — and
-	// were deleted.
+	// service, subscribed under another key, holding unusable keys, or naming
+	// an endpoint that is not a push service's — and were deleted.
 	Removed int `json:"removed"`
 	// Failed is how many failed otherwise; those devices are kept.
 	Failed int `json:"failed"`
@@ -162,6 +162,11 @@ func (m *webpushModule) handleVAPIDKey(w http.ResponseWriter, r *http.Request) {
 // The keys are validated HERE and strictly. A malformed key stored now is a
 // subscription that fails on every send forever, and the only place that can be
 // reported to anybody who can fix it is this request.
+//
+// The endpoint has to be at a push service ([pushServices.refusal]), and a
+// customer the body names has to be the one the request proves
+// ([webpushModule.boundCustomer]); both are ADR 0440. The proof is asked last,
+// so a body that could never be stored costs the identity nothing.
 func (m *webpushModule) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -172,9 +177,9 @@ func (m *webpushModule) handleSubscribe(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if _, err := audienceOf(req.Endpoint); err != nil {
-		corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest,
-			"endpoint has to be an absolute http(s) URL"))
+	if why := m.opts.services.refusal(req.Endpoint); why != "" {
+		corehttp.WriteError(ctx, w, coreerrors.Invalid(codeEndpointRefused,
+			"endpoint has to be an https URL at a browser's push service; %s", why))
 
 		return
 	}
@@ -192,11 +197,18 @@ func (m *webpushModule) handleSubscribe(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	customerID, err := m.boundCustomer(r, req.CustomerID)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
 	id, err := m.store.upsert(ctx, subscription{
 		Endpoint:    req.Endpoint,
 		P256DH:      req.Keys.P256DH,
 		Auth:        req.Keys.Auth,
-		CustomerID:  strings.TrimSpace(req.CustomerID),
+		CustomerID:  customerID,
 		Locale:      locale,
 		Fingerprint: m.opts.fingerprint,
 	})
@@ -247,6 +259,14 @@ func (m *webpushModule) handleUnsubscribe(w http.ResponseWriter, r *http.Request
 //
 // It is POST rather than DELETE because the real call site is
 // navigator.sendBeacon on logout, which cannot issue a DELETE.
+//
+// # Why it asks the endpoint and not the identity (ADR 0440)
+//
+// Binding asks the identity because it hands a customer's confirmations to a
+// device. Unbinding hands nothing to anybody, and the endpoint is the proof
+// [handleUnsubscribe] already deletes the whole device on. Asking the identity
+// here would refuse the beacon a sign-out sends after its session is gone, and
+// the device would stay bound to the customer who left it.
 func (m *webpushModule) handleUnbind(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -268,10 +288,9 @@ func (m *webpushModule) handleUnbind(w http.ResponseWriter, r *http.Request) {
 
 // handleList is the operator's view of the device registry.
 //
-// It is the remediation path for the trust boundary ADR 0008 leaves open: a
-// customer id is a claim, so a hostile claim binds an attacker's device to
-// somebody else's orders, and an operator needs to be able to SEE that and
-// remove it.
+// A device is bound to the customer the identity proved when it subscribed
+// (ADR 0440); the listing is where an operator sees whose devices are bound,
+// and DELETE removes one the customer does not recognize.
 //
 // The endpoint is not returned, for the reason given at subscribe.
 func (m *webpushModule) handleList(w http.ResponseWriter, r *http.Request) {

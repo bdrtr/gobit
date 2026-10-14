@@ -216,3 +216,4 @@ truth: a report says what was true on the day it was taken.
 | [What the marketplace could not hear — measured 2026-10-11](0437-what-the-marketplace-could-not-hear.md) | 255 |
 | [What PayTR could not complete — measured 2026-10-11](0438-what-paytr-could-not-complete.md) | 458 |
 | [What a receiver could open — measured 2026-10-11](0439-what-a-receiver-could-open.md) | 285 |
+| [What a subscription could reach — measured 2026-10-11](0440-what-a-subscription-could-reach.md) | 101 |
