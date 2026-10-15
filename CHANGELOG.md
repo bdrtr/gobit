@@ -9,7 +9,15 @@ design. It is fixed with `1.0.0`.
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-10-15
+
 ### Breaking changes
+
+Legitimate in a minor version throughout `0.x` (see the head of this file).
+Collected on the day of the cut by diffing v0.12.0 against this tree: the
+importable packages and the two `contrib/` modules are unchanged, and every
+break is in the `web-push` plugin. Upgrade with no v0.12.0 instance running
+beside a v0.13.0 one (Security below).
 
 - **A push device is a push service's and its customer's** (ADR 0440, D292,
   D293). **For storefronts:** `POST /store/v1/webpush/subscribe` with a
@@ -8757,7 +8765,8 @@ application, which running the tests alone did not reveal:
   startup.
 - The load test is in-process; it does not produce a capacity plan.
 
-[Unreleased]: https://github.com/bdrtr/gobit/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/bdrtr/gobit/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/bdrtr/gobit/releases/tag/v0.13.0
 [0.12.0]: https://github.com/bdrtr/gobit/releases/tag/v0.12.0
 [0.11.0]: https://github.com/bdrtr/gobit/releases/tag/v0.11.0
 [0.10.0]: https://github.com/bdrtr/gobit/releases/tag/v0.10.0

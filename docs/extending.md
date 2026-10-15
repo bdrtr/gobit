@@ -49,7 +49,7 @@ with by implementing `core/plugin.CoreRequirement`
 ([ADR 0224](adr/0224-a-plugin-names-the-releases-it-works-with.md)):
 
 ```go
-func (p *Plugin) RequiresCore() string { return ">=v0.12.0 <v0.13.0" }
+func (p *Plugin) RequiresCore() string { return ">=v0.13.0 <v0.14.0" }
 ```
 
 `Install` refuses it, before any plugin is set up, when the binary was built

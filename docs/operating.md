@@ -260,7 +260,7 @@ make rename-module MODULE=github.com/user/repo
 
 ## Version
 
-Current version: **v0.12.0**. For the changes, see
+Current version: **v0.13.0**. For the changes, see
 [`CHANGELOG.md`](../CHANGELOG.md). Which roadmap phase covers what is in the
 README's phase-status table.
 
@@ -443,6 +443,28 @@ no token, so its storefront page and its old mail's link no longer open. Order
 migration 000044's down deletes every access token, and payment 000017 and
 `webhook-out` 000004 build an index without `CONCURRENTLY` as the installation
 starts. The [CHANGELOG](../CHANGELOG.md) says how to look for abuse.
+
+- **v0.13.0** — a push device is a push service's and its customer's
+  ([ADR 0440](adr/0440-a-push-device-is-a-push-services-and-its-customers.md)),
+  a security fix in the `web-push` plugin, and its routes described in
+  `/openapi.json` with their answers under `data`. **There are breaking
+  changes** for an installation whose `PLUGINS` names `web-push`: a
+  subscription naming a customer has to prove it through the installation's
+  identity, an endpoint has to be https at a browser's push service or an
+  origin `WEBPUSH_PUSH_SERVICES` lists, and a redirect is a failed push.
+
+**A storefront request pointed gobit's push sender at any address, and bound a
+device to any customer**
+([ADR 0440](adr/0440-a-push-device-is-a-push-services-and-its-customers.md),
+D292–D294), in v0.9.0 to v0.12.0 with `web-push` installed. Stop every v0.12.0
+instance before the first v0.13.0 instance starts: an old one still stores any
+endpoint, binds any named customer and sends wherever it is pointed. List a
+push service your shoppers' browsers use beyond Chrome's, Firefox's, Safari's
+and Edge's in `WEBPUSH_PUSH_SERVICES` first, or their devices are removed at
+their next push. `web-push` migration 000003 unbinds every device and keeps
+each old customer id in `unproven_customer_id` with `updated_at` untouched;
+post each signed-in shopper's subscription again with the proof. The
+[CHANGELOG](../CHANGELOG.md) says how to look for abuse.
 
 Throughout `0.x`, **breaking changes may arrive in minor versions**: the API
 surface is not frozen yet. It freezes with `1.0.0`.
