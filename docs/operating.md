@@ -260,7 +260,7 @@ make rename-module MODULE=github.com/user/repo
 
 ## Version
 
-Current version: **v0.13.1**. For the changes, see
+Current version: **v0.13.2**. For the changes, see
 [`CHANGELOG.md`](../CHANGELOG.md). Which roadmap phase covers what is in the
 README's phase-status table.
 
@@ -479,6 +479,23 @@ post each signed-in shopper's subscription again with the proof. The
   `contrib/identity-session/v0.13.1` and `contrib/identity-passkey/v0.13.1`,
   each requiring gobit v0.13.1. Nothing else changed. A project on a
   pseudo-version of either moves to the tag.
+- **v0.13.2** — a security release of `contrib/identity-session`
+  ([ADR 0442](adr/0442-an-unknown-address-signs-in-as-slowly-as-a-known-one.md),
+  [ADR 0443](adr/0443-a-credential-is-replaced-only-over-the-one-read.md),
+  D296–D298): the sign-in and the reset request answer an unknown address in
+  a known one's time, a password replacement and the session anchor move in
+  one write, a sign-in's session is dated at its read, and
+  `Module.ReplaceCredential` writes a credential only over the one read.
+
+**`contrib/identity-session` before v0.13.2 told an account from no account by
+its answer's time, and a sign-in could outlive a reset that landed during its
+check** (ADR 0442, ADR 0443, D296–D298). Take gobit and both `contrib/`
+modules at v0.13.2. A reset request now answers 202 before it records and
+sends the link, so a mail transport that fails no longer answers 500: watch
+for `identity-session: a reset message could not be sent` in the log. If your
+own code checks a password and writes it with `Credentials().Put`, write it
+with `ReplaceCredential` over the credential you read and sign the customer in
+with `Sessions.IssueAsOf`.
 
 Throughout `0.x`, **breaking changes may arrive in minor versions**: the API
 surface is not frozen yet. It freezes with `1.0.0`.

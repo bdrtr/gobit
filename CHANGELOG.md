@@ -9,6 +9,12 @@ design. It is fixed with `1.0.0`.
 
 ## [Unreleased]
 
+## [0.13.2] — 2026-10-15
+
+A security release of `contrib/identity-session`; the importable packages,
+the plugins and the schema of the root module are unchanged from v0.13.1.
+Take gobit and both `contrib/` modules at v0.13.2 together.
+
 ### Security
 
 - **An unknown address is answered in a known one's time** (ADR 0442, D296).
