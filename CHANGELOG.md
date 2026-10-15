@@ -9,6 +9,17 @@ design. It is fixed with `1.0.0`.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A contrib module is tagged with the release it requires** (ADR 0441,
+  D295). `contrib/identity-session` and `contrib/identity-passkey` were never
+  tagged and required `github.com/bdrtr/gobit v0.0.0`, so `go get` of either
+  failed in a project that had not pinned gobit first and built against any
+  gobit in one that had. From this release on each is tagged at the release's
+  own version, `contrib/identity-session/vX.Y.Z`, and requires that gobit
+  release: `go get github.com/bdrtr/gobit/contrib/identity-session@vX.Y.Z`
+  lifts your gobit to it. Replace a pseudo-version with the tag.
+
 ## [0.13.0] — 2026-10-15
 
 ### Breaking changes

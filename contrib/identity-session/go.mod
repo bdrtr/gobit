@@ -9,7 +9,7 @@ module github.com/bdrtr/gobit/contrib/identity-session
 go 1.26.9
 
 require (
-	github.com/bdrtr/gobit v0.0.0
+	github.com/bdrtr/gobit v0.13.0
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/stretchr/testify v1.12.1
@@ -74,4 +74,7 @@ require (
 	golang.org/x/text v0.42.0 // indirect
 )
 
+// The require above names the release this module is tagged with
+// (contrib/identity-session/vX.Y.Z, ADR 0441), so an embedder's go get lifts
+// gobit to it; the replace builds this tree against this tree.
 replace github.com/bdrtr/gobit => ../..

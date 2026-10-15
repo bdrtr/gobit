@@ -9,8 +9,8 @@ module github.com/bdrtr/gobit/contrib/identity-passkey
 go 1.26.9
 
 require (
-	github.com/bdrtr/gobit v0.0.0
-	github.com/bdrtr/gobit/contrib/identity-session v0.0.0
+	github.com/bdrtr/gobit v0.13.0
+	github.com/bdrtr/gobit/contrib/identity-session v0.13.0
 	github.com/descope/virtualwebauthn v1.0.5
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/go-webauthn/webauthn v0.18.1
@@ -85,6 +85,10 @@ require (
 	golang.org/x/text v0.42.0 // indirect
 )
 
+// The requires above name the release this module is tagged with
+// (contrib/identity-passkey/vX.Y.Z, ADR 0441), so an embedder's go get lifts
+// gobit and the session module to it; the replaces build this tree against
+// this tree.
 replace (
 	github.com/bdrtr/gobit => ../..
 	github.com/bdrtr/gobit/contrib/identity-session => ../identity-session

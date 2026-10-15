@@ -264,6 +264,14 @@ Current version: **v0.13.0**. For the changes, see
 [`CHANGELOG.md`](../CHANGELOG.md). Which roadmap phase covers what is in the
 README's phase-status table.
 
+The modules under `contrib/` are versioned with gobit
+([ADR 0441](adr/0441-a-contrib-module-is-tagged-with-the-release-it-requires.md)):
+each release tags `contrib/identity-session/vX.Y.Z` and
+`contrib/identity-passkey/vX.Y.Z` at its own version, and each requires that
+gobit release, so `go get github.com/bdrtr/gobit/contrib/identity-session@vX.Y.Z`
+lifts a project's gobit to it. Take them at the version of gobit you run; a
+commit between releases is not a version of them.
+
 - **v0.1.0** — all of Phases 0–9.
 - **v0.2.0** — what was found after the roadmap ended: sales-channel catalog
   filtering, multiple warehouses, domain events and the first real plugin
