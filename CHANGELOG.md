@@ -9,6 +9,13 @@ design. It is fixed with `1.0.0`.
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-10-15
+
+A plugin's storefront key joins the store surface's proof. The plugins are
+installed before the guards are built; see `docs/operating.md` for what that
+moves for a plugin's `Setup`. Take gobit and both `contrib/` modules at
+v0.14.0 together.
+
 ### Added
 
 - **A plugin's storefront key is the core's proof** (ADR 0444, D299). A

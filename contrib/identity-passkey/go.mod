@@ -9,8 +9,8 @@ module github.com/bdrtr/gobit/contrib/identity-passkey
 go 1.26.9
 
 require (
-	github.com/bdrtr/gobit v0.13.2
-	github.com/bdrtr/gobit/contrib/identity-session v0.13.2
+	github.com/bdrtr/gobit v0.14.0
+	github.com/bdrtr/gobit/contrib/identity-session v0.14.0
 	github.com/descope/virtualwebauthn v1.0.5
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/go-webauthn/webauthn v0.18.1

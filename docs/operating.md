@@ -260,7 +260,7 @@ make rename-module MODULE=github.com/user/repo
 
 ## Version
 
-Current version: **v0.13.2**. For the changes, see
+Current version: **v0.14.0**. For the changes, see
 [`CHANGELOG.md`](../CHANGELOG.md). Which roadmap phase covers what is in the
 README's phase-status table.
 
@@ -496,6 +496,19 @@ for `identity-session: a reset message could not be sent` in the log. If your
 own code checks a password and writes it with `Credentials().Put`, write it
 with `ReplaceCredential` over the credential you read and sign the customer in
 with `Sessions.IssueAsOf`.
+
+- **v0.14.0** — a plugin declares a header its storefront routes decide access
+  on with `Host.RegisterStoreProofHeader`
+  ([ADR 0444](adr/0444-a-plugins-storefront-key-is-the-cores-proof.md), D299):
+  a browser on a `CORS_ALLOWED_ORIGINS` site may send it, and the store ring
+  keys its idempotency records on its value.
+
+**From v0.14.0 the plugins are installed before the guards are built.** A
+plugin whose `Setup` resolves `core/plugin.CallbacksName` from the container
+finds it missing; register a callback with `Host.RegisterCallback`, which
+reaches the registry at `Start`. An
+installation whose plugins declare a header the core reads, or a name that is
+not a header field name, does not start (`plugin_proof_header_invalid`).
 
 Throughout `0.x`, **breaking changes may arrive in minor versions**: the API
 surface is not frozen yet. It freezes with `1.0.0`.
