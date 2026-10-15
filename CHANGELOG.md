@@ -9,6 +9,12 @@ design. It is fixed with `1.0.0`.
 
 ## [Unreleased]
 
+## [0.13.1] — 2026-10-15
+
+A patch release: the importable packages, the plugins and the schema are
+unchanged from v0.13.0. It is the first release that tags the two `contrib/`
+modules.
+
 ### Fixed
 
 - **A contrib module is tagged with the release it requires** (ADR 0441,

@@ -260,7 +260,7 @@ make rename-module MODULE=github.com/user/repo
 
 ## Version
 
-Current version: **v0.13.0**. For the changes, see
+Current version: **v0.13.1**. For the changes, see
 [`CHANGELOG.md`](../CHANGELOG.md). Which roadmap phase covers what is in the
 README's phase-status table.
 
@@ -473,6 +473,12 @@ their next push. `web-push` migration 000003 unbinds every device and keeps
 each old customer id in `unproven_customer_id` with `updated_at` untouched;
 post each signed-in shopper's subscription again with the proof. The
 [CHANGELOG](../CHANGELOG.md) says how to look for abuse.
+
+- **v0.13.1** — the first release that tags the modules under `contrib/`
+  ([ADR 0441](adr/0441-a-contrib-module-is-tagged-with-the-release-it-requires.md)):
+  `contrib/identity-session/v0.13.1` and `contrib/identity-passkey/v0.13.1`,
+  each requiring gobit v0.13.1. Nothing else changed. A project on a
+  pseudo-version of either moves to the tag.
 
 Throughout `0.x`, **breaking changes may arrive in minor versions**: the API
 surface is not frozen yet. It freezes with `1.0.0`.

@@ -9,7 +9,7 @@ module github.com/bdrtr/gobit/contrib/identity-session
 go 1.26.9
 
 require (
-	github.com/bdrtr/gobit v0.13.0
+	github.com/bdrtr/gobit v0.13.1
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/stretchr/testify v1.12.1
