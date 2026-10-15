@@ -68,16 +68,26 @@ type anchoredStore struct {
 	rounds bool
 	// moving is the pending address change, by its token's hash.
 	moving map[string]string
+	// afterRead runs once a credential has been read by address, as a reset
+	// landing the moment after a sign-in's read.
+	afterRead func()
 }
 
 func (s *anchoredStore) Credential(_ context.Context, email string) (customerID, passwordHash string, err error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if foldEmail(email) != s.email {
+		s.mu.Unlock()
+
 		return "", "", ErrPasswordMismatch
 	}
+	customerID, passwordHash = s.customerID, s.hash
+	after := s.afterRead
+	s.mu.Unlock()
+	if after != nil {
+		after()
+	}
 
-	return s.customerID, s.hash, nil
+	return customerID, passwordHash, nil
 }
 
 func (s *anchoredStore) Put(_ context.Context, customerID, email, passwordHash string) error {
@@ -177,13 +187,38 @@ func (s *anchoredStore) TakePasswordReset(_ context.Context, tokenHash string) (
 	return s.customerID, s.email, nil
 }
 
-// lastLink is a reset sender that keeps the newest token.
-type lastLink struct{ token string }
+// lastLink is a reset sender that keeps the newest token. The link goes out
+// after the request is answered (ADR 0442), so a test waits for it.
+type lastLink struct {
+	mu    sync.Mutex
+	token string
+	read  int
+	sent  int
+}
 
 func (l *lastLink) SendPasswordReset(_ context.Context, _, token string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.token = token
+	l.sent++
 
 	return nil
+}
+
+// wait answers the link sent since the last one it handed out.
+func (l *lastLink) wait(t *testing.T) string {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+
+		return l.sent > l.read
+	}, 5*time.Second, time.Millisecond, "a reset link was sent")
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.read = l.sent
+
+	return l.token
 }
 
 // anchoredModule is a module over an anchored store holding one account, its
@@ -418,7 +453,7 @@ func TestAResetEndsTheSessionsBeforeIt(t *testing.T) {
 	require.Equal(t, http.StatusAccepted,
 		post(t, r, "/store/v1/auth/password-reset", `{"email":"known@example.test"}`).Code)
 	rec := post(t, r, "/store/v1/auth/password-reset/confirm",
-		`{"token":"`+link.token+`","password":"the new password"}`)
+		`{"token":"`+link.wait(t)+`","password":"the new password"}`)
 	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
 
 	assert.Equal(t, http.StatusUnauthorized, get(t, r, sessionPath, stolen).Code,
@@ -438,7 +473,7 @@ func TestAResetThatCannotEndTheSessionsLeavesThePassword(t *testing.T) {
 	store.endErr = errors.New("the database is down")
 
 	rec := post(t, r, "/store/v1/auth/password-reset/confirm",
-		`{"token":"`+link.token+`","password":"the new password"}`)
+		`{"token":"`+link.wait(t)+`","password":"the new password"}`)
 	assert.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
 	assert.Zero(t, store.puts, "the password was not replaced while the old sessions still worked")
 	assert.NoError(t, VerifyPassword(store.hash, "the old password"))

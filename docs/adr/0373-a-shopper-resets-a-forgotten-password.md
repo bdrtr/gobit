@@ -4,7 +4,7 @@
 behind the same proof as self-registration: a single-use link sent to the
 address of an account, which replaces the password and signs the person in.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0442](0442-an-unknown-address-signs-in-as-slowly-as-a-known-one.md), whose reset request answers before it records and sends the link
 - **Date:** 2026-10-02
 - **Amended by:** [0374](0374-a-replaced-password-ends-the-sessions-before-it.md): a reset ends every session issued before it
 

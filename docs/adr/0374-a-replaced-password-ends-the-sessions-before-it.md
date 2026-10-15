@@ -4,7 +4,7 @@
 and a cookie issued before it proves nobody; a password reset, an operator's
 replacement and a shopper ending their other sessions move it.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0443](0443-a-credential-is-replaced-only-over-the-one-read.md), which moves the anchor and the password in one statement
 - **Date:** 2026-10-03
 
 ## Context

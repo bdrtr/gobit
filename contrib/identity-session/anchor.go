@@ -68,6 +68,56 @@ func (m *Module) sessionAnchors() SessionAnchors {
 	return anchors
 }
 
+// AnchoredPut is a store that writes a password and moves the customer's
+// anchor in one statement (ADR 0443). The module's own table is one. Two
+// statements leave a moment between them: anchor first, and a sign-in that
+// read the old hash in that moment dates its cookie after the anchor;
+// password first, and a failure between leaves the old sessions standing.
+type AnchoredPut interface {
+	PutEndingSessions(ctx context.Context, customerID, email, passwordHash string, moment time.Time) error
+}
+
+var _ AnchoredPut = pgCredentials{}
+
+// PutEndingSessions is [Credentials.Put] that also moves the anchor to moment,
+// never back, in the same row write.
+func (s pgCredentials) PutEndingSessions(ctx context.Context, customerID, email, passwordHash string, moment time.Time) error {
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO customer_credentials (customer_id, email, password_hash, sessions_valid_from)
+		 VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (customer_id) DO UPDATE
+		 SET email = EXCLUDED.email,
+		     password_hash = EXCLUDED.password_hash,
+		     updated_at = now(),
+		     sessions_valid_from = GREATEST(customer_credentials.sessions_valid_from, EXCLUDED.sessions_valid_from)`,
+		customerID, foldEmail(email), passwordHash, moment)
+	if err != nil {
+		return fmt.Errorf("identity-session: the credential could not be written: %w", err)
+	}
+
+	return nil
+}
+
+// replacePassword writes a password that ends every session issued before
+// it (ADR 0374), in one write where the store can (AnchoredPut), and anchor
+// first then password where it cannot.
+func (m *Module) replacePassword(ctx context.Context, customerID, email, passwordHash string) error {
+	if put, ok := m.store.(AnchoredPut); ok {
+		return put.PutEndingSessions(ctx, customerID, email, passwordHash,
+			m.sessions.now().UTC().Truncate(anchorPrecision))
+	}
+	if err := m.endSessions(ctx, customerID); err != nil && !errors.Is(err, ErrNoCredential) {
+		return fmt.Errorf("%w: %w", errSessionsNotEnded, err)
+	}
+
+	return m.store.Put(ctx, customerID, email, passwordHash)
+}
+
+// errSessionsNotEnded marks a replacePassword that failed before writing:
+// the store was not there to end the sessions, which is an outage, not a
+// refused credential.
+var errSessionsNotEnded = errors.New("identity-session: the sessions could not be ended")
+
 // endSessions moves the customer's anchor to now, so every session issued
 // before this request proves nobody.
 func (m *Module) endSessions(ctx context.Context, customerID string) error {

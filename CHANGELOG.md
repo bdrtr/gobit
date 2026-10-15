@@ -9,6 +9,39 @@ design. It is fixed with `1.0.0`.
 
 ## [Unreleased]
 
+### Security
+
+- **An unknown address is answered in a known one's time** (ADR 0442, D296).
+  `contrib/identity-session`'s `POST /store/v1/auth/sign-in` answered an
+  address with no account before any hashing, about thirty times sooner than
+  a wrong password on a known address, and `POST /store/v1/auth/password-reset`
+  answered a known address only after recording and mailing its link: with
+  the publishable key anyone could tell which addresses have an account. The
+  sign-in now checks an unknown address against a decoy hash, and the reset
+  request answers 202 before it records and sends the link. **A link that
+  cannot be recorded or sent is now logged, not answered with 500**: watch
+  the log line `identity-session: a reset message could not be sent`.
+- **A sign-in no longer outlives a reset committed after its read**
+  (ADR 0443, D298). The reset, the password change and
+  `PUT /admin/v1/customer-credentials/{customer_id}` moved the session anchor
+  and the password in two statements, and a sign-in dated its cookie after
+  both: a session signed in with the old password survived the reset. They
+  now write both in one statement, and the sign-in dates its session at its
+  read.
+
+### Added
+
+- **`identitysession.Module.ReplaceCredential`** (ADR 0443, D297): writes a
+  customer's credential only while the stored address and hash are the
+  `CredentialValue` you read, or only for a customer with none, and answers
+  whether it did. Use it instead of `Credentials().Put` when you write a
+  password you checked yourself, such as one carried over from another
+  system, and sign the customer in with **`Sessions.IssueAsOf`**, dated at
+  your read. A store bound through `Options.Credentials` offers them by
+  implementing `CredentialSwapper` and `AnchoredPut`; without them
+  `ReplaceCredential` answers `ErrSwapUnsupported`, and before `Register`
+  `ErrNotRegistered`.
+
 ## [0.13.1] — 2026-10-15
 
 A patch release: the importable packages, the plugins and the schema are

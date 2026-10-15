@@ -141,8 +141,22 @@ var errNoSession = errors.New("identity-session: the request carries no valid se
 // injected script can steal, and those three attributes are the whole of what a
 // cookie can do about it.
 func (s *Sessions) Issue(w http.ResponseWriter, customerID string) {
+	s.IssueAsOf(w, customerID, time.Time{})
+}
+
+// IssueAsOf issues the session cookie dated at readAt, the moment the caller
+// read the credential it checked, so a password replaced after that read
+// ends the session it issues (ADR 0443): the replacement moves the anchor past
+// readAt. A zero or future readAt dates it now; the session lasts the TTL from
+// now either way. The anchor is compared at a millisecond, so a replacement in
+// the read's own millisecond is not seen.
+func (s *Sessions) IssueAsOf(w http.ResponseWriter, customerID string, readAt time.Time) {
 	now := s.now()
-	http.SetCookie(w, s.Cookie(s.cookieName, s.seal(customerID, now.Add(s.ttl), now), s.ttl))
+	issued := readAt
+	if issued.IsZero() || issued.After(now) {
+		issued = now
+	}
+	http.SetCookie(w, s.Cookie(s.cookieName, s.seal(customerID, now.Add(s.ttl), issued), s.ttl))
 }
 
 // Cookie builds a cookie carrying this installation's security attributes.

@@ -85,7 +85,7 @@ func TestAnAccountIsToldWhatChanged(t *testing.T) {
 
 	require.Equal(t, http.StatusAccepted,
 		post(t, r, "/store/v1/auth/password-reset", `{"email":"known@example.test"}`).Code)
-	rec := post(t, r, "/store/v1/auth/password-reset/confirm", `{"token":"`+link.token+`","password":"a second one"}`)
+	rec := post(t, r, "/store/v1/auth/password-reset/confirm", `{"token":"`+link.wait(t)+`","password":"a second one"}`)
 	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
 	here := sessionCookie(t, rec)
 
@@ -122,7 +122,7 @@ func TestAChangeThatIsNotWrittenTellsNobody(t *testing.T) {
 		post(t, r, "/store/v1/auth/password-reset", `{"email":"known@example.test"}`).Code)
 	store.putErr = errors.New("the database is down")
 
-	reset := post(t, r, "/store/v1/auth/password-reset/confirm", `{"token":"`+link.token+`","password":"a second one"}`)
+	reset := post(t, r, "/store/v1/auth/password-reset/confirm", `{"token":"`+link.wait(t)+`","password":"a second one"}`)
 	require.Equal(t, http.StatusInternalServerError, reset.Code, reset.Body.String())
 	changed := postJSON(t, r, "/store/v1/auth/password", signInAs(t, r, "known@example.test", "the old password"),
 		`{"current_password":"the old password","new_password":"a second one"}`)
@@ -144,7 +144,7 @@ func TestANoticeThatCannotBeSentFailsNothing(t *testing.T) {
 
 	require.Equal(t, http.StatusAccepted,
 		post(t, r, "/store/v1/auth/password-reset", `{"email":"known@example.test"}`).Code)
-	rec := post(t, r, "/store/v1/auth/password-reset/confirm", `{"token":"`+link.token+`","password":"a second one"}`)
+	rec := post(t, r, "/store/v1/auth/password-reset/confirm", `{"token":"`+link.wait(t)+`","password":"a second one"}`)
 	assert.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
 	require.NoError(t, VerifyPassword(store.hash, "a second one"))
 
@@ -171,7 +171,7 @@ func TestANoticeOutlivesTheCallerHangingUp(t *testing.T) {
 	require.Equal(t, http.StatusAccepted,
 		post(t, r, "/store/v1/auth/password-reset", `{"email":"known@example.test"}`).Code)
 	reset := postHangingUp(t, store, r, "/store/v1/auth/password-reset/confirm", nil,
-		`{"token":"`+link.token+`","password":"a second one"}`)
+		`{"token":"`+link.wait(t)+`","password":"a second one"}`)
 	require.Equal(t, http.StatusNoContent, reset.Code, reset.Body.String())
 	here := sessionCookie(t, reset)
 
@@ -248,7 +248,7 @@ func TestAStalledNoticeDoesNotHoldTheRequest(t *testing.T) {
 	answered := make(chan int, 1)
 	go func() {
 		answered <- post(t, r, "/store/v1/auth/password-reset/confirm",
-			`{"token":"`+link.token+`","password":"a second one"}`).Code
+			`{"token":"`+link.wait(t)+`","password":"a second one"}`).Code
 	}()
 	select {
 	case code := <-answered:
@@ -269,7 +269,7 @@ func TestNoticesHoldingANilPointerAreNone(t *testing.T) {
 		post(t, r, "/store/v1/auth/password-reset", `{"email":"known@example.test"}`).Code)
 	require.NotPanics(t, func() {
 		rec := post(t, r, "/store/v1/auth/password-reset/confirm",
-			`{"token":"`+link.token+`","password":"a second one"}`)
+			`{"token":"`+link.wait(t)+`","password":"a second one"}`)
 		assert.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
 	})
 	require.NoError(t, VerifyPassword(store.hash, "a second one"))
@@ -283,7 +283,7 @@ func TestNoNoticesIsAnOption(t *testing.T) {
 	store, link, _, r := noticedModule(t, nil, nil)
 	require.Equal(t, http.StatusAccepted,
 		post(t, r, "/store/v1/auth/password-reset", `{"email":"known@example.test"}`).Code)
-	rec := post(t, r, "/store/v1/auth/password-reset/confirm", `{"token":"`+link.token+`","password":"a second one"}`)
+	rec := post(t, r, "/store/v1/auth/password-reset/confirm", `{"token":"`+link.wait(t)+`","password":"a second one"}`)
 	assert.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
 	require.NoError(t, VerifyPassword(store.hash, "a second one"))
 }

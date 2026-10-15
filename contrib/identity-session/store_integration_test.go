@@ -653,3 +653,133 @@ func registrationStore(t *testing.T) identitysession.Registrations {
 
 	return store
 }
+
+// TestACredentialIsReplacedOnlyOverTheOneRead: Swap writes only while the
+// stored credential is the one the caller read, address and hash, and only into
+// an empty slot when it read none (ADR 0443).
+func TestACredentialIsReplacedOnlyOverTheOneRead(t *testing.T) {
+	m := registered(t)
+	ctx := t.Context()
+	customerID := "cust_" + t.Name()
+	hash := func(pw string) string {
+		h, err := identitysession.HashPassword(pw)
+		require.NoError(t, err)
+
+		return h
+	}
+	first, second, reset := hash("first"), hash("second"), hash("reset")
+	at := func(email, h string) identitysession.CredentialValue {
+		return identitysession.CredentialValue{Email: email, PasswordHash: h}
+	}
+	none := identitysession.CredentialValue{}
+
+	ok, err := m.ReplaceCredential(ctx, customerID, none, at("Swap@Example.test", first))
+	require.NoError(t, err)
+	assert.True(t, ok, "an empty slot takes the first credential")
+	ok, err = m.ReplaceCredential(ctx, customerID, none, at("swap@example.test", second))
+	require.NoError(t, err)
+	assert.False(t, ok, "an empty expectation does not write over a credential")
+
+	// The address read is folded as the stored one is.
+	ok, err = m.ReplaceCredential(ctx, customerID, at("SWAP@example.test", first), at("Swap@Example.test", second))
+	require.NoError(t, err)
+	assert.True(t, ok, "the credential read is still there")
+	_, got, err := m.Credentials().Credential(ctx, "swap@example.test")
+	require.NoError(t, err)
+	require.NoError(t, identitysession.VerifyPassword(got, "second"))
+
+	// A reset lands between a caller's read and its write: the write loses.
+	require.NoError(t, m.Credentials().Put(ctx, customerID, "swap@example.test", reset))
+	ok, err = m.ReplaceCredential(ctx, customerID, at("swap@example.test", second), at("swap@example.test", first))
+	require.NoError(t, err)
+	assert.False(t, ok, "the hash read is gone")
+	_, got, err = m.Credentials().Credential(ctx, "swap@example.test")
+	require.NoError(t, err)
+	require.NoError(t, identitysession.VerifyPassword(got, "reset"), "the reset stands")
+
+	// A proven address change keeps the hash and moves the address: a swap
+	// over the old address loses, and the change stands.
+	require.NoError(t, m.Credentials().Put(ctx, customerID, "moved@example.test", reset))
+	ok, err = m.ReplaceCredential(ctx, customerID, at("swap@example.test", reset), at("swap@example.test", first))
+	require.NoError(t, err)
+	assert.False(t, ok, "the address read is gone")
+	owner, got, err := m.Credentials().Credential(ctx, "moved@example.test")
+	require.NoError(t, err)
+	assert.Equal(t, customerID, owner)
+	require.NoError(t, identitysession.VerifyPassword(got, "reset"), "the address change stands")
+
+	// Another customer's address is refused as Put refuses it.
+	_, err = m.ReplaceCredential(ctx, "cust_other_"+t.Name(), none, at("moved@example.test", first))
+	require.Error(t, err)
+}
+
+// TestAReplacedPasswordMovesTheAnchorInTheSameWrite: the password and the
+// moment sessions count from change in one row write (ADR 0443), so no read
+// can see the new anchor beside the old password.
+func TestAReplacedPasswordMovesTheAnchorInTheSameWrite(t *testing.T) {
+	m := registered(t)
+	ctx := t.Context()
+	customerID := "cust_" + t.Name()
+	email := strings.ToLower(t.Name()) + "@example.test"
+	old, err := identitysession.HashPassword("old")
+	require.NoError(t, err)
+	require.NoError(t, m.Credentials().Put(ctx, customerID, email, old))
+
+	put, ok := m.Credentials().(identitysession.AnchoredPut)
+	require.True(t, ok, "the module's own table writes both at once")
+	moment := time.Now().UTC().Truncate(time.Millisecond)
+	fresh, err := identitysession.HashPassword("new")
+	require.NoError(t, err)
+	require.NoError(t, put.PutEndingSessions(ctx, customerID, email, fresh, moment))
+
+	var stored string
+	var from time.Time
+	require.NoError(t, testPool.QueryRow(ctx,
+		`SELECT password_hash, sessions_valid_from FROM customer_credentials WHERE customer_id = $1`, customerID).
+		Scan(&stored, &from))
+	assert.Equal(t, fresh, stored)
+	assert.True(t, from.Equal(moment), "anchor %v, moment %v", from, moment)
+
+	// An earlier moment never moves the anchor back.
+	require.NoError(t, put.PutEndingSessions(ctx, customerID, email, fresh, moment.Add(-time.Hour)))
+	require.NoError(t, testPool.QueryRow(ctx,
+		`SELECT sessions_valid_from FROM customer_credentials WHERE customer_id = $1`, customerID).Scan(&from))
+	assert.True(t, from.Equal(moment))
+}
+
+// TestTwoSwapsOverOneReadWriteOnce: of concurrent writers that read the same
+// credential, one wins and the rest find it gone.
+func TestTwoSwapsOverOneReadWriteOnce(t *testing.T) {
+	m := registered(t)
+	ctx := t.Context()
+	customerID := "cust_" + t.Name()
+	read, err := identitysession.HashPassword("read")
+	require.NoError(t, err)
+	require.NoError(t, m.Credentials().Put(ctx, customerID, "race@example.test", read))
+	expected := identitysession.CredentialValue{Email: "race@example.test", PasswordHash: read}
+
+	const writers = 8
+	var wg sync.WaitGroup
+	wins := make(chan bool, writers)
+	for i := range writers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			next, err := identitysession.HashPassword(fmt.Sprintf("writer %d", i))
+			assert.NoError(t, err)
+			ok, err := m.ReplaceCredential(ctx, customerID, expected,
+				identitysession.CredentialValue{Email: "race@example.test", PasswordHash: next})
+			assert.NoError(t, err)
+			wins <- ok
+		}()
+	}
+	wg.Wait()
+	close(wins)
+	won := 0
+	for ok := range wins {
+		if ok {
+			won++
+		}
+	}
+	assert.Equal(t, 1, won)
+}

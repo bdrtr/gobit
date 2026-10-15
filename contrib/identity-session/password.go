@@ -61,6 +61,10 @@ func HashPassword(password string) (string, error) {
 		base64.RawStdEncoding.EncodeToString(key)), nil
 }
 
+// verifyPassword is the check the sign-in makes; a variable so a test can see
+// that an unknown address is checked too (ADR 0442).
+var verifyPassword = VerifyPassword
+
 // VerifyPassword compares a password with a stored hash.
 //
 // # Why the comparison is constant time

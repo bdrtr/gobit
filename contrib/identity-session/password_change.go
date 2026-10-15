@@ -102,12 +102,7 @@ func (m *Module) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := m.endSessions(r.Context(), customerID); err != nil {
-		m.unavailable(w, r, "the sessions before the change could not be ended", err)
-
-		return
-	}
-	if err := m.store.Put(r.Context(), customerID, email, newHash); err != nil {
+	if err := m.replacePassword(r.Context(), customerID, email, newHash); err != nil {
 		m.unavailable(w, r, "the new password could not be written", err)
 
 		return

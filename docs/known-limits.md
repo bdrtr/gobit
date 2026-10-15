@@ -243,6 +243,17 @@ past and is not corrected retroactively.
   its address, and no audit row names an agent. A discovery document
   (`/.well-known/…`, `/llms.txt`) is yours to serve from a module on the shop's
   origin, as `examples/storefront` serves its pages.
+- **A request right after a known address's reset request can take longer.**
+  The reset answers before it records and sends the link (ADR 0442), and that
+  work shares the connection pool with whatever request comes next; the
+  answers themselves take one time. A credential written through
+  `Credentials().Put` with argon2id parameters other than `HashPassword`'s is
+  checked at its own cost and answers apart from an unknown address.
+- **Two writes to one credential that meet inside each other are not
+  ordered.** A sign-in whose read falls inside a reset's own write, after the
+  anchor's moment and before the commit, keeps its session (ADR 0443). A reset
+  that lands inside a proven address change, between the change's read and its
+  write, is overwritten by the hash the change read.
 
 ## Sales channel scope
 

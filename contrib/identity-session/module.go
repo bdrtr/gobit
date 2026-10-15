@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -168,6 +169,11 @@ type Module struct {
 	// noticeTimeout bounds one notice; [DefaultNoticeTimeout] unless a test
 	// shortens it.
 	noticeTimeout time.Duration
+	// decoy is the hash an unknown address is checked against, so its sign-in
+	// costs what a known one's does (ADR 0442); drawn once, in [New].
+	decoy string
+	// pending counts the work running after an answer (afterAnswer).
+	pending sync.WaitGroup
 }
 
 // That the published contract is satisfied is pinned down at compile time, and
@@ -197,6 +203,14 @@ func New(opts Options) *Module {
 	m := &Module{opts: opts, log: log, noticeTimeout: DefaultNoticeTimeout}
 	if !isNil(opts.AccountNotices) {
 		m.notices = opts.AccountNotices
+	}
+	// The decoy is hashed here, with the parameters every stored hash has, so
+	// checking against it costs what checking a real one does. A secret nobody
+	// keeps: no password matches it. Should the random source fail, the decoy
+	// is empty and an unknown address is answered early, which is the old
+	// behavior and no worse.
+	if secret, _, err := newRegistrationToken(); err == nil {
+		m.decoy, _ = HashPassword(secret)
 	}
 
 	return m
@@ -260,6 +274,19 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 			return fmt.Errorf("identity-session: %q could not be resolved: %w", dbServiceName, err)
 		}
 		m.store = pgCredentials{pool: pool.Pool()}
+	}
+
+	// The work a reset request does after its answer is drained at shutdown,
+	// before the pool it writes through closes: registered after it, the
+	// container shuts it first. Resolved here, because the container closes
+	// only what it has built.
+	if err := c.Provide(ModuleName+".after_answer", func(*container.Container) (any, error) {
+		return afterAnswerDrain{m: m}, nil
+	}); err != nil {
+		return fmt.Errorf("identity-session: the shutdown drain could not be registered: %w", err)
+	}
+	if _, err := container.Resolve[afterAnswerDrain](c, ModuleName+".after_answer"); err != nil {
+		return fmt.Errorf("identity-session: the shutdown drain could not be built: %w", err)
 	}
 
 	m.limitKey = m.opts.LimitKey
@@ -327,6 +354,39 @@ const minSecretLen = 32
 // It answers nil until [Module.Register] has run, for [Module.Sessions]'s
 // reason: before that there is no pool to read.
 func (m *Module) Credentials() Credentials { return m.store }
+
+// ErrSwapUnsupported is [Module.ReplaceCredential]'s answer when the bound
+// credential store cannot write under a condition.
+var ErrSwapUnsupported = errors.New(
+	"identity-session: the credential store cannot replace a credential conditionally")
+
+// ErrNotRegistered is the answer of a call that needs the store before
+// [Module.Register] has bound one.
+var ErrNotRegistered = errors.New("identity-session: the module is not registered yet")
+
+// ReplaceCredential writes replacement as the customer's credential only while
+// the stored one is still expected, the address and hash the caller read, and
+// answers whether it did; a zero expected writes only for a customer with none
+// (ADR 0443).
+//
+// It is for an embedder that rewrites a credential it has checked itself,
+// such as a password carried over from another system and upgraded at its
+// first sign-in: a reset, a change or a proven address change made between
+// the check and the write wins, where [Credentials.Put] would put the checked
+// credential back over it. It does not end sessions; an embedder that signs
+// the customer in after it dates the session at its read with
+// [Sessions.IssueAsOf].
+func (m *Module) ReplaceCredential(ctx context.Context, customerID string, expected, replacement CredentialValue) (bool, error) {
+	if m.store == nil {
+		return false, ErrNotRegistered
+	}
+	swapper, ok := m.store.(CredentialSwapper)
+	if !ok {
+		return false, ErrSwapUnsupported
+	}
+
+	return swapper.Swap(ctx, customerID, expected, replacement)
+}
 
 // Sessions returns the verifier, for an embedder that signs people in itself.
 //
@@ -473,9 +533,18 @@ func (m *Module) signIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The session is dated at the read: a password replaced after it moves the
+	// anchor past this moment, and the cookie proves nobody (ADR 0443).
+	readAt := m.sessions.now()
 	customerID, hash, err := m.store.Credential(r.Context(), body.Email)
-	if err == nil {
-		err = VerifyPassword(hash, body.Password)
+	switch {
+	case err == nil:
+		err = verifyPassword(hash, body.Password)
+	case errors.Is(err, ErrPasswordMismatch):
+		// An unknown address is checked against the decoy, so it is answered in
+		// a known address's time: an early answer told which addresses have an
+		// account, the oracle the answer below refuses to be (ADR 0442).
+		_ = verifyPassword(m.decoy, body.Password)
 	}
 	if err != nil {
 		// One answer for an unknown address, a wrong password and a corrupt
@@ -494,7 +563,7 @@ func (m *Module) signIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	m.sessions.Issue(w, customerID)
+	m.sessions.IssueAsOf(w, customerID, readAt)
 	corehttp.WriteJSON(r.Context(), w, http.StatusNoContent, nil)
 }
 
@@ -563,8 +632,7 @@ func (m *Module) signOut(w http.ResponseWriter, r *http.Request) {
 //
 // Replacing a password ends the customer's sessions, as a reset does (ADR
 // 0374): an operator replaces one because somebody else may know it. The
-// anchor moves BEFORE the password, so a failure between the two has signed
-// people out rather than left a stranger signed in.
+// anchor and the password move in one write (ADR 0443).
 func (m *Module) putCredential(w http.ResponseWriter, r *http.Request) {
 	customerID := chi.URLParam(r, "customer_id")
 	var body credentialRequest
@@ -584,13 +652,11 @@ func (m *Module) putCredential(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
-	// A customer with no credential yet has no session this could end.
-	if err := m.endSessions(r.Context(), customerID); err != nil && !errors.Is(err, ErrNoCredential) {
+	if err := m.replacePassword(r.Context(), customerID, body.Email, hash); errors.Is(err, errSessionsNotEnded) {
 		m.unavailable(w, r, "the customer's sessions could not be ended", err)
 
 		return
-	}
-	if err := m.store.Put(r.Context(), customerID, body.Email, hash); err != nil {
+	} else if err != nil {
 		m.log.ErrorContext(r.Context(), "identity-session: a credential could not be written",
 			"error", err)
 		corehttp.WriteError(r.Context(), w, coreerrors.Conflict(CodeNotWritten,

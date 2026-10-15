@@ -5,7 +5,7 @@ own `go.mod`: a signed cookie, argon2id passwords, its own table and two
 storefront endpoints. It costs a tree four gates had to learn about and buys an
 installation that can actually sign somebody in.
 
-- **Status:** Accepted; amended by [0374](0374-a-replaced-password-ends-the-sessions-before-it.md), which ends the sessions before a replaced password, and by [0434](0434-an-admin-route-demands-a-privilege.md), whose credential route names its customer in the path and demands `customer-credential:write`
+- **Status:** Accepted; amended by [0374](0374-a-replaced-password-ends-the-sessions-before-it.md), which ends the sessions before a replaced password, and by [0434](0434-an-admin-route-demands-a-privilege.md), whose credential route names its customer in the path and demands `customer-credential:write`, by [0441](0441-a-contrib-module-is-tagged-with-the-release-it-requires.md), which tags it with the release it requires, by [0442](0442-an-unknown-address-signs-in-as-slowly-as-a-known-one.md), which answers an unknown address in a known one's time, and by [0443](0443-a-credential-is-replaced-only-over-the-one-read.md), which replaces a credential only over the one read
 - **Date:** 2026-09-11
 
 ## Context

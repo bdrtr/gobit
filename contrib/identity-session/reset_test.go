@@ -75,11 +75,14 @@ type resetSender struct {
 	sent    []string
 	tokens  []string
 	sendErr error
+	read    int // tokens lastToken has handed out
+	tried   int
 }
 
 func (s *resetSender) SendPasswordReset(_ context.Context, email, token string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.tried++
 	if s.sendErr != nil {
 		return s.sendErr
 	}
@@ -89,13 +92,37 @@ func (s *resetSender) SendPasswordReset(_ context.Context, email, token string) 
 	return nil
 }
 
+// lastToken waits for the link sent since the last one it handed out: the
+// link goes out after the request is answered (ADR 0442).
 func (s *resetSender) lastToken(t *testing.T) string {
 	t.Helper()
+	require.Eventually(t, func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		return len(s.tokens) > s.read
+	}, 5*time.Second, time.Millisecond, "a reset link was sent")
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	require.NotEmpty(t, s.tokens, "a reset link was sent")
+	s.read = len(s.tokens)
 
 	return s.tokens[len(s.tokens)-1]
+}
+
+// attempts waits for n sends to have been tried and answers the addresses
+// mailed.
+func (s *resetSender) attempts(t *testing.T, n int) []string {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		return s.tried >= n
+	}, 5*time.Second, time.Millisecond)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return append([]string(nil), s.sent...)
 }
 
 // resetRouter mounts a module whose reset is wired to the store and sender.
@@ -143,7 +170,7 @@ func TestAResetIsAnsweredTheSameForAnybody(t *testing.T) {
 	assert.Equal(t, http.StatusAccepted, known.Code, known.Body.String())
 	assert.Equal(t, http.StatusAccepted, unknown.Code, unknown.Body.String())
 	assert.Equal(t, known.Body.String(), unknown.Body.String(), "the two answers cannot be told apart")
-	assert.Equal(t, []string{"ada@example.test"}, sender.sent, "only the account's address is mailed")
+	assert.Equal(t, []string{"ada@example.test"}, sender.attempts(t, 1), "only the account's address is mailed")
 }
 
 // TestAResetLinkReplacesThePasswordOnce: the link sets the new password and
@@ -208,16 +235,19 @@ func TestAPasswordTheHashRefusesDoesNotSpendTheLink(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, ok.Code, "the link survived the refused password: %s", ok.Body.String())
 }
 
-// TestAResetThatCannotBeSentIsAFailure: nothing pretends the link went out.
-func TestAResetThatCannotBeSentIsAFailure(t *testing.T) {
+// TestAResetThatCannotBeSentIsAnsweredAsAnyOther: a mail that fails is not
+// an answer that differs.
+func TestAResetThatCannotBeSentIsAnsweredAsAnyOther(t *testing.T) {
 	t.Parallel()
 
 	sender := &resetSender{sendErr: errors.New("the mail server is down")}
 	r := resetRouter(t, withAccount(t, "cust_ADA", "ada@example.test", "the old one"), sender)
 
+	// The answer goes before the mail, so a failed send is the log's to tell
+	// (ADR 0442): an error here would say the address has an account.
 	rec := sendJSON(t, r, "/store/v1/auth/password-reset", `{"email":"ada@example.test"}`)
-	assert.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
-	assert.Contains(t, rec.Body.String(), identitysession.CodeUnavailable)
+	assert.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+	assert.Empty(t, sender.attempts(t, 1), "the send was tried and failed")
 }
 
 // TestThePasswordResetIsMountedOnlyWithItsSeams: no sender, or a store that

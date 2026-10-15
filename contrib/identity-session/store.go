@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -119,6 +120,56 @@ func (s pgCredentials) Put(ctx context.Context, customerID, email, passwordHash 
 	}
 
 	return nil
+}
+
+// CredentialValue is a credential as a caller read or means to write it: the
+// address it signs in under and the hash. The zero value is no credential.
+type CredentialValue struct {
+	Email        string
+	PasswordHash string
+}
+
+// CredentialSwapper is a store that replaces a credential only over the one
+// its caller read (ADR 0443). The module's own table is one; a store bound
+// through [Options.Credentials] may be, and [Module.ReplaceCredential] answers
+// [ErrSwapUnsupported] when it is not.
+type CredentialSwapper interface {
+	// Swap writes replacement for the customer only while the customer's
+	// stored credential is still expected, address and hash, and answers
+	// whether it did. A zero expected means the customer holds none yet.
+	Swap(ctx context.Context, customerID string, expected, replacement CredentialValue) (bool, error)
+}
+
+var _ CredentialSwapper = pgCredentials{}
+
+// Swap is [Credentials.Put] under a condition, in one statement, so a write
+// that lands between the caller's read and this one is never overwritten: the
+// row lock the UPDATE takes orders the two, and the second finds what it
+// expected gone. The address is in the condition as the hash is: a proven
+// address change keeps the hash, and a swap over it would move the credential
+// back.
+func (s pgCredentials) Swap(ctx context.Context, customerID string, expected, replacement CredentialValue) (bool, error) {
+	var tag pgconn.CommandTag
+	var err error
+	if expected == (CredentialValue{}) {
+		tag, err = s.pool.Exec(ctx,
+			`INSERT INTO customer_credentials (customer_id, email, password_hash)
+			 VALUES ($1, $2, $3)
+			 ON CONFLICT (customer_id) DO NOTHING`,
+			customerID, foldEmail(replacement.Email), replacement.PasswordHash)
+	} else {
+		tag, err = s.pool.Exec(ctx,
+			`UPDATE customer_credentials
+			 SET email = $4, password_hash = $5, updated_at = now()
+			 WHERE customer_id = $1 AND email = $2 AND password_hash = $3`,
+			customerID, foldEmail(expected.Email), expected.PasswordHash,
+			foldEmail(replacement.Email), replacement.PasswordHash)
+	}
+	if err != nil {
+		return false, fmt.Errorf("identity-session: the credential could not be written: %w", err)
+	}
+
+	return tag.RowsAffected() == 1, nil
 }
 
 // HasPassword reports whether the customer has a credential here.

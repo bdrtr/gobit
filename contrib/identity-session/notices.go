@@ -2,6 +2,7 @@ package identitysession
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -29,6 +30,37 @@ type AccountNotices interface {
 // would read as the change not having happened, and the caller hanging up does
 // not cancel it: the person a notice is for is not the one holding the
 // connection. [DefaultNoticeTimeout] bounds it instead (D231).
+// afterAnswerDrain waits at shutdown for the work afterAnswer started.
+type afterAnswerDrain struct{ m *Module }
+
+// Shutdown waits for that work within the shutdown's budget.
+func (d afterAnswerDrain) Shutdown(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		d.m.pending.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("identity-session: work after an answer did not finish before shutdown: %w", ctx.Err())
+	}
+}
+
+// afterAnswer runs work once the request has been answered, past the caller's
+// hang-up and within the notice timeout, and counts it so the shutdown drains
+// it.
+func (m *Module) afterAnswer(ctx context.Context, work func(context.Context)) {
+	m.pending.Add(1)
+	go func() {
+		defer m.pending.Done()
+		bg, cancel := m.noticeContext(ctx)
+		defer cancel()
+		work(bg)
+	}()
+}
+
 func (m *Module) notifyPasswordChanged(ctx context.Context, customerID, email string) {
 	if m.notices == nil {
 		return
