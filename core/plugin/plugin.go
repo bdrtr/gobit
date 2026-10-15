@@ -350,6 +350,22 @@ type Worker struct {
 // It is empty for a Worker that never went through [Host.RegisterWorker].
 func (w Worker) PluginName() string { return w.plugin }
 
+// StoreProofHeader is a request header a plugin's storefront routes decide
+// access on (ADR 0444): a key its own shopper holds, as an order's token is
+// the order's.
+type StoreProofHeader struct {
+	// Name is the header's name. It must be a valid header field name; the
+	// composition root refuses one that is not, at startup.
+	Name string
+
+	// plugin is the name of the plugin that declared the header, captured by
+	// [Host.RegisterStoreProofHeader], for [Job.PluginName]'s reason.
+	plugin string
+}
+
+// PluginName reports the plugin that declared the header.
+func (p StoreProofHeader) PluginName() string { return p.plugin }
+
 // queuedTask represents a registration to be applied during the Start phase.
 type queuedTask struct {
 	// description says which task failed, in the error message.
@@ -385,6 +401,9 @@ type Host struct {
 	workers []Worker
 	// adminPages are the panel screens the plugins declared.
 	adminPages []AdminPage
+	// proofHeaders are the storefront headers the plugins decide access on
+	// (ADR 0444).
+	proofHeaders []StoreProofHeader
 	// queue holds the tasks to be applied at Start.
 	queue []queuedTask
 }
@@ -599,6 +618,28 @@ func (h *Host) RegisterAdminPage(p AdminPage) {
 //
 // The slice is a copy, for [Host.Jobs]'s reason.
 func (h *Host) AdminPages() []AdminPage { return slices.Clone(h.adminPages) }
+
+// RegisterStoreProofHeader declares a request header the plugin's storefront
+// routes decide access on (ADR 0444).
+//
+// The core does two things with it that a plugin cannot do from its routes. A
+// browser on an allowed origin may send it: the store surface's CORS
+// allow-list is closed, and a header it does not name is a route a browser
+// storefront cannot call. And the store ring keys its idempotency records on
+// its value, as it keys them on an order's token: keyed on the publishable
+// key, the path and the body alone, a record of a write the header opened is
+// replayed to a caller who repeats the key and the body without holding it.
+//
+// It follows [Host.RegisterJob]'s shape: collected during Setup and validated
+// by the composition root, which reads it before it builds the guards.
+func (h *Host) RegisterStoreProofHeader(name string) {
+	h.proofHeaders = append(h.proofHeaders, StoreProofHeader{Name: name, plugin: h.active})
+}
+
+// StoreProofHeaders returns the headers the plugins declared, in registration
+// order. It is the composition root's read; the slice is a copy, for
+// [Host.Jobs]'s reason.
+func (h *Host) StoreProofHeaders() []StoreProofHeader { return slices.Clone(h.proofHeaders) }
 
 // PaymentReports returns the door a payment provider reports its customer's
 // payment through (ADR 0438).

@@ -138,6 +138,11 @@ type GuardOptions struct {
 	// bearer token, and ADR 0011 refused CORS there precisely because the token
 	// would then have to live in a browser.
 	CORSOrigins []string
+	// CORSHeaders are the request headers a browser on those sites may send
+	// beside the core's own list: the headers the plugins' storefront routes
+	// decide access on (ADR 0444). A name [CheckStoreProofHeader] refuses is
+	// left out.
+	CORSHeaders []string
 	// AdminExempt are the full paths on the admin surface that are EXEMPT from
 	// authentication — in practice only the login endpoint.
 	//
@@ -260,7 +265,7 @@ func APIGuards(opts GuardOptions) []func(http.Handler) http.Handler {
 	// call was allowed. Answering the preflight before the guards is what makes
 	// the answer about the POLICY rather than about the missing key.
 	if len(opts.CORSOrigins) > 0 {
-		stack = append(stack, Scoped(store, nil, CORS(opts.CORSOrigins)))
+		stack = append(stack, Scoped(store, nil, cors(opts.CORSOrigins, opts.CORSHeaders)))
 	}
 
 	// The audit goes on the ADMIN prefix and OUTSIDE the identity guard, so a

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/errors"
 	corehttp "github.com/bdrtr/gobit/core/http"
+	coreplugin "github.com/bdrtr/gobit/core/plugin"
 	"github.com/bdrtr/gobit/internal/core/config"
 )
 
@@ -79,7 +81,7 @@ func (c *countingIdentity) CustomerID(*http.Request) (string, error) {
 // refuses it.
 func TestTheStoreProofAsksTheIdentityOnlyOffACart(t *testing.T) {
 	down := &countingIdentity{err: errors.Unavailable("session_store_down", "down")}
-	proof := storeIdempotencyProof(down)
+	proof := storeIdempotencyProof(down, nil)
 
 	for _, path := range []string{"/store/v1/carts/cart_1/line-items", "/store/v1/carts/cart_1/complete"} {
 		r := httptest.NewRequest(http.MethodPost, path, http.NoBody)
@@ -96,12 +98,104 @@ func TestTheStoreProofAsksTheIdentityOnlyOffACart(t *testing.T) {
 	require.Error(t, err, "an outage was not refused")
 	assert.Equal(t, errors.KindUnavailable, errors.KindOf(err))
 
-	proving := storeIdempotencyProof(&countingIdentity{customer: "cus_1"})
+	proving := storeIdempotencyProof(&countingIdentity{customer: "cus_1"}, nil)
 	withToken, err := proving(r)
 	require.NoError(t, err)
 	assert.Contains(t, withToken, "ordtok_1")
 	assert.Contains(t, withToken, "cus_1")
-	nothing, err := storeIdempotencyProof(nil)(httptest.NewRequest(http.MethodPost, "/store/v1/customers", http.NoBody))
+	nothing, err := storeIdempotencyProof(nil, nil)(httptest.NewRequest(http.MethodPost, "/store/v1/customers", http.NoBody))
 	require.NoError(t, err)
 	assert.Empty(t, nothing, "a request proving nothing keeps the shared namespace")
+}
+
+// TestAPluginsProofHeaderKeysTheStoreRecord is ADR 0444's namespace: the value
+// of a header a plugin declared enters the proof, and a request carrying none
+// of the declared headers is keyed as it was before plugins could declare one.
+func TestAPluginsProofHeaderKeysTheStoreRecord(t *testing.T) {
+	const header = "X-Service-Request-Key"
+	proof := storeIdempotencyProof(nil, []string{header})
+	at := func(set map[string]string) string {
+		r := httptest.NewRequest(http.MethodPost, "/store/v1/dtm/service-requests/srq_1/accept", http.NoBody)
+		for k, v := range set {
+			r.Header.Set(k, v)
+		}
+		proven, err := proof(r)
+		require.NoError(t, err)
+
+		return proven
+	}
+
+	assert.Empty(t, at(nil), "a request proving nothing keeps the shared namespace")
+	holder, stranger := at(map[string]string{header: "key-a"}), at(map[string]string{header: "key-b"})
+	assert.NotEmpty(t, holder, "the declared header is not in the proof")
+	assert.NotEqual(t, holder, stranger, "two keys share a namespace")
+	assert.Equal(t, "order-token:ordtok_1\x00customer:",
+		at(map[string]string{corehttp.OrderTokenHeader: "ordtok_1"}),
+		"an order token alone is keyed as before ADR 0444")
+	two := storeIdempotencyProof(nil, []string{"X-A-Key", "X-B-Key"})
+	under := func(name string) string {
+		r := httptest.NewRequest(http.MethodPost, "/store/v1/acme/x", http.NoBody)
+		r.Header.Set(name, "v")
+		proven, err := two(r)
+		require.NoError(t, err)
+
+		return proven
+	}
+	assert.NotEqual(t, under("X-A-Key"), under("X-B-Key"), "one value under two declared headers shares a namespace")
+	assert.Equal(t, "\x00X-A-Key:v", under("X-A-Key"))
+	assert.NotEqual(t, at(map[string]string{corehttp.OrderTokenHeader: "ordtok_1"}),
+		at(map[string]string{corehttp.OrderTokenHeader: "ordtok_1", header: "key-a"}),
+		"the declared header is dropped beside an order token")
+}
+
+// TestAPluginsProofHeaderIsCheckedAtStartup holds the composition root's read
+// of the declarations: canonical, once and sorted, so the namespace does not
+// follow the order plugins were installed in, and a name that is not a header
+// stops the installation naming the plugin.
+func TestAPluginsProofHeaderIsCheckedAtStartup(t *testing.T) {
+	installed := func(t *testing.T, plugins ...coreplugin.Plugin) *coreplugin.Host {
+		t.Helper()
+		host := coreplugin.NewHost(nil, nil, nil, discardLogger(), nil)
+		reg := coreplugin.NewRegistry(discardLogger())
+		for _, p := range plugins {
+			reg.Add(p)
+		}
+		require.NoError(t, reg.Install(t.Context(), host))
+
+		return host
+	}
+
+	headers, err := pluginProofHeaders(installed(t,
+		proofPlugin{name: "b", headers: []string{"x-zeta-key", "X-Alpha-Key"}},
+		proofPlugin{name: "a", headers: []string{"X-ZETA-KEY"}}))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"X-Alpha-Key", "X-Zeta-Key"}, headers)
+
+	for _, bad := range []string{"", "X Key", "X-Key:", "X-Ключ", "X-A,Authorization", "X/A",
+		"x-request-id", corehttp.OrderTokenHeader, corehttp.PublishableKeyHeader, corehttp.IdempotencyKeyHeader, "traceparent"} {
+		_, err := pluginProofHeaders(installed(t, proofPlugin{name: "acme", headers: []string{bad}}))
+		require.Error(t, err, "%q was taken", bad)
+		assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
+		assert.Contains(t, err.Error(), "acme", "the refusal does not name the plugin")
+	}
+
+	none, err := pluginProofHeaders(nil)
+	require.NoError(t, err)
+	assert.Empty(t, none)
+}
+
+// proofPlugin declares storefront proof headers and nothing else.
+type proofPlugin struct {
+	name    string
+	headers []string
+}
+
+func (p proofPlugin) Name() string { return p.name }
+
+func (p proofPlugin) Setup(_ context.Context, h *coreplugin.Host) error {
+	for _, name := range p.headers {
+		h.RegisterStoreProofHeader(name)
+	}
+
+	return nil
 }

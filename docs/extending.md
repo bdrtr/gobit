@@ -90,6 +90,21 @@ it. A privilege checked inside the handler does not count. Name it
 binds under `/admin/ui` but the panel: a screen goes through
 `RegisterAdminPage`.
 
+A storefront route that opens to a key its shopper holds in a header, as an
+order's routes open to `X-Order-Token`, declares that header in `Setup`
+([ADR 0444](adr/0444-a-plugins-storefront-key-is-the-cores-proof.md)):
+
+```go
+h.RegisterStoreProofHeader("X-Service-Request-Key")
+```
+
+A browser on a `CORS_ALLOWED_ORIGINS` site may then send it, and the store
+ring keys its idempotency records on its value, so a recorded answer is
+replayed only to a caller presenting the same key. The header keys every
+store write that carries it, so a name that is not a header field name, or one
+the core reads (`X-Request-Id`, `X-Order-Token`, the trace context and the
+like), stops the installation with the plugin's name.
+
 gobit binds `/admin/v1`, `/admin/ui` and their catch-alls itself, so routes at
 the root, a page router like `/{category}/{product}` or a single-page app on
 `/*`, keep their own paths and answer none under those prefixes; neither does

@@ -226,6 +226,7 @@ core/http CallbackRegistry.Routes
 core/http CallbackResponse
 core/http CallbackRoute
 core/http CallbackVerify
+core/http CheckStoreProofHeader
 core/http ClientIPKey
 core/http ClientKeyName
 core/http CodeAuthenticationUnchecked
@@ -465,8 +466,10 @@ core/plugin Host.RegisterFulfillmentProvider
 core/plugin Host.RegisterJob
 core/plugin Host.RegisterNotificationProvider
 core/plugin Host.RegisterPaymentProvider
+core/plugin Host.RegisterStoreProofHeader
 core/plugin Host.RegisterWorker
 core/plugin Host.Setting
+core/plugin Host.StoreProofHeaders
 core/plugin Host.Subscribe
 core/plugin Host.Workers
 core/plugin Job
@@ -487,6 +490,8 @@ core/plugin Registry.Install
 core/plugin Registry.MountRoutes
 core/plugin Registry.Plugins
 core/plugin Registry.Start
+core/plugin StoreProofHeader
+core/plugin StoreProofHeader.PluginName
 core/plugin Worker
 core/plugin Worker.PluginName
 core/provider Address

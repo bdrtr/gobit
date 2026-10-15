@@ -20,6 +20,7 @@ import (
 
 	"github.com/bdrtr/gobit"
 	"github.com/bdrtr/gobit/core/container"
+	"github.com/bdrtr/gobit/core/plugin"
 )
 
 // This file is the PROOF of the facade's in-process entry point (ADR 0150), and
@@ -248,6 +249,42 @@ func request(
 	handler.ServeHTTP(rec, req)
 
 	return rec
+}
+
+// TestAPluginsProofHeaderReachesTheBrowserAllowList is ADR 0444's wiring: a
+// header a plugin declares in its Setup is in the store surface's preflight
+// answer, which the guards are built with only because the plugins are now
+// installed before them. The record namespace is built from the same list, and
+// internal/app holds what it does with it.
+func TestAPluginsProofHeaderReachesTheBrowserAllowList(t *testing.T) {
+	configureInstallation(t)
+	t.Setenv("CORS_ALLOWED_ORIGINS", "https://shop.example")
+
+	handler, stop, err := gobit.New().Use(proofHeaderPlugin{}).InProcess(t.Context())
+	require.NoError(t, err)
+
+	defer stop()
+
+	req := httptest.NewRequest(http.MethodOptions, "/store/v1/acme/requests/req_1/accept", http.NoBody)
+	req.Header.Set("Origin", "https://shop.example")
+	req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	req.Header.Set("Access-Control-Request-Headers", "x-acme-request-key")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusNoContent, rec.Code)
+	assert.Contains(t, rec.Header().Get("Access-Control-Allow-Headers"), "X-Acme-Request-Key")
+}
+
+// proofHeaderPlugin declares one storefront proof header and nothing else.
+type proofHeaderPlugin struct{}
+
+func (proofHeaderPlugin) Name() string { return "acme" }
+
+func (proofHeaderPlugin) Setup(_ context.Context, h *plugin.Host) error {
+	h.RegisterStoreProofHeader("X-Acme-Request-Key")
+
+	return nil
 }
 
 // loyaltyModule is an embedder's module: one store route and no schema.

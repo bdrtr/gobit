@@ -1,6 +1,7 @@
 package http
 
 import (
+	"fmt"
 	"net/http"
 	"slices"
 	"strconv"
@@ -44,7 +45,9 @@ const corsMaxAge = 10 * time.Minute
 // It carries If-None-Match, the request half of the catalog's validator pair
 // (ADR 0391), so a script on an allowed origin can revalidate a read itself,
 // and [OrderTokenHeader], so one can open the order its shopper just placed
-// (ADR 0439).
+// (ADR 0439). The headers a plugin's storefront routes decide access on join
+// it from [GuardOptions.CORSHeaders], declared by the plugin rather than asked
+// for by the browser (ADR 0444).
 var corsAllowedHeaders = []string{
 	"Content-Type",
 	"Accept",
@@ -112,7 +115,14 @@ var corsAllowedMethods = []string{
 // away exactly as before. That is the safe default: an installation opts IN to
 // being callable from other sites.
 func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
+	return cors(allowedOrigins, nil)
+}
+
+// cors is [CORS] allowing the extra request headers beside the core's own:
+// the headers the plugins' storefront routes decide access on (ADR 0444).
+func cors(allowedOrigins, extraHeaders []string) func(http.Handler) http.Handler {
 	allowed := normalizeOrigins(allowedOrigins)
+	headers := strings.Join(allowedHeaders(extraHeaders), ", ")
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -144,7 +154,7 @@ func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
 
 			if isPreflight(r) {
 				w.Header().Set(headerAllowMethods, strings.Join(corsAllowedMethods, ", "))
-				w.Header().Set(headerAllowHeaders, strings.Join(corsAllowedHeaders, ", "))
+				w.Header().Set(headerAllowHeaders, headers)
 				w.Header().Set(headerMaxAge, strconv.Itoa(int(corsMaxAge.Seconds())))
 				WriteJSON(r.Context(), w, http.StatusNoContent, nil)
 
@@ -154,6 +164,28 @@ func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// allowedHeaders is the core's list followed by the extra headers it does not
+// already carry, each once, compared as HTTP compares them. An extra name
+// [CheckStoreProofHeader] refuses is left out rather than written into the
+// preflight answer: "X-A, Authorization" would allow a second header.
+func allowedHeaders(extra []string) []string {
+	out := slices.Clone(corsAllowedHeaders)
+	seen := make(map[string]bool, len(out)+len(extra))
+	for _, h := range out {
+		seen[http.CanonicalHeaderKey(h)] = true
+	}
+	for _, h := range extra {
+		key := http.CanonicalHeaderKey(strings.TrimSpace(h))
+		if seen[key] || CheckStoreProofHeader(key) != nil {
+			continue
+		}
+		seen[key] = true
+		out = append(out, key)
+	}
+
+	return out
 }
 
 // writeAllowHeaders stamps the response as allowed for the origin.
@@ -206,4 +238,50 @@ func normalizeOrigins(origins []string) []string {
 	}
 
 	return out
+}
+
+// reservedProofHeaders are names a plugin may not declare as a storefront
+// proof header beside the core's own list: the trace context, which a client
+// may send fresh on every attempt, and the credentials the store ring does not
+// decide on.
+var reservedProofHeaders = []string{"Traceparent", "Tracestate", "Authorization", "Cookie"}
+
+// CheckStoreProofHeader says why a name cannot be a header a plugin's
+// storefront routes decide access on (ADR 0444), or nil when it can.
+//
+// The name must be an HTTP field name (RFC 9110, section 5.1), so it cannot
+// smuggle a second name into the preflight answer, and it must not be one the
+// core already reads: a declared header keys every store write off a cart, so
+// a request id sent fresh per attempt would turn idempotency off for all of
+// them, and an order's token or the publishable key would move records the
+// core already keys.
+func CheckStoreProofHeader(name string) error {
+	if !fieldName(name) {
+		return fmt.Errorf("%q is not a header field name", name)
+	}
+	key := http.CanonicalHeaderKey(name)
+	for _, own := range slices.Concat(corsAllowedHeaders, reservedProofHeaders) {
+		if http.CanonicalHeaderKey(own) == key {
+			return fmt.Errorf("%s is a header the core reads", key)
+		}
+	}
+
+	return nil
+}
+
+// fieldName reports whether name is one or more token characters.
+func fieldName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, c := range []byte(name) {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case strings.IndexByte("!#$%&'*+-.^_`|~", c) >= 0:
+		default:
+			return false
+		}
+	}
+
+	return true
 }

@@ -61,7 +61,7 @@ func baseConfig() config.Config {
 func guardedRouter(t *testing.T, cfg config.Config, authn corehttp.Authenticator) http.Handler {
 	t.Helper()
 
-	guards, _, err := guardStack(cfg, authn, &adminui.Ring{}, nil, nil, discardLogger(), nil)
+	guards, _, err := guardStack(cfg, authn, &adminui.Ring{}, nil, nil, discardLogger(), nil, nil)
 	require.NoError(t, err, "the guard stack could not be built")
 
 	r := corehttp.NewRouter(corehttp.RouterOptions{
@@ -140,11 +140,11 @@ func TestRateLimitCanBeTurnedOff(t *testing.T) {
 	cfg := baseConfig()
 	cfg.RateLimitPerMinute = 0
 
-	off, _, err := guardStack(cfg, &corehttp.DeferredAuthenticator{}, &adminui.Ring{}, nil, nil, discardLogger(), nil)
+	off, _, err := guardStack(cfg, &corehttp.DeferredAuthenticator{}, &adminui.Ring{}, nil, nil, discardLogger(), nil, nil)
 	require.NoError(t, err)
 
 	cfg.RateLimitPerMinute = 600
-	on, _, err := guardStack(cfg, &corehttp.DeferredAuthenticator{}, &adminui.Ring{}, nil, nil, discardLogger(), nil)
+	on, _, err := guardStack(cfg, &corehttp.DeferredAuthenticator{}, &adminui.Ring{}, nil, nil, discardLogger(), nil, nil)
 	require.NoError(t, err)
 
 	assert.Less(t, len(off), len(on),
@@ -661,7 +661,7 @@ func TestRateLimitOffIsReportedInASharedEnvironment(t *testing.T) {
 	cfg.RateLimitPerMinute = 0
 	catcher := &recordCatcher{}
 
-	_, _, err := guardStack(cfg, validIdentity{}, &adminui.Ring{}, nil, nil, catcher.logger(), nil)
+	_, _, err := guardStack(cfg, validIdentity{}, &adminui.Ring{}, nil, nil, catcher.logger(), nil, nil)
 
 	require.NoError(t, err)
 	assert.Contains(t, catcher.messages(slog.LevelWarn), "the rate limiter was NOT ATTACHED",
@@ -683,7 +683,7 @@ func TestRateLimitWarnsAboutTheKeyBehindAProxy(t *testing.T) {
 	cfg.TrustedProxyHops = 0
 	catcher := &recordCatcher{}
 
-	_, _, err := guardStack(cfg, validIdentity{}, &adminui.Ring{}, nil, nil, catcher.logger(), nil)
+	_, _, err := guardStack(cfg, validIdentity{}, &adminui.Ring{}, nil, nil, catcher.logger(), nil, nil)
 
 	require.NoError(t, err, "the warning must NOT stop startup: zero hops is the right "+
 		"answer for an installation facing the internet directly")
@@ -721,7 +721,7 @@ func TestRateLimitIsSilentWhenSetUpCorrectly(t *testing.T) {
 			apply(&cfg)
 			catcher := &recordCatcher{}
 
-			_, _, err := guardStack(cfg, validIdentity{}, &adminui.Ring{}, nil, nil, catcher.logger(), nil)
+			_, _, err := guardStack(cfg, validIdentity{}, &adminui.Ring{}, nil, nil, catcher.logger(), nil, nil)
 
 			require.NoError(t, err)
 			// The in-memory guard warning is OUTSIDE this gate and keeps being
@@ -862,7 +862,7 @@ func TestGuardStackPassesTheKeyPrefixToTheConstructors(t *testing.T) {
 			cfg.GuardBackend = config.BackendRedis
 			cfg.RedisKeyPrefix = prefix
 
-			_, _, err := guardStack(cfg, &corehttp.DeferredAuthenticator{}, &adminui.Ring{}, unconnectedRedis(), nil, discardLogger(), nil)
+			_, _, err := guardStack(cfg, &corehttp.DeferredAuthenticator{}, &adminui.Ring{}, unconnectedRedis(), nil, discardLogger(), nil, nil)
 
 			require.Error(t, err, "an invalid prefix must reach the constructor and stop startup")
 			assert.Equal(t, "redisguard_invalid_config", errors.CodeOf(err),
@@ -883,7 +883,7 @@ func TestGuardStackBuildsTheRedisBackend(t *testing.T) {
 	cfg.GuardBackend = config.BackendRedis
 	cfg.RedisKeyPrefix = "gobit-staging"
 
-	guards, _, err := guardStack(cfg, &corehttp.DeferredAuthenticator{}, &adminui.Ring{}, unconnectedRedis(), nil, discardLogger(), nil)
+	guards, _, err := guardStack(cfg, &corehttp.DeferredAuthenticator{}, &adminui.Ring{}, unconnectedRedis(), nil, discardLogger(), nil, nil)
 
 	require.NoError(t, err, "the redis backend must be buildable with a valid prefix")
 	assert.NotEmpty(t, guards, "the guard stack must not come back empty")
@@ -902,7 +902,7 @@ func TestGuardStackStopsWhenRedisIsChosenWithoutAClient(t *testing.T) {
 	cfg := baseConfig()
 	cfg.GuardBackend = "redis"
 
-	_, _, err := guardStack(cfg, &corehttp.DeferredAuthenticator{}, &adminui.Ring{}, nil, nil, discardLogger(), nil)
+	_, _, err := guardStack(cfg, &corehttp.DeferredAuthenticator{}, &adminui.Ring{}, nil, nil, discardLogger(), nil, nil)
 
 	require.Error(t, err, "the redis backend must not be built without a Redis client")
 	assert.Contains(t, err.Error(), "GUARD_BACKEND")
@@ -928,7 +928,7 @@ func TestGuardStackReportsTheIdempotencyBudget(t *testing.T) {
 	cfg.IdempotencyMaxMemoryBytes = 12345678
 	catcher := &recordCatcher{}
 
-	_, _, err := guardStack(cfg, validIdentity{}, &adminui.Ring{}, nil, nil, catcher.logger(), nil)
+	_, _, err := guardStack(cfg, validIdentity{}, &adminui.Ring{}, nil, nil, catcher.logger(), nil, nil)
 
 	require.NoError(t, err)
 	assert.Contains(t, catcher.messages(slog.LevelInfo), message,
@@ -951,7 +951,7 @@ func TestGuardStackReportsTheIdempotencyBudget(t *testing.T) {
 	shared.RedisKeyPrefix = "gobit-staging"
 	sharedCatcher := &recordCatcher{}
 
-	_, _, err = guardStack(shared, validIdentity{}, &adminui.Ring{}, unconnectedRedis(), nil, sharedCatcher.logger(), nil)
+	_, _, err = guardStack(shared, validIdentity{}, &adminui.Ring{}, unconnectedRedis(), nil, sharedCatcher.logger(), nil, nil)
 
 	require.NoError(t, err)
 	assert.NotContains(t, sharedCatcher.messages(slog.LevelInfo), message,
@@ -1135,7 +1135,7 @@ func (validIdentity) AuthenticateStore(_ context.Context, _ string) (corehttp.Pr
 func TestGuardStackExemptsCartCreationFromIdempotency(t *testing.T) {
 	t.Parallel()
 
-	guards, _, err := guardStack(baseConfig(), validIdentity{}, &adminui.Ring{}, nil, nil, discardLogger(), nil)
+	guards, _, err := guardStack(baseConfig(), validIdentity{}, &adminui.Ring{}, nil, nil, discardLogger(), nil, nil)
 	require.NoError(t, err)
 
 	created := 0
@@ -1172,6 +1172,60 @@ func TestGuardStackExemptsCartCreationFromIdempotency(t *testing.T) {
 	assert.Equal(t, 2, created, "both requests must reach the handler")
 }
 
+// TestGuardStackKeysAStoreWriteOnAPluginsProofHeader is ADR 0444 on the real
+// stack: a store write a plugin's header opened is replayed to the caller
+// holding the same header and run again for one holding another, and a browser
+// on an allowed origin is allowed to send it.
+//
+// The handler answers a different body each time, so a replay to the second
+// caller would hand them the first one's answer.
+func TestGuardStackKeysAStoreWriteOnAPluginsProofHeader(t *testing.T) {
+	t.Parallel()
+
+	const header = "X-Service-Request-Key"
+	cfg := baseConfig()
+	cfg.CORSAllowedOrigins = []string{"https://shop.example"}
+	guards, _, err := guardStack(cfg, validIdentity{}, &adminui.Ring{}, nil, nil, discardLogger(), nil, []string{header})
+	require.NoError(t, err)
+
+	ran := 0
+	r := corehttp.NewRouter(corehttp.RouterOptions{Version: "test", Middlewares: guards})
+	r.Post("/store/v1/acme/requests/req_1/accept", func(w http.ResponseWriter, _ *http.Request) {
+		ran++
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprintf(w, `{"data":{"run":%d}}`, ran)
+	})
+	accept := func(key string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/store/v1/acme/requests/req_1/accept", strings.NewReader(`{}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(corehttp.PublishableKeyHeader, "pk_test")
+		req.Header.Set(corehttp.IdempotencyKeyHeader, "the-same-key")
+		req.Header.Set(header, key)
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+
+		return rec
+	}
+
+	require.Equal(t, http.StatusOK, accept("holder").Code)
+	stranger := accept("stranger")
+	assert.Empty(t, stranger.Header().Get(corehttp.IdempotencyReplayedHeader), "the holder's record was replayed to a stranger")
+	assert.Contains(t, stranger.Body.String(), `"run":2`)
+	again := accept("holder")
+	assert.Equal(t, "true", again.Header().Get(corehttp.IdempotencyReplayedHeader), "the holder's retry was run again")
+	assert.Contains(t, again.Body.String(), `"run":1`)
+
+	pre := httptest.NewRequest(http.MethodOptions, "/store/v1/acme/requests/req_1/accept", http.NoBody)
+	pre.Header.Set("Origin", "https://shop.example")
+	pre.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	pre.Header.Set("Access-Control-Request-Headers", strings.ToLower(header))
+	allowed := httptest.NewRecorder()
+	r.ServeHTTP(allowed, pre)
+	assert.Contains(t, allowed.Header().Get("Access-Control-Allow-Headers"), header)
+	assert.Contains(t, allowed.Header().Get("Access-Control-Allow-Headers"), corehttp.OrderTokenHeader,
+		"the plugin's header replaced the core's list")
+}
+
 // TestGuardStackExemptsTheGraphQLEndpointFromIdempotency proves the exemption
 // is applied in the REAL stack and read from the module's CONSTANT.
 //
@@ -1188,7 +1242,7 @@ func TestGuardStackExemptsCartCreationFromIdempotency(t *testing.T) {
 func TestGuardStackExemptsTheGraphQLEndpointFromIdempotency(t *testing.T) {
 	t.Parallel()
 
-	guards, _, err := guardStack(baseConfig(), validIdentity{}, &adminui.Ring{}, nil, nil, discardLogger(), nil)
+	guards, _, err := guardStack(baseConfig(), validIdentity{}, &adminui.Ring{}, nil, nil, discardLogger(), nil, nil)
 	require.NoError(t, err)
 
 	failing := true
@@ -1346,7 +1400,7 @@ func TestThePanelSessionReachesTheAdminAPIOnlyUnderTheOriginCheck(t *testing.T) 
 	ring := &adminui.Ring{}
 	ring.Bind(panel)
 
-	guards, _, err := guardStack(baseConfig(), identity, ring, nil, nil, discardLogger(), nil)
+	guards, _, err := guardStack(baseConfig(), identity, ring, nil, nil, discardLogger(), nil, nil)
 	require.NoError(t, err)
 
 	r := corehttp.NewRouter(corehttp.RouterOptions{Version: "test", Middlewares: guards})
@@ -1608,7 +1662,7 @@ func TestEverythingUnderThePanelsPrefixCarriesThePolicy(t *testing.T) {
 	require.NoError(t, c.Provide(adminui.InteropAuth, identity))
 
 	ring := &adminui.Ring{}
-	guards, _, err := guardStack(baseConfig(), identity, ring, nil, nil, discardLogger(), nil)
+	guards, _, err := guardStack(baseConfig(), identity, ring, nil, nil, discardLogger(), nil, nil)
 	require.NoError(t, err)
 
 	r := corehttp.NewRouter(corehttp.RouterOptions{Version: "test", Middlewares: guards})

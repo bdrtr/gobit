@@ -12,6 +12,7 @@ import (
 	"encoding/base64"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/bdrtr/gobit/core/errors"
 	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/http/redisguard"
+	coreplugin "github.com/bdrtr/gobit/core/plugin"
 	"github.com/bdrtr/gobit/internal/adminui"
 	"github.com/bdrtr/gobit/internal/core/config"
 	authapi "github.com/bdrtr/gobit/internal/modules/auth/api"
@@ -110,6 +112,7 @@ func guardStack(
 	pool *db.Pool,
 	log *slog.Logger,
 	identity corehttp.Identity,
+	proofHeaders []string,
 ) ([]func(http.Handler) http.Handler, *corehttp.CallbackRegistry, error) {
 	warnAboutRateLimit(cfg, log)
 	warnAboutCatalogCache(cfg, log)
@@ -125,7 +128,8 @@ func guardStack(
 	}
 
 	opts := guardOptions(cfg, authn, auditor, log)
-	opts.IdempotencyProof = storeIdempotencyProof(identity)
+	opts.IdempotencyProof = storeIdempotencyProof(identity, proofHeaders)
+	opts.CORSHeaders = proofHeaders
 
 	if cfg.GuardBackend == config.BackendRedis {
 		if rdb == nil {
@@ -279,7 +283,8 @@ func guardOptions(
 
 // storeIdempotencyProof is what a storefront request proves beyond the
 // publishable key, for the store ring's record namespace (ADR 0439): the order
-// access token it presents and the customer the bound identity proves.
+// access token it presents, the customer the bound identity proves, and the
+// value of each header a plugin's routes decide access on (ADR 0444).
 //
 // Both are proofs a route under the store prefix decides on, and neither is in
 // the path: an order's routes open to the token or the customer, and a
@@ -297,7 +302,11 @@ func guardOptions(
 // write with it — the class the order routes answer an outage with — rather
 // than run it unrecorded; identity nil, as the guard-stack tests build it,
 // proves nobody.
-func storeIdempotencyProof(identity corehttp.Identity) corehttp.IdempotencyProofFunc {
+//
+// A plugin's header enters after the core's two, by name, and only when the
+// request carries it, so a request presenting none of them keeps the namespace
+// it had before plugins could declare one.
+func storeIdempotencyProof(identity corehttp.Identity, headers []string) corehttp.IdempotencyProofFunc {
 	return func(r *http.Request) (string, error) {
 		if strings.HasPrefix(r.URL.Path, cartapi.StoreCartsPath+"/") {
 			return "", nil
@@ -306,13 +315,48 @@ func storeIdempotencyProof(identity corehttp.Identity) corehttp.IdempotencyProof
 		if err != nil {
 			return "", err
 		}
+		var proven strings.Builder
 		token := r.Header.Get(corehttp.OrderTokenHeader)
-		if token == "" && customer == "" {
-			return "", nil
+		if token != "" || customer != "" {
+			proven.WriteString("order-token:" + token + "\x00customer:" + customer)
+		}
+		for _, name := range headers {
+			if value := r.Header.Get(name); value != "" {
+				proven.WriteString("\x00" + name + ":" + value)
+			}
 		}
 
-		return "order-token:" + token + "\x00customer:" + customer, nil
+		return proven.String(), nil
 	}
+}
+
+// codeProofHeaderInvalid refuses a storefront proof header a plugin declared
+// (ADR 0444).
+const codeProofHeaderInvalid = "plugin_proof_header_invalid"
+
+// pluginProofHeaders is the headers the plugins' storefront routes decide
+// access on, canonical, each once and in a fixed order, so the store ring's
+// namespace does not depend on the order plugins were installed in.
+//
+// A name [corehttp.CheckStoreProofHeader] refuses stops the installation with
+// the plugin's name, rather than being dropped into a server whose browser
+// storefront cannot send it and whose records are not keyed on it. A nil host
+// is no plugins.
+func pluginProofHeaders(host *coreplugin.Host) ([]string, error) {
+	if host == nil {
+		return nil, nil
+	}
+	var out []string
+	for _, h := range host.StoreProofHeaders() {
+		if err := corehttp.CheckStoreProofHeader(h.Name); err != nil {
+			return nil, errors.Invalid(codeProofHeaderInvalid,
+				"the storefront proof header declared by the %s plugin is refused: %v", h.PluginName(), err)
+		}
+		out = append(out, http.CanonicalHeaderKey(h.Name))
+	}
+	slices.Sort(out)
+
+	return slices.Compact(out), nil
 }
 
 // newCallbackRegistry gives the inbound-callback ring the same guard services

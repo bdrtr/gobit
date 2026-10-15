@@ -442,9 +442,9 @@ type application struct {
 	panelRing *adminui.Ring
 	authn     *corehttp.DeferredAuthenticator
 	// callbacks holds the inbound provider endpoints. It is a third deferred
-	// binding: the plugins that own the callbacks are installed after the
-	// router is built, so the registry is created here, filled during
-	// Registry.Start and mounted before the plugin routes.
+	// binding: the plugins that own the callbacks register them at
+	// Registry.Start, after the router is built, so the registry is created
+	// here, filled at Start and mounted before the plugin routes.
 	callbacks *corehttp.CallbackRegistry
 	// schema is the document the installation serves at /openapi.json. The
 	// assembly fills it; an opened installation hands it to its caller.
@@ -583,16 +583,37 @@ func openApplication(
 	// is REJECTED.
 	panelRing := &adminui.Ring{}
 
+	registry := module.NewRegistry(log, func(ctx context.Context, src fs.FS, owner string) error {
+		return db.Migrate(ctx, cfg.DatabaseURL, src, owner)
+	})
+	registerModules(registry, cfg, log, opts.Modules)
+
+	// The plugins are installed BEFORE the modules: a module brought in by a
+	// plugin must be able to go through the Register/migration/route cycle too.
+	// And before the guards: the store ring's CORS list and record namespace
+	// carry the headers a plugin's storefront routes decide access on, declared
+	// in its Setup (ADR 0444). Nothing a plugin queues needs the guards; its
+	// callbacks reach their registry at Start.
+	pluginRegistry, host, err := installPlugins(ctx, cfg, c, registry, bus, log, opts.Plugins)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	proofHeaders, err := pluginProofHeaders(host)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	// The callback registry is the third object born before the router. Its
-	// routes come from plugins that do not exist yet, so it guards nothing
-	// until it is mounted — and refuses to recognize a path before then, which
+	// routes come from the plugins' registrations, applied at Start, so it
+	// guards nothing until it is mounted — and refuses to recognize a path before then, which
 	// is what makes a callback arriving mid-startup fail closed.
 	// The storefront's customer identity, resolved when the first keyed store
 	// write arrives, after the modules registered it: the store ring keys its
 	// records on the customer it proves (ADR 0439).
 	storeIdentity := identity.New(c, log, "guards", codeGuardIdentitySetup,
 		"no customer identity is bound; storefront idempotency records are keyed on an order's token alone")
-	guards, callbacks, err := guardStack(cfg, authn, panelRing, redisClient, pool, log, storeIdentity)
+	guards, callbacks, err := guardStack(cfg, authn, panelRing, redisClient, pool, log, storeIdentity, proofHeaders)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -616,18 +637,6 @@ func openApplication(
 		TelemetryService:     cfg.ServiceName,
 		Middlewares:          guards,
 	})
-
-	registry := module.NewRegistry(log, func(ctx context.Context, src fs.FS, owner string) error {
-		return db.Migrate(ctx, cfg.DatabaseURL, src, owner)
-	})
-	registerModules(registry, cfg, log, opts.Modules)
-
-	// The plugins are installed BEFORE the modules: a module brought in by a
-	// plugin must be able to go through the Register/migration/route cycle too.
-	pluginRegistry, host, err := installPlugins(ctx, cfg, c, registry, bus, log, opts.Plugins)
-	if err != nil {
-		return nil, nil, err
-	}
 
 	// The reporter is bound between Install and Bootstrap, which is the only
 	// window that works. Earlier there is no plugin to provide one; later the

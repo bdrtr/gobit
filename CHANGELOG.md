@@ -9,6 +9,19 @@ design. It is fixed with `1.0.0`.
 
 ## [Unreleased]
 
+### Added
+
+- **A plugin's storefront key is the core's proof** (ADR 0444, D299). A
+  plugin declares a header its storefront routes decide access on with
+  `Host.RegisterStoreProofHeader` in `Setup`. A browser on a
+  `CORS_ALLOWED_ORIGINS` site may then send it, and the store ring keys its
+  idempotency records on its value, so a recorded answer is replayed only to
+  a caller presenting the same key. A name `corehttp.CheckStoreProofHeader`
+  refuses (not a header field name, or one the core reads) stops the
+  installation (`plugin_proof_header_invalid`). An embedder building the
+  guards itself passes the names in `GuardOptions.CORSHeaders`. The plugins
+  are now installed before the guards are built.
+
 ## [0.13.2] — 2026-10-15
 
 A security release of `contrib/identity-session`; the importable packages,
