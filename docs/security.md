@@ -87,6 +87,22 @@ The order of the guard stack is deliberate:
    `POST /store/v1/carts` — and the rationale for both is in the "Hardening"
    section below.
 
+**A route may take a quota of its own**, after the whole-API limit and before
+identity ([ADR 0452](adr/0452-a-route-takes-a-quota-and-signing-in-has-one.md)).
+Signing in has one by default: `POST /admin/v1/auth/login`,
+`POST /admin/v1/auth/accept-invitation` and the panel's form share
+`ADMIN_SIGN_IN_LIMIT` per `ADMIN_SIGN_IN_WINDOW`, 20 per 15 minutes per client.
+The account lock bounds the guesses at one account; this bounds one client
+spreading them over many. A plugin declares others, on any bound route, with
+`Host.RegisterRouteQuota`.
+
+**The admin surface answers a browser only on a listed site**
+([ADR 0451](adr/0451-a-panel-on-its-own-host-calls-the-admin-api.md)). With
+`ADMIN_CORS_ALLOWED_ORIGINS` empty, the default, it writes no CORS header. A
+listed site's page may send its own bearer token and read the answers; no
+credentials are ever allowed, so the panel's session cookie is never ridden,
+and `*` is refused.
+
 A publishable key is **not a secret**: it is visible in the browser and its only
 job is to bind the request to a sales channel — it carries no authority.
 
@@ -457,6 +473,7 @@ the obvious version of it is not enough:
 | Component | Setting | If not configured |
 |---|---|---|
 | Rate limit | `RATE_LIMIT_PER_MINUTE`, `TRUSTED_PROXY_HOPS` | no-op (passes through) |
+| Route quotas | `ADMIN_SIGN_IN_LIMIT`, `ADMIN_SIGN_IN_WINDOW`, `Host.RegisterRouteQuota` | no-op (passes through) |
 | Idempotency | `IDEMPOTENCY_TTL`, `IDEMPOTENCY_MAX_MEMORY_BYTES` | no-op (passes through) |
 | Identity | `JWT_SECRET` | **rejects every request** |
 

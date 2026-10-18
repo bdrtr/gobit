@@ -134,15 +134,19 @@ type GuardOptions struct {
 	// CORSOrigins are the sites allowed to call the STORE surface from a
 	// browser; empty means no CORS at all.
 	//
-	// It covers the store surface only. The admin surface authenticates with a
-	// bearer token, and ADR 0011 refused CORS there precisely because the token
-	// would then have to live in a browser.
+	// It covers the store surface only; the admin surface's list is
+	// [GuardOptions.AdminCORSOrigins].
 	CORSOrigins []string
 	// CORSHeaders are the request headers a browser on those sites may send
 	// beside the core's own list: the headers the plugins' storefront routes
 	// decide access on (ADR 0444). A name [CheckStoreProofHeader] refuses is
 	// left out.
 	CORSHeaders []string
+	// AdminCORSOrigins are the sites whose pages may read the ADMIN surface's
+	// answers from a browser, each sending its own bearer token; empty means
+	// no CORS on the admin surface (ADR 0451). Credentials are never allowed
+	// and the wildcard is dropped; see [AdminCORS].
+	AdminCORSOrigins []string
 	// AdminExempt are the full paths on the admin surface that are EXEMPT from
 	// authentication — in practice only the login endpoint.
 	//
@@ -152,6 +156,10 @@ type GuardOptions struct {
 	AdminExempt []string
 	// Limiter is the rate limiter; with nil no rate limit is installed.
 	Limiter RateLimiter
+	// RouteQuotas are the limits on single routes, counted per client by
+	// [GuardOptions.LimitKey] after the whole-API limit and before identity
+	// (ADR 0452). They apply whether or not [GuardOptions.Limiter] is set.
+	RouteQuotas []RouteQuota
 	// LimitKey produces the key identifying the client; nil means [ClientIPKey].
 	//
 	// A function looking at the caller's IDENTITY does not fit here: this ring runs
@@ -257,7 +265,7 @@ func APIGuards(opts GuardOptions) []func(http.Handler) http.Handler {
 		store = DefaultStorePrefix
 	}
 
-	stack := make([]func(http.Handler) http.Handler, 0, 7)
+	stack := make([]func(http.Handler) http.Handler, 0, 9)
 
 	// CORS goes FIRST, and the order is load-bearing: a preflight carries no
 	// credentials and no idempotency key, so a browser asking permission would
@@ -266,6 +274,11 @@ func APIGuards(opts GuardOptions) []func(http.Handler) http.Handler {
 	// the answer about the POLICY rather than about the missing key.
 	if len(opts.CORSOrigins) > 0 {
 		stack = append(stack, Scoped(store, nil, cors(opts.CORSOrigins, opts.CORSHeaders)))
+	}
+	// The admin surface's own list, scoped to its prefix and answered before
+	// the identity guard for the same reason (ADR 0451).
+	if len(opts.AdminCORSOrigins) > 0 {
+		stack = append(stack, Scoped(admin, nil, AdminCORS(opts.AdminCORSOrigins)))
 	}
 
 	// The audit goes on the ADMIN prefix and OUTSIDE the identity guard, so a
@@ -297,6 +310,18 @@ func APIGuards(opts GuardOptions) []func(http.Handler) http.Handler {
 		for _, prefix := range opts.OpenPrefixes {
 			stack = append(stack, Scoped(prefix, nil, limit))
 		}
+	}
+
+	// A route's own quota comes after the whole-API limit and, like it,
+	// before identity, so a refused sign-in costs no password hash. It is
+	// unscoped: each quota names its routes, and a route of the panel's
+	// counts as one of the API's (ADR 0452).
+	if len(opts.RouteQuotas) > 0 {
+		limitKey := opts.LimitKey
+		if limitKey == nil {
+			limitKey = ClientIPKey
+		}
+		stack = append(stack, RouteQuotas(opts.RouteQuotas, limitKey))
 	}
 
 	stack = append(stack,

@@ -40,6 +40,7 @@ var envKeys = []string{
 	"PAYMENT_OFFLINE_WAIT_DAYS",
 	"CART_RETENTION_DAYS",
 	"DB_MAX_CONNS", "DB_MIN_CONNS", "ADMIN_SECOND_FACTOR_REQUIRED_FROM",
+	"ADMIN_CORS_ALLOWED_ORIGINS", "ADMIN_SIGN_IN_LIMIT", "ADMIN_SIGN_IN_WINDOW",
 }
 
 // productionJWTSecret is the 32-character signing secret used in production scenarios.

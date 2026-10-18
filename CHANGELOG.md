@@ -9,6 +9,24 @@ design. It is fixed with `1.0.0`.
 
 ## [Unreleased]
 
+### Security
+
+- **A mailed invitation no longer outlives a password set another way**
+  (ADR 0453, D308). A password written for a user, through
+  `POST /admin/v1/users/{id}/password` or by accepting the invitation, now
+  removes the user's pending invitation in the same transaction; before, the
+  mailed token could set the password again for up to seventy-two hours after
+  the person chose theirs. `DELETE /admin/v1/users/{id}/invitations` (under
+  `admin`) withdraws a pending one: 204, or 404 `auth_invitation_not_pending`.
+- **Signing in has a per-client quota** (ADR 0452, D307).
+  `POST /admin/v1/auth/login`, `POST /admin/v1/auth/accept-invitation` and the
+  panel's sign-in form share one quota, `ADMIN_SIGN_IN_LIMIT` requests per
+  `ADMIN_SIGN_IN_WINDOW`, 20 per 15 minutes by default, answered 429
+  `rate_limited` with `Retry-After` before identity; `0` turns it off. It is
+  keyed like the whole-API limit, so behind a reverse proxy set
+  `TRUSTED_PROXY_HOPS`, or every operator shares one bucket (a shared
+  environment warns at startup).
+
 ### Added
 
 - **A shipping quote names the cart it prices** (ADR 0445, D300). A
@@ -59,6 +77,31 @@ design. It is fixed with `1.0.0`.
   000045 adds `order_transfers`, declared to the data subject sweep. A
   notification provider needs the new template for the request to be
   delivered; a request whose mail fails is withdrawn and answered 503.
+- **A panel on its own host calls the admin API** (ADR 0451, D306).
+  `ADMIN_CORS_ALLOWED_ORIGINS` lists the sites whose pages may call
+  `/admin/v1` with their own bearer token; preflights are answered before
+  identity, credentials are never allowed, and `*` or an entry that is not an
+  origin is refused at startup. Empty, the default, keeps the admin surface
+  without CORS. `GuardOptions.AdminCORSOrigins` and `corehttp.AdminCORS` for
+  an embedder building the guards itself.
+- **A plugin puts a quota on any route** (ADR 0452, D307).
+  `Host.RegisterRouteQuota` declares a per-client limit on routes named as
+  `/openapi.json` prints them, a core route's included, counted on the guard
+  backend after the whole-API limit and before identity. A quota with a name,
+  route, limit or window the installation cannot hold, or naming a route
+  nothing binds once everything is bound, stops the installation
+  (`route_quota_invalid`). `GuardOptions.RouteQuotas`, `corehttp.RouteQuotas`,
+  `corehttp.ParseQuotaRoute` and `corehttp.CheckRouteQuotaName` for an
+  embedder building the guards itself.
+- **The person signed in reads their own name** (ADR 0454, D309).
+  `GET /admin/v1/auth/me` answers a user's own `email`, `first_name` and
+  `last_name`; an API key's answer carries none of them.
+- **A secret key's privileges are revised in place** (ADR 0455, D310).
+  `PUT /admin/v1/api-keys/{id}/scopes` with `{"scopes_read": [...], "scopes":
+  [...]}` writes a live secret key's privileges under `admin` while it holds,
+  as a set, those read (409 `auth_api_key_scopes_revised` otherwise); the
+  secret is unchanged and every copy of it holds the new set from its next
+  request.
 
 ## [0.14.0] — 2026-10-15
 

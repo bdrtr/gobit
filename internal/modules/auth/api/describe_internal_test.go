@@ -223,6 +223,9 @@ func adminEndpoints() []endpointExpectation {
 			method: http.MethodPost, path: "/admin/v1/users/{id}/invitations", status: "204",
 		},
 		{
+			method: http.MethodDelete, path: "/admin/v1/users/{id}/invitations", status: "204",
+		},
+		{
 			method: http.MethodPost, path: MFAEnrolPath, status: "200",
 			request: confirmMFARequest{}, optionalBody: true, response: mfaEnrollmentDTO{},
 		},
@@ -299,6 +302,10 @@ func adminEndpoints() []endpointExpectation {
 			response: fullAPIKey(),
 		},
 		{
+			method: http.MethodPut, path: "/admin/v1/api-keys/{id}/scopes", status: "200",
+			request: reviseKeyScopesRequest{}, response: fullAPIKey(),
+		},
+		{
 			method: http.MethodGet, path: "/admin/v1/api-keys/{id}/sales-channels",
 			status: "200", response: fullSalesChannel(), list: true,
 		},
@@ -337,7 +344,9 @@ func adminEndpoints() []endpointExpectation {
 // fullPrincipal produces an identity record whose omitempty field is written
 // too.
 func fullPrincipal() principalResponse {
-	return principalResponse{SalesChannelIDs: []string{"sc_1"}}
+	return principalResponse{
+		SalesChannelIDs: []string{"sc_1"}, Email: "ada@example.test", FirstName: "Ada", LastName: "Lovelace",
+	}
 }
 
 // fullUser produces a user record whose omitempty field is written too.

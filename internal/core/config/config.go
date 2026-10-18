@@ -584,13 +584,23 @@ type Config struct {
 	//
 	// The store surface authenticates with a publishable key, which is not a
 	// secret and is expected to live in a browser. The admin surface
-	// authenticates with a bearer token, and ADR 0011 refused CORS there for
-	// exactly that reason — the token would have to be kept in a browser.
+	// authenticates with a bearer token and has a list of its own,
+	// [Config.AdminCORSAllowedOrigins], which takes no wildcard (ADR 0451).
 	//
 	// "*" is accepted and means every site. It is honest for a storefront API
 	// that is public by design; credentials are never allowed either way, so
 	// the wildcard cannot be ridden by an ambient cookie.
 	CORSAllowedOrigins []string `env:"CORS_ALLOWED_ORIGINS" envSeparator:","`
+	// AdminCORSAllowedOrigins are the sites whose pages may call the ADMIN
+	// surface from a browser, each with its own bearer token (ADR 0451): a
+	// panel served from its own host. Empty, the default, means no CORS on
+	// the admin surface.
+	//
+	// Each entry is an origin, scheme and host and an optional port, and "*"
+	// is refused: a page that may read admin answers is one an operator
+	// named. Credentials are never allowed, so the panel's session cookie is
+	// never ridden.
+	AdminCORSAllowedOrigins []string `env:"ADMIN_CORS_ALLOWED_ORIGINS" envSeparator:","`
 
 	// LogLevel is the structured log level: debug | info | warn | error.
 	LogLevel string `env:"LOG_LEVEL" envDefault:"info"`
@@ -748,6 +758,18 @@ type Config struct {
 	// the reasoning and why startup does not stop are in the
 	// [Config.RateLimitKeyIsPerClient] godoc.
 	TrustedProxyHops int `env:"TRUSTED_PROXY_HOPS" envDefault:"0"`
+	// AdminSignInLimit is how many requests one client may make to the admin
+	// sign-in routes, signing in and accepting an invitation, the panel's form
+	// and the API's together, per [Config.AdminSignInWindow] (ADR 0452). Zero
+	// turns it off; a negative value is refused.
+	//
+	// The default stands beside the account lock: five failures lock one
+	// account for fifteen minutes, and twenty per fifteen minutes lets one
+	// client try at most four accounts' worth of guesses per lock, while a
+	// person who mistypes meets their own account's lock first.
+	AdminSignInLimit int `env:"ADMIN_SIGN_IN_LIMIT" envDefault:"20"`
+	// AdminSignInWindow is the period [Config.AdminSignInLimit] renews over.
+	AdminSignInWindow time.Duration `env:"ADMIN_SIGN_IN_WINDOW" envDefault:"15m"`
 	// IdempotencyTTL is how long idempotency records are kept.
 	IdempotencyTTL time.Duration `env:"IDEMPOTENCY_TTL" envDefault:"24h"`
 	// IdempotencyMaxMemoryBytes is the byte budget the IN-MEMORY idempotency store may

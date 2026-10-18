@@ -182,6 +182,13 @@ func (d *fakeRepo) MarkAPIKeyUsed(_ context.Context, _ string, _, _ time.Time) e
 	return nil
 }
 
+func (d *fakeRepo) ReviseAPIKeyScopes(
+	_ context.Context, id string, _, next []string, _ time.Time,
+) (models.APIKey, bool, error) {
+	d.writeCount++
+	return models.APIKey{ID: id, Type: models.APIKeySecret, Scopes: next}, true, nil
+}
+
 func (d *fakeRepo) LinkSalesChannel(_ context.Context, _, _ string, _ time.Time) error {
 	d.writeCount++
 	return nil
@@ -295,6 +302,21 @@ func (d *fakeRepo) TakeInvitation(
 	}
 
 	return row, nil
+}
+
+// WithdrawInvitation removes the user's row, whatever its token, and answers
+// it, expired or not, as the real statement does.
+func (d *fakeRepo) WithdrawInvitation(_ context.Context, userID string) (models.UserInvitation, error) {
+	for hash, row := range d.invites.byHash {
+		if row.UserID == userID {
+			delete(d.invites.byHash, hash)
+			d.writeCount++
+
+			return row, nil
+		}
+	}
+
+	return models.UserInvitation{}, repository.ErrNoInvitation
 }
 
 // --- second factor ------------------------------------------------------------

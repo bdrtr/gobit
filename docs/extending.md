@@ -105,6 +105,29 @@ store write that carries it, so a name that is not a header field name, or one
 the core reads (`X-Request-Id`, `X-Order-Token`, the trace context and the
 like), stops the installation with the plugin's name.
 
+A plugin puts a per-client quota on routes, its own or the core's, by
+declaring it in `Setup`
+([ADR 0452](adr/0452-a-route-takes-a-quota-and-signing-in-has-one.md)):
+
+```go
+h.RegisterRouteQuota(coreplugin.RouteQuota{
+	Name:   "acme.returns",
+	Routes: []string{"POST /store/v1/orders/{id}/returns"},
+	Limit:  5,
+	Window: time.Minute,
+})
+```
+
+Each route is its method and its pattern as `/openapi.json` prints it, and the
+routes of one quota share one count. The guard stack counts it after the
+whole-API limit and before identity, keyed by the client as that limit is and
+on the same backend, and answers a spent one 429 `rate_limited` with
+`Retry-After`. Two quotas on a route are both spent. Prefix the name with the
+plugin's: a name another quota has, `admin-sign-in` among them, a catch-all, a
+limit or window that is not positive, and a route nothing binds once every
+route is bound stop the installation (`route_quota_invalid`), so a route
+renamed under the quota cannot leave it counting nothing.
+
 gobit binds `/admin/v1`, `/admin/ui` and their catch-alls itself, so routes at
 the root, a page router like `/{category}/{product}` or a single-page app on
 `/*`, keep their own paths and answer none under those prefixes; neither does

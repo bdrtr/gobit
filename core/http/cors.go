@@ -96,9 +96,10 @@ var corsAllowedMethods = []string{
 //
 // ADR 0011 rejected CORS, and this does not overturn that rejection: it refused
 // CORS as a way to ship the ADMIN PANEL as a separate application, "because a
-// token would have to be kept in the browser". The admin surface still gets no
-// CORS here, for exactly that reason. What is opened is the surface whose key
-// was designed to live in a browser.
+// token would have to be kept in the browser". This function opens only the
+// surface whose key was designed to live in a browser; the admin surface has
+// its own list, [AdminCORS], for a panel that keeps its token in its page
+// already (ADR 0451).
 //
 // # Credentials are NOT allowed, and that is the CSRF decision
 //
@@ -121,8 +122,16 @@ func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
 // cors is [CORS] allowing the extra request headers beside the core's own:
 // the headers the plugins' storefront routes decide access on (ADR 0444).
 func cors(allowedOrigins, extraHeaders []string) func(http.Handler) http.Handler {
-	allowed := normalizeOrigins(allowedOrigins)
-	headers := strings.Join(allowedHeaders(extraHeaders), ", ")
+	return corsPolicy(normalizeOrigins(allowedOrigins), allowedHeaders(extraHeaders), corsExposedHeaders)
+}
+
+// corsPolicy answers preflights from the allowed origins with the request
+// headers it names, and stamps their responses with the headers it exposes. The
+// store surface's policy and the admin surface's (ADR 0451) differ only in
+// those three lists.
+func corsPolicy(allowed, requestHeaders, exposedHeaders []string) func(http.Handler) http.Handler {
+	headers := strings.Join(requestHeaders, ", ")
+	exposed := strings.Join(exposedHeaders, ", ")
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -150,7 +159,7 @@ func cors(allowedOrigins, extraHeaders []string) func(http.Handler) http.Handler
 				return
 			}
 
-			writeAllowHeaders(w, origin)
+			writeAllowHeaders(w, origin, exposed)
 
 			if isPreflight(r) {
 				w.Header().Set(headerAllowMethods, strings.Join(corsAllowedMethods, ", "))
@@ -194,9 +203,9 @@ func allowedHeaders(extra []string) []string {
 // configured. Both are valid without credentials, but echoing keeps the answer
 // specific — a cache keyed by Vary then stores one response per origin instead
 // of one shared "*" that a later, stricter policy would not invalidate.
-func writeAllowHeaders(w http.ResponseWriter, origin string) {
+func writeAllowHeaders(w http.ResponseWriter, origin, exposed string) {
 	w.Header().Set(headerAllowOrigin, origin)
-	w.Header().Set(headerExposeHeaders, strings.Join(corsExposedHeaders, ", "))
+	w.Header().Set(headerExposeHeaders, exposed)
 }
 
 // isPreflight reports whether the request is a CORS preflight.

@@ -103,6 +103,8 @@ type Auth interface {
 	InviteUser(ctx context.Context, userID, invitedBy string) error
 	// AcceptInvitation spends an invitation and sets the user's first password.
 	AcceptInvitation(ctx context.Context, token, password string) error
+	// WithdrawInvitation voids the user's pending invitation (ADR 0453).
+	WithdrawInvitation(ctx context.Context, userID, withdrawnBy string) error
 	// Login produces a session token from an email, a password and — when the
 	// account holds a proven second factor — the code its authenticator shows
 	// (ADR 0147). An empty code from such an account is refused with
@@ -158,6 +160,9 @@ type Auth interface {
 	ListAPIKeys(ctx context.Context, in service.ListAPIKeysInput) (service.Page[models.APIKey], error)
 	// RevokeAPIKey revokes the key.
 	RevokeAPIKey(ctx context.Context, id, revokedBy string) (models.APIKey, error)
+	// ReviseAPIKeyScopes writes a secret key's privileges from the ones read
+	// (ADR 0455).
+	ReviseAPIKeyScopes(ctx context.Context, id string, read, next []string) (models.APIKey, error)
 	// DeleteAPIKey soft-deletes the key.
 	DeleteAPIKey(ctx context.Context, id string) error
 	// LinkSalesChannel attaches the publishable key to a sales channel.
@@ -327,6 +332,8 @@ func (h *Handler) Routes(r chi.Router) {
 	// dictionary stays at two entries deliberately (see above), so this asks for
 	// the one that already means "may change a user".
 	write.Post("/admin/v1/users/{id}/invitations", h.adminInviteUser)
+	// Withdrawing one is the same write on the same right (ADR 0453).
+	write.Delete("/admin/v1/users/{id}/invitations", h.adminWithdrawInvitation)
 	write.Delete("/admin/v1/users/{id}", h.adminDeleteUser)
 	write.Post("/admin/v1/users/{id}/password", h.adminSetPassword)
 
@@ -363,6 +370,9 @@ func (h *Handler) Routes(r chi.Router) {
 	read.Get("/admin/v1/api-keys/{id}", h.adminGetAPIKey)
 	write.Delete("/admin/v1/api-keys/{id}", h.adminDeleteAPIKey)
 	write.Post("/admin/v1/api-keys/{id}/revoke", h.adminRevokeAPIKey)
+	// A key's privileges are written as a user's are, under the privilege
+	// that writes privilege (ADR 0455).
+	write.Put("/admin/v1/api-keys/{id}/scopes", h.adminReviseAPIKeyScopes)
 	read.Get("/admin/v1/api-keys/{id}/sales-channels", h.adminListKeyChannels)
 	write.Post("/admin/v1/api-keys/{id}/sales-channels", h.adminLinkKeyChannel)
 	write.Delete("/admin/v1/api-keys/{id}/sales-channels/{sales_channel_id}", h.adminUnlinkKeyChannel)

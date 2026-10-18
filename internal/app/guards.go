@@ -113,8 +113,10 @@ func guardStack(
 	log *slog.Logger,
 	identity corehttp.Identity,
 	proofHeaders []string,
+	quotas ...declaredQuota,
 ) ([]func(http.Handler) http.Handler, *corehttp.CallbackRegistry, error) {
 	warnAboutRateLimit(cfg, log)
+	warnAboutSignInQuota(cfg, log)
 	warnAboutCatalogCache(cfg, log)
 
 	// The audit log is unconditional in a real server: an installation whose
@@ -130,6 +132,21 @@ func guardStack(
 	opts := guardOptions(cfg, authn, auditor, log)
 	opts.IdempotencyProof = storeIdempotencyProof(identity, proofHeaders)
 	opts.CORSHeaders = proofHeaders
+	// The admin surface's own list, for a panel served from its own host
+	// (ADR 0451); [corehttp.AdminCORS] says what it opens.
+	opts.AdminCORSOrigins = cfg.AdminCORSAllowedOrigins
+
+	// The route quotas count on the backend the whole-API limit counts on and
+	// key a client as it does, whether or not that limit is on (ADR 0452). A
+	// redis backend without a client is refused just below.
+	opts.LimitKey = clientKey(cfg)
+	if shared := cfg.GuardBackend == config.BackendRedis; !shared || rdb != nil {
+		counted, err := countRouteQuotas(cfg.RedisKeyPrefix, shared, rdb, quotas)
+		if err != nil {
+			return nil, nil, err
+		}
+		opts.RouteQuotas = counted
+	}
 
 	if cfg.GuardBackend == config.BackendRedis {
 		if rdb == nil {

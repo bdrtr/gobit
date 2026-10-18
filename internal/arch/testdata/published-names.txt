@@ -203,6 +203,7 @@ core/eventbus/outbox Store.Redrive
 core/eventbus/outbox Store.Relay
 core/eventbus/outbox Write
 core/http APIGuards
+core/http AdminCORS
 core/http AnyOrigin
 core/http Audit
 core/http AuditOption
@@ -226,6 +227,7 @@ core/http CallbackRegistry.Routes
 core/http CallbackResponse
 core/http CallbackRoute
 core/http CallbackVerify
+core/http CheckRouteQuotaName
 core/http CheckStoreProofHeader
 core/http ClientIPKey
 core/http ClientKeyName
@@ -242,6 +244,7 @@ core/http CodeIdentityNotBound
 core/http CodeIdentityRefused
 core/http CodeIdentityUnproven
 core/http CodeRateLimited
+core/http CodeRouteQuotaInvalid
 core/http CodeSalesChannelMissing
 core/http CodeSalesChannelNotAuthorized
 core/http CodeUnauthenticated
@@ -289,6 +292,7 @@ core/http NewMemoryLimiter
 core/http NewRouter
 core/http NewServer
 core/http OrderTokenHeader
+core/http ParseQuotaRoute
 core/http Principal
 core/http Principal.HasScope
 core/http PrincipalFromContext
@@ -306,6 +310,8 @@ core/http RequestLogger
 core/http RequireAdmin
 core/http RequireScope
 core/http RequireStore
+core/http RouteQuota
+core/http RouteQuotas
 core/http RouterOptions
 core/http SalesChannelIDParam
 core/http SalesChannelIDs
@@ -466,8 +472,10 @@ core/plugin Host.RegisterFulfillmentProvider
 core/plugin Host.RegisterJob
 core/plugin Host.RegisterNotificationProvider
 core/plugin Host.RegisterPaymentProvider
+core/plugin Host.RegisterRouteQuota
 core/plugin Host.RegisterStoreProofHeader
 core/plugin Host.RegisterWorker
+core/plugin Host.RouteQuotas
 core/plugin Host.Setting
 core/plugin Host.StoreProofHeaders
 core/plugin Host.Subscribe
@@ -493,6 +501,8 @@ core/plugin Registry.Install
 core/plugin Registry.MountRoutes
 core/plugin Registry.Plugins
 core/plugin Registry.Start
+core/plugin RouteQuota
+core/plugin RouteQuota.PluginName
 core/plugin StoreProofHeader
 core/plugin StoreProofHeader.PluginName
 core/plugin Worker

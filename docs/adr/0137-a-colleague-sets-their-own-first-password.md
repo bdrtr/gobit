@@ -5,7 +5,7 @@ cross-module surface carries it, and the invited person sets their own first pas
 through a second unprotected admin endpoint. It costs that surface and one table, and
 ends one person choosing another's secret.
 
-- **Status:** Accepted; amended by [0447](0447-a-module-sends-one-message-through-a-published-name.md), which publishes its cross-module surface under a name
+- **Status:** Accepted; amended by [0447](0447-a-module-sends-one-message-through-a-published-name.md), which publishes its cross-module surface under a name; amended by [0452](0452-a-route-takes-a-quota-and-signing-in-has-one.md), whose acceptance takes the sign-in quota, and [0453](0453-a-pending-invitation-is-withdrawn-or-spent-by-a-password.md), whose invitation is withdrawn or spent by a password
 - **Date:** 2026-09-11
 
 ## Context

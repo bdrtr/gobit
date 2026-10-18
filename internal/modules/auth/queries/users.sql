@@ -177,6 +177,15 @@ DELETE FROM auth_user_invitation
 WHERE token_hash = $1 AND expires_at > now()
 RETURNING *;
 
+-- WithdrawInvitation removes the user's invitation, whatever its token, and
+-- answers what it held (ADR 0453). It serves the administrator who withdraws
+-- one and every password write, which spends the invitation it makes moot: a
+-- link left behind could set the password again after somebody chose one.
+-- name: WithdrawInvitation :one
+DELETE FROM auth_user_invitation
+WHERE user_id = $1
+RETURNING *;
+
 -- PutMFACredential writes an enrollment nobody has proven yet.
 --
 -- ON CONFLICT DO UPDATE and not an INSERT that fails: starting over is the

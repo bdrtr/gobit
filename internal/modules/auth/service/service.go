@@ -197,6 +197,9 @@ type Repository interface {
 	// TakeInvitation removes an invitation and answers what it held; a token that
 	// is unknown, used or expired is repository.ErrNoInvitation.
 	TakeInvitation(ctx context.Context, tokenHash string) (models.UserInvitation, error)
+	// WithdrawInvitation removes the user's invitation and answers what it
+	// held; a user with none is repository.ErrNoInvitation (ADR 0453).
+	WithdrawInvitation(ctx context.Context, userID string) (models.UserInvitation, error)
 	SessionAnchor(ctx context.Context, userID string) (time.Time, error)
 	RevokeSessions(ctx context.Context, userID string, now time.Time) ([]models.AuthIdentity, error)
 	RegisterLoginFailure(ctx context.Context, identityID string, threshold int, lockUntil, now time.Time) (models.AuthIdentity, error)
@@ -209,6 +212,9 @@ type Repository interface {
 	RevokeAPIKey(ctx context.Context, id, revokedBy string, now time.Time) (models.APIKey, error)
 	DeleteAPIKey(ctx context.Context, id string, now time.Time) error
 	MarkAPIKeyUsed(ctx context.Context, id string, usedAt, staleBefore time.Time) error
+	// ReviseAPIKeyScopes writes a live secret key's scopes only while they
+	// are, as a set, the ones read, and reports whether it wrote (ADR 0455).
+	ReviseAPIKeyScopes(ctx context.Context, id string, read, next []string, now time.Time) (models.APIKey, bool, error)
 	LinkSalesChannel(ctx context.Context, apiKeyID, channelID string, now time.Time) error
 	UnlinkSalesChannel(ctx context.Context, apiKeyID, channelID string) error
 	ChannelIDsOfKey(ctx context.Context, apiKeyID string) ([]string, error)

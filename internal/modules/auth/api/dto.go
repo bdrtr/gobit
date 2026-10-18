@@ -193,6 +193,13 @@ type principalResponse struct {
 	// and the caller has not proven one, which is why their scopes are empty:
 	// enrolling is open to them (ADR 0265).
 	SecondFactorOwed bool `json:"second_factor_owed"`
+	// Email is a signed-in person's own address; an API key has none and the
+	// field is left out (ADR 0454).
+	Email string `json:"email,omitempty"`
+	// FirstName is a signed-in person's own first name, left out when empty.
+	FirstName string `json:"first_name,omitempty"`
+	// LastName is a signed-in person's own last name, left out when empty.
+	LastName string `json:"last_name,omitempty"`
 }
 
 // userDTO is the response body of an admin user.

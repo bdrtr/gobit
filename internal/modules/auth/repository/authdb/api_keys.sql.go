@@ -332,6 +332,55 @@ func (q *Queries) MarkAPIKeyUsed(ctx context.Context, arg MarkAPIKeyUsedParams) 
 	return err
 }
 
+const reviseAPIKeyScopes = `-- name: ReviseAPIKeyScopes :one
+UPDATE api_key
+SET scopes = $1::text[], updated_at = $2
+WHERE id = $3
+  AND deleted_at IS NULL
+  AND revoked_at IS NULL
+  AND type = 'secret'
+  AND scopes @> $4::text[]
+  AND scopes <@ $4::text[]
+RETURNING id, type, title, token_hash, redacted, scopes, created_by, last_used_at, revoked_at, revoked_by, created_at, updated_at, deleted_at
+`
+
+type ReviseAPIKeyScopesParams struct {
+	Next      []string
+	UpdatedAt pgtype.Timestamptz
+	ID        string
+	Read      []string
+}
+
+// ReviseAPIKeyScopes writes a live secret key's scopes only while they are,
+// as a set, the ones the caller read (ADR 0455), as ReviseUserScopes does a
+// user's: no row means the key is gone, revoked or publishable, or its scopes
+// were changed since.
+func (q *Queries) ReviseAPIKeyScopes(ctx context.Context, arg ReviseAPIKeyScopesParams) (ApiKey, error) {
+	row := q.db.QueryRow(ctx, reviseAPIKeyScopes,
+		arg.Next,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.Read,
+	)
+	var i ApiKey
+	err := row.Scan(
+		&i.ID,
+		&i.Type,
+		&i.Title,
+		&i.TokenHash,
+		&i.Redacted,
+		&i.Scopes,
+		&i.CreatedBy,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.RevokedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const revokeAPIKey = `-- name: RevokeAPIKey :one
 UPDATE api_key SET
     revoked_at = $2,

@@ -404,6 +404,8 @@ type Host struct {
 	// proofHeaders are the storefront headers the plugins decide access on
 	// (ADR 0444).
 	proofHeaders []StoreProofHeader
+	// quotas are the route quotas the plugins declared (ADR 0452).
+	quotas []RouteQuota
 	// queue holds the tasks to be applied at Start.
 	queue []queuedTask
 }

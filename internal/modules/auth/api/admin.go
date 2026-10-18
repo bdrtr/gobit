@@ -73,22 +73,29 @@ func (h *Handler) adminWhoami(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	owed := false
+	out := principalResponse{
+		ID:              principal.ID,
+		Kind:            principal.Kind,
+		Scopes:          orEmpty(principal.Scopes),
+		SalesChannelIDs: principal.SalesChannelIDs,
+	}
 	if principal.Kind == service.PrincipalKindUser {
 		var err error
-		if owed, err = h.svc.SecondFactorOwed(ctx, principal.ID); err != nil {
+		if out.SecondFactorOwed, err = h.svc.SecondFactorOwed(ctx, principal.ID); err != nil {
 			corehttp.WriteError(ctx, w, err)
 			return
 		}
+		// The person's own address and name, so a panel can say who is signed
+		// in; reading another user's record still asks auth:read (ADR 0454).
+		user, err := h.svc.GetUser(ctx, principal.ID)
+		if err != nil {
+			corehttp.WriteError(ctx, w, err)
+			return
+		}
+		out.Email, out.FirstName, out.LastName = user.Email, user.FirstName, user.LastName
 	}
 
-	writeItem(w, r, http.StatusOK, principalResponse{
-		ID:               principal.ID,
-		Kind:             principal.Kind,
-		Scopes:           orEmpty(principal.Scopes),
-		SalesChannelIDs:  principal.SalesChannelIDs,
-		SecondFactorOwed: owed,
-	})
+	writeItem(w, r, http.StatusOK, out)
 }
 
 // userDTOs converts users into response bodies, each saying whether the user

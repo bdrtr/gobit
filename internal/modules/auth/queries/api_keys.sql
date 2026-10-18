@@ -116,3 +116,18 @@ ORDER BY c.name, c.id;
 -- name: DeleteLinksOfAPIKey :exec
 DELETE FROM api_key_sales_channel
 WHERE api_key_id = $1;
+
+-- ReviseAPIKeyScopes writes a live secret key's scopes only while they are,
+-- as a set, the ones the caller read (ADR 0455), as ReviseUserScopes does a
+-- user's: no row means the key is gone, revoked or publishable, or its scopes
+-- were changed since.
+-- name: ReviseAPIKeyScopes :one
+UPDATE api_key
+SET scopes = sqlc.arg('next')::text[], updated_at = sqlc.arg('updated_at')
+WHERE id = sqlc.arg('id')
+  AND deleted_at IS NULL
+  AND revoked_at IS NULL
+  AND type = 'secret'
+  AND scopes @> sqlc.arg('read')::text[]
+  AND scopes <@ sqlc.arg('read')::text[]
+RETURNING *;

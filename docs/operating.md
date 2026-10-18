@@ -98,6 +98,38 @@ the limit is crossed, that is, in production.
 > swallowing the plugin name given on the command line, the application came up
 > without an error, and the plugin's endpoints returned nothing but **404**.
 
+### A panel on its own host, and the sign-in quota
+
+An admin or seller panel served from its own host, which keeps its
+operator's bearer token in the page, calls `/admin/v1` directly once its
+origin is in `ADMIN_CORS_ALLOWED_ORIGINS`
+([ADR 0451](adr/0451-a-panel-on-its-own-host-calls-the-admin-api.md)):
+
+```bash
+ADMIN_CORS_ALLOWED_ORIGINS=https://admin.example.com,https://seller.example.com
+```
+
+Each entry is an origin, `scheme://host[:port]`; `*` and anything with a path
+stop the installation. No credentials are allowed, so the panel sends
+`Authorization: Bearer` itself. A listed site's script reads every answer its
+token opens, so list only sites you serve. Left empty, the admin surface
+writes no CORS header and such a panel reaches gobit through a same-origin
+reverse proxy, which keeps working either way.
+
+Signing in has a per-client quota
+([ADR 0452](adr/0452-a-route-takes-a-quota-and-signing-in-has-one.md)):
+`POST /admin/v1/auth/login`, `POST /admin/v1/auth/accept-invitation` and the
+panel's form share `ADMIN_SIGN_IN_LIMIT` requests per `ADMIN_SIGN_IN_WINDOW`,
+20 per 15 minutes by default; `0` turns it off. It is keyed like
+`RATE_LIMIT_PER_MINUTE`: behind a reverse proxy set `TRUSTED_PROXY_HOPS`, or
+the whole shop shares one bucket and anybody can keep every operator from
+signing in (a shared environment warns at startup). Under `GUARD_BACKEND=redis`
+it, and every quota a plugin declares, counts under
+`<REDIS_KEY_PREFIX>.quota.<name>`, across instances. A plugin's quotas on other
+routes, a core route's included, are declared with `Host.RegisterRouteQuota`
+(see `docs/extending.md`); an nginx `limit_req` on those routes is no longer
+needed.
+
 ## The event bus backends
 
 The event bus backend is chosen with `EVENT_BUS=inmemory|redis`. When `redis` is

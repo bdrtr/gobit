@@ -50,6 +50,9 @@ func (c Config) Validate() error {
 	if c.ReadinessDegradedTimeout <= 0 {
 		return fmt.Errorf("config: READINESS_DEGRADED_TIMEOUT has to be positive, %s given", c.ReadinessDegradedTimeout)
 	}
+	if err := c.validateAdminSurface(); err != nil {
+		return err
+	}
 	if c.ShutdownTimeout <= 0 {
 		return fmt.Errorf("config: SHUTDOWN_TIMEOUT has to be positive, %s given", c.ShutdownTimeout)
 	}

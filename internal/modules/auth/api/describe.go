@@ -107,6 +107,7 @@ func Describe(d *openapi.Doc) {
 	describeUsers(d)
 	describeAPIKeys(d)
 	describeSalesChannels(d)
+	describeRevisions(d)
 }
 
 // describeIdentity describes the login, identity read and logout endpoints.
@@ -331,6 +332,10 @@ func describeIdentity(d *openapi.Doc) {
 
 	d.Describe(http.MethodGet, "/admin/v1/auth/me", openapi.Operation{
 		Summary: "Returns the authenticated caller's identity and scopes.",
+		Description: "A signed-in person also reads their own e-mail address, first and last " +
+			"name, so a panel can say who is signed in without auth:read; another " +
+			"user's record still asks for it. An API key has none of the three and " +
+			"they are left out (ADR 0454).",
 		Responses: map[string]any{
 			"200": openapi.Response("The caller's identity", d.Item(principalResponse{})),
 		},

@@ -694,3 +694,26 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (AuthUse
 	)
 	return i, err
 }
+
+const withdrawInvitation = `-- name: WithdrawInvitation :one
+DELETE FROM auth_user_invitation
+WHERE user_id = $1
+RETURNING token_hash, user_id, invited_by, expires_at, created_at
+`
+
+// WithdrawInvitation removes the user's invitation, whatever its token, and
+// answers what it held (ADR 0453). It serves the administrator who withdraws
+// one and every password write, which spends the invitation it makes moot: a
+// link left behind could set the password again after somebody chose one.
+func (q *Queries) WithdrawInvitation(ctx context.Context, userID string) (AuthUserInvitation, error) {
+	row := q.db.QueryRow(ctx, withdrawInvitation, userID)
+	var i AuthUserInvitation
+	err := row.Scan(
+		&i.TokenHash,
+		&i.UserID,
+		&i.InvitedBy,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}

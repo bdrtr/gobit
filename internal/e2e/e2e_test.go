@@ -613,6 +613,10 @@ func groundEnvironment(dsn, paytrURL string, push groundPush) map[string]string 
 		// server.
 		"ADMIN_BOOTSTRAP_EMAIL":    adminEmail,
 		"ADMIN_BOOTSTRAP_PASSWORD": adminPassword,
+		// The sign-in quota (ADR 0452) is held as high as the request limit,
+		// for its reason: every scenario signs in from one address. Its own
+		// behavior is asserted on the composition root's stack (internal/app).
+		"ADMIN_SIGN_IN_LIMIT": strconv.Itoa(testRateLimit),
 		// Every setting the PayTR plugin reads, the address PayTR answers at
 		// included, so nothing a shell exported decides it (ADR 0438).
 		"PAYTR_MERCHANT_ID":   paytrMerchantID,

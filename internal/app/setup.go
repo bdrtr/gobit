@@ -613,7 +613,14 @@ func openApplication(
 	// records on the customer it proves (ADR 0439).
 	storeIdentity := identity.New(c, log, "guards", codeGuardIdentitySetup,
 		"no customer identity is bound; storefront idempotency records are keyed on an order's token alone")
-	guards, callbacks, err := guardStack(cfg, authn, panelRing, redisClient, pool, log, storeIdentity, proofHeaders)
+	// The route quotas ADMIN_SIGN_IN_LIMIT sets and the plugins declared
+	// in Setup (ADR 0452); the assembly holds each to a bound route.
+	quotas, err := routeQuotaDeclarations(cfg, host)
+	if err != nil {
+		return nil, nil, err
+	}
+	guards, callbacks, err := guardStack(cfg, authn, panelRing, redisClient, pool, log, storeIdentity, proofHeaders,
+		quotas...)
 	if err != nil {
 		return nil, nil, err
 	}

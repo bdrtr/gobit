@@ -528,6 +528,15 @@ func assemble(
 	if err := ownAdminSurfaces(router); err != nil {
 		return nil, err
 	}
+	// A route quota on a route nothing binds counts nothing; the one it was
+	// written for may have been renamed under it (ADR 0452).
+	quotas, err := routeQuotaDeclarations(cfg, host)
+	if err != nil {
+		return nil, err
+	}
+	if err := refuseUnboundRouteQuotas(router, quotas); err != nil {
+		return nil, err
+	}
 
 	return app.router, nil
 }

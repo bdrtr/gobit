@@ -84,3 +84,21 @@ func (h *Handler) adminAcceptInvitation(w http.ResponseWriter, r *http.Request) 
 
 // CodeInviterUnknown reports an invitation whose sender could not be identified.
 const CodeInviterUnknown = "auth_inviter_unknown"
+
+// adminWithdrawInvitation voids the user's pending invitation
+// (DELETE /admin/v1/users/{id}/invitations).
+//
+// It answers 204 when one was pending and 404 auth_invitation_not_pending when
+// none was, so the caller learns whether the link it worried about could still
+// be used (ADR 0453).
+func (h *Handler) adminWithdrawInvitation(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	if err := h.svc.WithdrawInvitation(ctx, chi.URLParam(r, "id"), actorID(ctx)); err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
+}

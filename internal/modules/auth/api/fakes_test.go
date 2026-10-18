@@ -47,6 +47,16 @@ type fakeAuth struct {
 	acceptedToken    string
 	acceptedPassword string
 	acceptErr        error
+	// withdrawnUser and withdrawnBy are what WithdrawInvitation was last
+	// called with (ADR 0453).
+	withdrawnUser string
+	withdrawnBy   string
+	// revisedKey, revisedRead and revisedNext are what ReviseAPIKeyScopes was
+	// last called with (ADR 0455).
+	revisedKey               string
+	revisedRead, revisedNext []string
+	// user is what GetUser answers, its id aside.
+	user models.User
 
 	// callCount is the number of calls that reached the service.
 	callCount int
@@ -111,7 +121,21 @@ func (f *fakeAuth) CreateUser(_ context.Context, _ service.CreateUserInput, _ st
 
 func (f *fakeAuth) GetUser(_ context.Context, id string) (models.User, error) {
 	f.hit()
-	return models.User{ID: id}, nil
+	user := f.user
+	user.ID = id
+	return user, nil
+}
+
+func (f *fakeAuth) WithdrawInvitation(_ context.Context, userID, withdrawnBy string) error {
+	f.hit()
+	f.withdrawnUser, f.withdrawnBy = userID, withdrawnBy
+	return nil
+}
+
+func (f *fakeAuth) ReviseAPIKeyScopes(_ context.Context, id string, read, next []string) (models.APIKey, error) {
+	f.hit()
+	f.revisedKey, f.revisedRead, f.revisedNext = id, read, next
+	return models.APIKey{ID: id, Type: models.APIKeySecret, Scopes: next}, nil
 }
 
 func (f *fakeAuth) ListUsers(_ context.Context, _ service.ListUsersInput) (service.Page[models.User], error) {

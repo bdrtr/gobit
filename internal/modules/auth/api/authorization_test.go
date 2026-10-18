@@ -273,8 +273,9 @@ func TestIdentityEndpointsRequireNoScope(t *testing.T) {
 	assert.Equal(t, http.StatusOK, logout.Code,
 		"the logout endpoint must not ask for a scope; body: %s", logout.Body.String())
 
-	assert.Equal(t, 2, svc.callCount,
-		"login and logout go down to the service; /auth/me reads from the context")
+	assert.Equal(t, 3, svc.callCount,
+		"login and logout go down to the service; /auth/me reads the identity from the context "+
+			"and the person's own record from the service (ADR 0454)")
 }
 
 // TestTheLoginCarriesTheAuthenticatorCodeToTheService pins the field that makes

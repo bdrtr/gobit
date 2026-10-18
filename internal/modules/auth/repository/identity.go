@@ -106,6 +106,13 @@ func (r *Repo) SetPasswordHash(
 			return notFoundOr(err, CodeUserNotFound, "user not found: %s", userID)
 		}
 
+		// A password set by any path spends the invitation to set one, in the
+		// same transaction (ADR 0453): a link left pending could set the
+		// password again after the person chose theirs.
+		if _, err := q.WithdrawInvitation(ctx, userID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return wrapDB(err, "could not withdraw the invitation the password spends")
+		}
+
 		existing, err := q.GetIdentityOfUser(ctx, authdb.GetIdentityOfUserParams{
 			UserID:   userID,
 			Provider: provider,
