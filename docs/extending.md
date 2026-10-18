@@ -271,6 +271,51 @@ func TestCompliance(t *testing.T) {
 It reports the destination found in the returned data, a second shipment for a
 repeated idempotency key, and a second cancel that fails.
 
+A provider that prices the goods reads `QuoteInput.Cart`
+([ADR 0445](adr/0445-a-quote-names-the-cart-it-prices.md)): the cart's id,
+currency and traveling lines, each with its variant, product, quantity, unit
+price, subtotal after discount, the variant's weight and the product's weight
+and box as the catalog records them, zero where it records none. gobit picks
+no measure for another and derives no desi. The cart is nil on the
+eligibility lists, which take their facts from the caller, on an order's
+delivery change and when the cart's goods could not be read; refuse it there,
+and the option drops out of that list while the flat ones stay. The cart's id
+is its access (ADR 0439): keep it out of what the provider logs and returns.
+
+### Pushing to a customer's devices (`web-push`)
+
+A module or a plugin installed beside `web-push` pushes through the plugin
+rather than its table ([ADR 0446](adr/0446-a-plugin-pushes-to-a-customers-devices-through-web-push.md)):
+
+```go
+pusher, err := container.Resolve[*webpush.Pusher](c, webpush.ServiceName)
+result, err := pusher.PushToCustomers(ctx, customerIDs, webpush.Push{
+	Template: "order.shipped", Data: map[string]string{"order_id": id}, Tag: "order-" + id,
+})
+```
+
+A `Template` names a file in `WEBPUSH_TEMPLATE_DIR`, rendered in each device's
+locale, then its language, then the default; without one, `Title` and `Body`
+are the message. The plugin's key, endpoint rule (ADR 0440) and removal of
+devices that can never be reached apply, and only devices bound to a named
+customer are pushed to. A push it cannot render is an error before a device is
+read; the rest is counts. Resolve it on first use, and ask `Has` first where
+the plugin may not be installed.
+
+### Sending one message (`NotificationSender`)
+
+A message carrying a secret, or meant for one person, does not go on the bus.
+A module or a plugin sends it through the notification module's one-message
+surface ([ADR 0447](adr/0447-a-module-sends-one-message-through-a-published-name.md)):
+
+```go
+sender, err := container.Resolve[plugin.NotificationSender](c, plugin.NotificationSenderName)
+err = sender.Send(ctx, "shop.password_reset", provider.ChannelEmail, resetID, email, data)
+```
+
+`(template, reference)` is the idempotency key, so the reference names the
+caller's own record; the provider needs a copy for the template.
+
 ## File upload
 
 `POST /admin/v1/uploads` (multipart) takes an image and returns an address that
@@ -347,8 +392,9 @@ return's receipt, or the claim, exchange and replacement transitions: a topic
 arrives with the first subscriber inside gobit that acts on it, or with an
 outside consumer's report decided in a record, which the arch gate's
 `subscriberlessPublications` names (ADR 0063, ADR 0386, ADR 0437). A parcel's
-delivery and a return's opening and withdrawal are of the second kind: nothing
-inside gobit subscribes to them and `webhook-out` carries them.
+delivery, a return's opening and withdrawal and a back-in-stock alert
+(ADR 0448) are of the second kind: nothing inside gobit subscribes to them and
+`webhook-out` carries them.
 `fulfillment.returned` is the carrier bringing a parcel back undelivered;
 `order.return_*` is the customer's return record. There is no transition hook
 beside the bus.
@@ -368,6 +414,7 @@ beside the bus.
 | `order.return_opened` | `order_id`, `return_id`, `opened_at` |
 | `order.return_canceled` | `order_id`, `return_id`, `canceled_at` |
 | `cart.created` / `cart.completed` | `cart_id`, `region_id`, `currency_code`, `occurred_at` |
+| `wishlist.back_in_stock` | `customer_id`, `variant_id`, `product_id`, `armed_at` |
 
 `plugins/webhookout` lists the same fields, `customer_id` and `cart_id`
 withheld, as `TopicFields`; a cart event's id names its cart by a digest rather
@@ -427,7 +474,10 @@ issued, and mails them the same way (ADR 0212).
 The stock alert flow mails a customer once, at the address on their own record,
 when a variant they marked on their wishlist is back in stock, with the template
 `wishlist.back_in_stock`, whose data is `variant_id`, `variant_title`,
-`product_id`, `product_title` and `product_handle` (ADR 0215). It mails once
+`product_id`, `product_title` and `product_handle` (ADR 0215), and publishes
+the event of the same name once the mail is handed over, before it clears the
+mark; a pass that stops between the two publishes it again under the same id
+(ADR 0448). It mails once
 more, with the template `wishlist.price_drop`, when a variant whose price the
 customer marked in a region is quoted below the price recorded at the mark; the
 data adds `currency_code`, `previous_amount` and `amount`, both amounts in

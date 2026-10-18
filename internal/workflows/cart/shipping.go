@@ -32,6 +32,9 @@ type quoteRequest struct {
 	// IncludeAdminOnly asks for the options only an operator may choose; the
 	// operator's paths set it, a shopper's never does (ADR 0295).
 	IncludeAdminOnly bool `json:"include_admin_only"`
+	// Cart is the cart the options are quoted for, which the fulfillment
+	// module hands a calculated option's provider (ADR 0445).
+	Cart *quoteCart `json:"cart"`
 }
 
 // quotedOption is one option as the fulfillment module priced it.
@@ -377,7 +380,19 @@ func (w *Workflows) quoteRequestFor(ctx context.Context, snap Snapshot) (quoteRe
 		return quoteRequest{}, err
 	}
 
+	// A cart whose goods cannot be read is quoted without them, as the facts
+	// above are: a calculated option that prices the goods drops out and the
+	// flat ones stay, rather than the whole list failing or a provider pricing
+	// a box of nothing.
+	cart, err := w.quoteCartFor(ctx, snap, lines, cards)
+	if err != nil {
+		w.log.WarnContext(ctx, "the cart's goods could not be read; quoting without the cart",
+			"error", err, "cart_id", snap.ID)
+		cart = nil
+	}
+
 	return quoteRequest{
+		Cart:         cart,
 		RegionID:     snap.RegionID,
 		CurrencyCode: snap.CurrencyCode,
 		CountryCode:  countryCode,

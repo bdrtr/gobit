@@ -167,6 +167,14 @@ var variantReadExemptions = []variantReadExemption{
 			"the scope never reaches here; the request's warehouses narrow the answer.",
 	},
 	{
+		file:     "internal/workflows/cart/quote_cart.go",
+		function: "lineMeasures",
+		why: "it reads the measures of variants ALREADY in the cart for a shipping quote " +
+			"(ADR 0445): the scope is applied at the entrance, as variantTitles' read is, and " +
+			"filtering here would quote a cart with a line an operator moved to another " +
+			"channel as if the line weighed nothing.",
+	},
+	{
 		file:     "internal/modules/product/service/export.go",
 		function: "basePrices",
 		why: "the export is the ADMIN's whole catalog (ADR 0204): an administrator has no " +

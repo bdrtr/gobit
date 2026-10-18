@@ -39,6 +39,7 @@ import (
 	invoicemodels "github.com/bdrtr/gobit/internal/modules/invoice/models"
 	"github.com/bdrtr/gobit/internal/modules/notification"
 	"github.com/bdrtr/gobit/internal/modules/notification/logonly"
+	notificationsvc "github.com/bdrtr/gobit/internal/modules/notification/service"
 	"github.com/bdrtr/gobit/internal/modules/order"
 	ordermodels "github.com/bdrtr/gobit/internal/modules/order/models"
 	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"
@@ -107,6 +108,18 @@ func TestTheProviderRegistryNamesAgree(t *testing.T) {
 		"the notification provider registry name in the plugin package must match the notification module")
 	assert.Equal(t, file.ProvidersName, coreplugin.FileProvidersName,
 		"the file provider registry name in the plugin package must match the file module")
+}
+
+// TestTheNotificationSenderIsTheNotificationModulesSurface holds the published
+// one-message surface (ADR 0447) to the module that registers it: the name a
+// consumer resolves is the one the module provides, and what it provides there
+// satisfies the published interface.
+func TestTheNotificationSenderIsTheNotificationModulesSurface(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, notification.InteropName, coreplugin.NotificationSenderName,
+		"the published sender name must be the notification module's interop name")
+	var _ coreplugin.NotificationSender = (*notificationsvc.Interop)(nil)
 }
 
 // TestTheDefaultFileProviderAgreesWithTheConfig verifies that the config's

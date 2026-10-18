@@ -74,6 +74,10 @@ var providerInputs = []struct {
 }{
 	{quoteInputTypeName, coreprovider.QuoteInput{}},
 	{"CreateFulfillmentInput", coreprovider.CreateFulfillmentInput{}},
+	// The cart a quote is asked for and its lines (ADR 0445): the cart flow
+	// measures and prices them, and the fulfillment module builds them.
+	{"QuoteCart", coreprovider.QuoteCart{}},
+	{"QuoteLine", coreprovider.QuoteLine{}},
 }
 
 // TestEveryQuoteInputFieldIsFilledByTheTree refuses a quote-input field that no

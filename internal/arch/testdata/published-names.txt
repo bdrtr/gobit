@@ -477,6 +477,9 @@ core/plugin Job.PluginName
 core/plugin NewHost
 core/plugin NewRegistry
 core/plugin NotificationProvidersName
+core/plugin NotificationSender
+core/plugin NotificationSender.Send
+core/plugin NotificationSenderName
 core/plugin PaymentProvidersName
 core/plugin PaymentReports
 core/plugin PaymentReports.PaymentReported
@@ -538,7 +541,9 @@ core/provider PaymentProvider.CreateSession
 core/provider PaymentProvider.Refund
 core/provider Provider
 core/provider Provider.ID
+core/provider QuoteCart
 core/provider QuoteInput
+core/provider QuoteLine
 core/provider Session
 core/provider SessionAuthorized
 core/provider SessionCanceled

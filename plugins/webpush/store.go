@@ -162,6 +162,33 @@ func (s *store) byCustomer(ctx context.Context, customerID string) ([]subscripti
 	return collect(rows)
 }
 
+// byCustomers pages the devices bound to any of the customers, by id after
+// the cursor, for the published push (ADR 0446). An empty id in the set
+// matches nothing, as [store.byCustomer] explains.
+func (s *store) byCustomers(ctx context.Context, customerIDs []string, after string, limit int) ([]subscription, error) {
+	ids := make([]string, 0, len(customerIDs))
+	for _, id := range customerIDs {
+		if strings.TrimSpace(id) != "" {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, endpoint, p256dh, auth, customer_id, locale, vapid_fingerprint
+		FROM webpush_subscription
+		WHERE customer_id = ANY($1) AND id > $2
+		ORDER BY id
+		LIMIT $3`, ids, after, limit)
+	if err != nil {
+		return nil, wrapDB(err, "the customers' devices could not be read")
+	}
+
+	return collect(rows)
+}
+
 // all lists every device, for the broadcast path and the admin surface.
 //
 // It pages by a cursor on the primary key rather than OFFSET: a broadcast walks

@@ -515,6 +515,44 @@ func (q *Queries) SummarizeApprovedReviews(ctx context.Context, productID string
 	return i, err
 }
 
+const summarizeApprovedReviewsFor = `-- name: SummarizeApprovedReviewsFor :many
+SELECT product_id,
+       count(*)::bigint AS review_count,
+       COALESCE(round(avg(rating) * 100), 0)::bigint AS average_hundredths
+FROM reviews
+WHERE product_id = ANY($1::text[]) AND status = 'approved'
+GROUP BY product_id
+`
+
+type SummarizeApprovedReviewsForRow struct {
+	ProductID         string
+	ReviewCount       int64
+	AverageHundredths int64
+}
+
+// SummarizeApprovedReviewsFor is SummarizeApprovedReviews for a set of products
+// in one statement, for a listing's cards (ADR 0449). A product with no approved
+// review has no row; the caller answers it with a count of zero.
+func (q *Queries) SummarizeApprovedReviewsFor(ctx context.Context, productIds []string) ([]SummarizeApprovedReviewsForRow, error) {
+	rows, err := q.db.Query(ctx, summarizeApprovedReviewsFor, productIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SummarizeApprovedReviewsForRow{}
+	for rows.Next() {
+		var i SummarizeApprovedReviewsForRow
+		if err := rows.Scan(&i.ProductID, &i.ReviewCount, &i.AverageHundredths); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const summarizeSuggestionAgreement = `-- name: SummarizeSuggestionAgreement :many
 SELECT suggestion_model AS model,
        count(*) AS decided,

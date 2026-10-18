@@ -242,6 +242,22 @@ func (f *fakeRepo) ListApproved(
 	return limited(matched, filter.Limit), int64(len(matched)), nil
 }
 
+// SummarizeMany is Summarize for each product that has an approved review.
+func (f *fakeRepo) SummarizeMany(ctx context.Context, productIDs []string) (map[string]models.Summary, error) {
+	out := map[string]models.Summary{}
+	for _, id := range productIDs {
+		summary, err := f.Summarize(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if summary.Count > 0 {
+			out[id] = summary
+		}
+	}
+
+	return out, nil
+}
+
 // Summarize counts and averages the approved reviews of one product.
 func (f *fakeRepo) Summarize(_ context.Context, productID string) (models.Summary, error) {
 	f.mu.Lock()

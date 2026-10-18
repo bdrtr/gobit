@@ -269,3 +269,24 @@ func (r *Repository) Summarize(ctx context.Context, productID string) (models.Su
 		AverageHundredths: row.AverageHundredths,
 	}, nil
 }
+
+// SummarizeMany returns the count and the average of each product's approved
+// reviews, by product, in one statement (ADR 0449). A product with none is
+// absent from the answer.
+func (r *Repository) SummarizeMany(ctx context.Context, productIDs []string) (map[string]models.Summary, error) {
+	rows, err := r.queries().SummarizeApprovedReviewsFor(ctx, productIDs)
+	if err != nil {
+		return nil, wrapDB(err, codeQueryFailed, "the review summaries could not be read")
+	}
+
+	out := make(map[string]models.Summary, len(rows))
+	for _, row := range rows {
+		out[row.ProductID] = models.Summary{
+			ProductID:         row.ProductID,
+			Count:             row.ReviewCount,
+			AverageHundredths: row.AverageHundredths,
+		}
+	}
+
+	return out, nil
+}

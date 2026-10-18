@@ -106,6 +106,12 @@ func (m *webpushModule) Register(ctx context.Context, c *container.Container) er
 	}
 	m.identity = &identityBinding{c: c, log: m.opts.log}
 
+	// The push a module or a plugin beside this one sends (ADR 0446).
+	if err := c.Provide(ServiceName, &Pusher{m: m}); err != nil {
+		return coreerrors.Wrap(err, coreerrors.KindOf(err), codeSetupFailed,
+			"the %s module could not register its push service (%q)", ModuleName, ServiceName)
+	}
+
 	m.reportRegistry(ctx)
 
 	return nil

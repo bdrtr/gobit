@@ -22,9 +22,11 @@
 //
 // # What it registers
 //
-// A module and one event subscription. Nothing else — no provider, no
-// container name, no link definition. It is the plugins/searchpg shape: the
-// plugin owns two tables, their migrations and its endpoints. Outside its own
+// A module and one event subscription. Nothing else — no provider, no link
+// definition, and one container name, [ServiceName], the push a module or a
+// plugin beside it sends to its customers (ADR 0446). It is the
+// plugins/searchpg shape: the plugin owns two tables, their migrations and its
+// endpoints. Outside its own
 // directory it is named in two places: one line in the composition root's
 // catalog, and the binary's `webpush-key` command (internal/app/webpushkey.go,
 // ADR 0383), which prints a key for it. Removing it is `rm -rf plugins/webpush`

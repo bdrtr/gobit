@@ -59,7 +59,7 @@ var migrationsRoot = mustSub(migrationFiles, "migrations")
 //
 // So the list is written out, and it is the WHOLE set: a static census of every
 // eventbus.Event this repository can publish resolves to exactly this slice —
-// the sixteen topics plugins/webhookout forwards.
+// the seventeen topics plugins/webhookout forwards.
 //
 // The number and the path sit on ONE line deliberately. It is the only place
 // the size is written, and the count gate is LINE-ANCHORED: a sentence whose
@@ -112,6 +112,7 @@ var ForwardedTopics = []string{
 	topicFulfillmentDelivered,
 	topicOrderReturnOpened,
 	topicOrderReturnCanceled,
+	topicWishlistBackInStock,
 }
 
 // The topics, as constants the arch gates can resolve.
@@ -208,6 +209,11 @@ const (
 	// topicOrderReturnCanceled is published when a return is withdrawn
 	// (ADR 0437); same payload, same reason.
 	topicOrderReturnCanceled = "order.return_canceled"
+	// topicWishlistBackInStock is published when a variant a customer marked
+	// is back in stock and their mail was handed over (ADR 0448). It carries
+	// the variant, its product and the mark's moment; its customer is withheld
+	// as an order's is, and its event id names the alert by a digest.
+	topicWishlistBackInStock = "wishlist.back_in_stock"
 )
 
 // redactedFields are the payload fields that never leave this installation, and
@@ -522,9 +528,9 @@ func (m *webhookModule) Routes(r chi.Router) {
 // capture and refund there as well, and the order's write-offs, the parcel's
 // cancellation and its coming back, the cart's two events and the order's
 // cancel and completion, a parcel's delivery and a return's opening and
-// withdrawal followed, so it is now thirteen of the sixteen this plugin
-// forwards; the three product events are still published directly. Thirteen in
-// sixteen is still partial
+// withdrawal followed, so it is now thirteen of the seventeen this plugin
+// forwards; the three product events and the back-in-stock alert are still
+// published directly. Thirteen in seventeen is still partial
 // and the shape of the objection is unchanged,
 // which is why the refusal stands; the number is corrected here because a record whose stated
 // reason has quietly halved in force is the kind that gets rebuilt on.
@@ -844,6 +850,7 @@ var TopicFields = map[string][]string{
 	topicFulfillmentDelivered: {"delivered_at", fieldFulfillmentID, fieldReference, fieldReturnID},
 	topicOrderReturnOpened:    {"opened_at", fieldOrderID, fieldReturnID},
 	topicOrderReturnCanceled:  {fieldCanceledAt, fieldOrderID, fieldReturnID},
+	topicWishlistBackInStock:  {"armed_at", fieldProductID, "variant_id"},
 }
 
 // The payload fields more than one topic carries, spelled as their publishers

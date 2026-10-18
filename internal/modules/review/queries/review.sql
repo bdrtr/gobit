@@ -123,6 +123,18 @@ SELECT count(*)::bigint AS review_count,
 FROM reviews
 WHERE product_id = sqlc.arg('product_id')::text AND status = 'approved';
 
+-- SummarizeApprovedReviewsFor is SummarizeApprovedReviews for a set of products
+-- in one statement, for a listing's cards (ADR 0449). A product with no approved
+-- review has no row; the caller answers it with a count of zero.
+--
+-- name: SummarizeApprovedReviewsFor :many
+SELECT product_id,
+       count(*)::bigint AS review_count,
+       COALESCE(round(avg(rating) * 100), 0)::bigint AS average_hundredths
+FROM reviews
+WHERE product_id = ANY(sqlc.arg('product_ids')::text[]) AND status = 'approved'
+GROUP BY product_id;
+
 -- SuggestReview records a model's PROPOSAL about a review that is still
 -- waiting.
 --

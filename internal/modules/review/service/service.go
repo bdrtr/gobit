@@ -105,6 +105,7 @@ type Repo interface {
 		ctx context.Context, productID string, filter models.Filter,
 	) ([]models.Review, int64, error)
 	Summarize(ctx context.Context, productID string) (models.Summary, error)
+	SummarizeMany(ctx context.Context, productIDs []string) (map[string]models.Summary, error)
 }
 
 // Options are the service's settings.

@@ -51,6 +51,10 @@ type payload struct {
 	Title string `json:"title"`
 	Body  string `json:"body"`
 	URL   string `json:"url,omitempty"`
+	// Tag is the notification's tag, which a service worker passes to
+	// showNotification so a newer push replaces an older one on the screen
+	// (ADR 0446); absent when the sender names none.
+	Tag string `json:"tag,omitempty"`
 }
 
 // loadTemplates reads and parses every template file in the directory.
@@ -120,7 +124,9 @@ func loadTemplates(dir string) (templateSet, error) {
 func keyOf(base string) templateKey {
 	idx := strings.LastIndex(base, ".")
 	if idx > 0 && looksLikeLocale(base[idx+1:]) {
-		return templateKey{event: base[:idx], locale: base[idx+1:]}
+		// Lower case, as a device's locale is stored: "en-GB" in a file name
+		// and "en-gb" from a browser are one language.
+		return templateKey{event: base[:idx], locale: strings.ToLower(base[idx+1:])}
 	}
 
 	return templateKey{event: base, locale: defaultLocale}
@@ -148,15 +154,18 @@ func looksLikeLocale(s string) bool {
 
 // render produces the encrypted payload for one device.
 //
-// The locale falls back to the default rather than failing: a device that
-// recorded an unusual language must still receive its order confirmation, and
-// a message in the wrong language beats no message at all. A missing EVENT is
-// a different matter and is an error — it means nobody wrote the copy.
+// The locale falls back to its language and then to the default rather than
+// failing: a device that recorded an unusual language must still receive its
+// order confirmation, and a message in the wrong language beats no message at
+// all. A missing EVENT is a different matter and is an error — it means nobody
+// wrote the copy.
 func (t templateSet) render(event, locale string, data map[string]string) ([]byte, error) {
-	tmpl, ok := t[templateKey{event: event, locale: locale}]
-	if !ok {
-		tmpl, ok = t[templateKey{event: event, locale: defaultLocale}]
-	}
+	return t.renderTagged(event, locale, data, "")
+}
+
+// renderTagged is [templateSet.render] with the notification's tag.
+func (t templateSet) renderTagged(event, locale string, data map[string]string, tag string) ([]byte, error) {
+	tmpl, ok := t.lookup(event, locale)
 	if !ok {
 		return nil, coreerrors.Invalid(codeTemplateUnknown,
 			"there is no push template for %q; %s holds: %v", event, settingTemplates, templateNames(t))
@@ -178,19 +187,42 @@ func (t templateSet) render(event, locale string, data map[string]string) ([]byt
 		}
 	}
 
-	encoded, err := json.Marshal(payload{Title: title, Body: body, URL: target})
+	return encodePayload(payload{Title: title, Body: body, URL: target, Tag: tag}, event)
+}
+
+// lookup finds the copy for a device's locale: the locale, its language, the
+// default.
+func (t templateSet) lookup(event, locale string) (*template.Template, bool) {
+	locale = strings.ToLower(locale)
+	if tmpl, ok := t[templateKey{event: event, locale: locale}]; ok {
+		return tmpl, true
+	}
+	if language, _, regional := strings.Cut(locale, "-"); regional {
+		if tmpl, ok := t[templateKey{event: event, locale: language}]; ok {
+			return tmpl, true
+		}
+	}
+	tmpl, ok := t[templateKey{event: event, locale: defaultLocale}]
+
+	return tmpl, ok
+}
+
+// encodePayload encodes one message and holds it to what a push carries.
+//
+// The size is checked HERE, where the template or the caller that produced it
+// can be named, rather than after a device list has been walked and a
+// per-device error can only say "too large" about a message nobody can point
+// at.
+func encodePayload(p payload, name string) ([]byte, error) {
+	encoded, err := json.Marshal(p)
 	if err != nil {
 		return nil, coreerrors.Wrap(err, coreerrors.KindInternal, codeTemplateRender,
 			"the push payload could not be encoded")
 	}
-
-	// The size is checked HERE, where the template that produced it can be
-	// named, rather than after a device list has been walked and a per-device
-	// error can only say "too large" about a message nobody can point at.
 	if len(encoded) > MaxPayloadBytes {
 		return nil, coreerrors.Invalid(codePayloadTooLarge,
 			"the %q push payload renders to %d bytes; at most %d fit a push message",
-			event, len(encoded), MaxPayloadBytes)
+			name, len(encoded), MaxPayloadBytes)
 	}
 
 	return encoded, nil

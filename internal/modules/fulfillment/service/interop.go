@@ -95,7 +95,8 @@ const jsonNull = "null"
 //	  "total_weight":          1500,        // grams
 //	  "attributes":            {"customer_group_id": "vip"},
 //	  "include_admin_only":    false,       // ONLY admin flows pass true
-//	  "is_return":             false
+//	  "is_return":             false,
+//	  "cart":                  {...}        // the cart quoted for (ADR 0445); see [interopQuoteCart]
 //	}
 //
 // The numeric fields are INTEGERS and a fractional value is REJECTED. Decoding
@@ -114,6 +115,9 @@ type interopListRequest struct {
 	Attributes         map[string]string `json:"attributes"`
 	IncludeAdminOnly   bool              `json:"include_admin_only"`
 	IsReturn           bool              `json:"is_return"`
+	// Cart is the cart the options are quoted for; absent or null when the
+	// request names none (ADR 0445).
+	Cart *interopQuoteCart `json:"cart"`
 }
 
 // interopListResponse is the JSON schema of the [Interop.ListOptionsJSON]
@@ -247,6 +251,7 @@ func (i *Interop) ListOptionsJSON(ctx context.Context, request json.RawMessage) 
 		TrustedFacts:       true,
 		IncludeAdminOnly:   req.IncludeAdminOnly,
 		IsReturn:           req.IsReturn,
+		Cart:               req.Cart.quoteCart(),
 	})
 	if err != nil {
 		return nil, err

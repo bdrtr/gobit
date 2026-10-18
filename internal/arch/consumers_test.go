@@ -766,6 +766,11 @@ var subscriberlessPublications = map[string]outsideListener{
 			"back, over webhook-out",
 		Record: "0437",
 	},
+	"wishlist.back_in_stock": {
+		Listener: "a marketplace's backbone running in gobit's process pushes the back-in-stock alert to " +
+			"the customer's devices after the mail, and read the notification module's delivery rows for it",
+		Record: "0448",
+	},
 }
 
 // outsideListener is who hears a topic nothing inside gobit subscribes to, and

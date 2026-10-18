@@ -9,6 +9,38 @@ design. It is fixed with `1.0.0`.
 
 ## [Unreleased]
 
+### Added
+
+- **A shipping quote names the cart it prices** (ADR 0445, D300). A
+  calculated option's provider reads `QuoteInput.Cart`, a `core/provider`
+  `QuoteCart`: the cart's id, currency and traveling lines (every line but a
+  gift card's), each with its variant, product, quantity, unit price,
+  subtotal after discount, the variant's weight and the product's weight and
+  box as the catalog records them. It is nil on the eligibility lists, on an
+  order's delivery change and when the cart's goods could not be read; a
+  provider that prices the goods refuses it and its option drops out. The
+  read layer's product record gains `length`, `width` and `height`.
+- **A module or a plugin pushes to customers' devices through web-push**
+  (ADR 0446, D301). The plugin registers `webpush.ServiceName`
+  (`webpush.service`), a `*webpush.Pusher` whose `PushToCustomers` and
+  `PushToCustomer` push a `webpush.Push` — a template rendered in each
+  device's locale, then its language, then the default, or a written title,
+  body and url — with an optional `Tag`, and answer a `webpush.PushResult`.
+  The push payload gains `tag`; a template file's locale is read in lower
+  case, and a device's language now serves a regional locale with no file of
+  its own.
+- **The notification module's one-message surface is published** (ADR 0447,
+  D302): `core/plugin`'s `NotificationSenderName` and `NotificationSender`,
+  resolved from the container.
+- **`wishlist.back_in_stock`** (ADR 0448, D303): the stock alert flow
+  publishes `customer_id`, `variant_id`, `product_id` and `armed_at` once a
+  back-in-stock mail is handed over, before the mark is cleared. `webhook-out`
+  forwards it with `customer_id` withheld; a receiver registers for it by
+  name.
+- **`GET /store/v1/review-summaries`** (ADR 0449, D304): the approved
+  reviews' count and average of up to a hundred products named by repeated
+  `product_id`, in the order named, from one statement.
+
 ## [0.14.0] — 2026-10-15
 
 A plugin's storefront key joins the store surface's proof. The plugins are

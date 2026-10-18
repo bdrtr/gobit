@@ -112,6 +112,12 @@ var clientDeclarableFacts = []string{AttrSubtotal, AttrItemCount, AttrTotalWeigh
 // not the struct, and the input is not widened until this tree can address and
 // measure a parcel. TestEveryQuoteInputFieldIsFilledByTheTree refuses a field
 // of that input nothing here fills.
+//
+// # The cart's goods reach the provider since ADR 0445
+//
+// [ListOptionsInput.Cart] carries the cart's lines with each record's measures
+// as the catalog holds them, the variant's weight and the product's weight and
+// box, and the provider picks; the district is still nowhere.
 type ListOptionsInput struct {
 	// RegionID is the cart's region. Options whose region equals this AND
 	// options whose region is empty become candidates.
@@ -159,6 +165,10 @@ type ListOptionsInput struct {
 	// IsReturn says whether the return options or the normal options are being
 	// asked for.
 	IsReturn bool
+	// Cart is the cart the options are quoted for, handed to every calculated
+	// option's provider (ADR 0445). Only the cart flow's in-process request
+	// fills it; nil tells the provider no cart was named.
+	Cart *coreprovider.QuoteCart
 }
 
 // QuotedOption is a shipping option whose price has been determined.
@@ -368,6 +378,7 @@ func (s *Service) quote(
 		CountryCode:  countryCode,
 		TotalWeight:  in.TotalWeight,
 		ItemCount:    in.ItemCount,
+		Cart:         cloneCart(in.Cart),
 		Data:         option.Data,
 	})
 	if err != nil {
@@ -453,4 +464,16 @@ func matchRules(rules []models.ShippingOptionRule, attributes map[string]string)
 func matchRule(rule models.ShippingOptionRule, attributes map[string]string) bool {
 	value, ok := attributes[rule.Attribute]
 	return condition.Match(condition.Operator(rule.Operator), rule.Values, value, ok, nil)
+}
+
+// cloneCart hands each provider a cart of its own, so one that changes its
+// lines changes no other provider's quote.
+func cloneCart(cart *coreprovider.QuoteCart) *coreprovider.QuoteCart {
+	if cart == nil {
+		return nil
+	}
+	out := *cart
+	out.Lines = slices.Clone(cart.Lines)
+
+	return &out
 }

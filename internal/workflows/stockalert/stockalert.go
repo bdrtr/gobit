@@ -152,7 +152,9 @@ type Workflow struct {
 	prices    Prices
 	notifier  Notifier
 	reader    Reader
-	log       *slog.Logger
+	// events is the bus the back-in-stock event goes out on (ADR 0448).
+	events Publisher
+	log    *slog.Logger
 }
 
 // New builds the flow from resolved dependencies.
@@ -287,6 +289,9 @@ func (w *Workflow) mail(ctx context.Context, a *alert) error {
 	}
 	reference := fmt.Sprintf("%s:%s:%d", a.CustomerID, a.VariantID, a.ArmedAt.UnixNano())
 	if err := w.notifier.Send(ctx, TemplateBackInStock, ChannelEmail, reference, to, data); err != nil {
+		return err
+	}
+	if err := w.publishBackInStock(ctx, a, data[DataProductID], reference); err != nil {
 		return err
 	}
 	_, err = w.customers.ClearStockAlert(ctx, a.CustomerID, a.VariantID, *a.ArmedAt)
@@ -466,7 +471,12 @@ func FromContainer(c *container.Container, log *slog.Logger) (*Workflow, error) 
 		return nil, err
 	}
 
-	return New(customers, catalog, prices, notifier, reader, log), nil
+	events, err := resolve[Publisher](c, ServiceEvents)
+	if err != nil {
+		return nil, err
+	}
+
+	return New(customers, catalog, prices, notifier, reader, log).WithEvents(events), nil
 }
 
 // resolve reads one service and says which name failed.

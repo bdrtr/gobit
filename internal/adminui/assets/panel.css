@@ -2,7 +2,7 @@
  *
  * It is deliberately small and has no build step: the panel is an operator's
  * tool, not a storefront, and a stylesheet that needed compiling would be a
- * second artifact travelling next to a binary whose whole promise is "run it
+ * second artifact traveling next to a binary whose whole promise is "run it
  * and it works".
  *
  * There is no colour beyond a neutral scale and one accent. A panel that

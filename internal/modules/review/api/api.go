@@ -84,6 +84,9 @@ const (
 	pathStoreProductReviews = "/store/v1/products/{product_id}/reviews"
 	// pathStoreProductReviewSummary is the count and the average.
 	pathStoreProductReviewSummary = "/store/v1/products/{product_id}/review-summary"
+	// pathStoreReviewSummaries is the count and the average of each of a
+	// listing's products (ADR 0449).
+	pathStoreReviewSummaries = "/store/v1/review-summaries"
 	// pathAdminReviews is the moderation queue.
 	pathAdminReviews = "/admin/v1/reviews"
 	// pathAdminSuggestionAgreement is the report over the proposals a person
@@ -111,7 +114,7 @@ const maxBodyBytes = 64 << 10
 // Reviews is the surface the handler needs from the service.
 //
 // It is declared HERE, on the consumer's side, so the handler depends on the
-// six methods it calls rather than on the whole service. The storefront's two
+// methods it calls rather than on the whole service. The storefront's two
 // reads are separate methods from the admin listing, which is what keeps "the
 // storefront sees only approved reviews" checkable at this boundary too.
 type Reviews interface {
@@ -120,6 +123,7 @@ type Reviews interface {
 		ctx context.Context, productID string, filter models.Filter,
 	) (service.Page, error)
 	Summarize(ctx context.Context, productID string) (models.Summary, error)
+	SummarizeProducts(ctx context.Context, productIDs []string) ([]models.Summary, error)
 	GetReview(ctx context.Context, id string) (models.Review, error)
 	ListReviews(ctx context.Context, filter models.Filter) (service.Page, error)
 	Moderate(ctx context.Context, id string, in service.ModerateInput) (models.Review, error)
@@ -151,6 +155,7 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Post(pathStoreProductReviews, h.storeSubmit)
 	r.Get(pathStoreProductReviews, h.storeList)
 	r.Get(pathStoreProductReviewSummary, h.storeSummary)
+	r.Get(pathStoreReviewSummaries, h.storeSummaries)
 
 	// --- Admin API (operator) ---
 	r.With(corehttp.RequireScope(ScopeRead)).Get(pathAdminReviews, h.adminList)

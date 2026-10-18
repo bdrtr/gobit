@@ -47,6 +47,13 @@ type QuoteInput struct {
 	TotalWeight int64
 	// ItemCount is the number of items in the shipment.
 	ItemCount int64
+	// Cart is the cart the quote is asked for, its lines priced and measured
+	// as the cart flow reads them (ADR 0445). It is nil when the quote is not
+	// asked for a cart — the storefront's and the admin's eligibility lists,
+	// which take their facts from the caller, and an order's delivery change —
+	// and when the cart's goods could not be read; a provider that prices the
+	// goods refuses a nil cart, and its option drops out of the list.
+	Cart *QuoteCart
 	// Data is provider-specific free-form data.
 	Data map[string]any
 }

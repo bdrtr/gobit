@@ -100,6 +100,8 @@ func Describe(d *openapi.Doc) {
 		},
 	})
 
+	describeSummaries(d)
+
 	d.Describe(http.MethodGet, pathAdminReviews, openapi.Operation{
 		Summary: "Lists the reviews; with status=submitted it is the moderation queue.",
 		Description: "The queue is this listing filtered to \"submitted\" rather than an " +

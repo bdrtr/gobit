@@ -126,6 +126,11 @@ takes the shapes from the document, or from the generated model, by hand.
 openapi-typescript writes the section as a `webhooks` type beside `paths`
 ([measurements/0435](measurements/0435-what-a-receiver-had-to-spell.md)).
 
+A listing that shows a rating on each card reads the page's ratings in one
+request, `GET /store/v1/review-summaries?product_id=a&product_id=b`, rather
+than one `review-summary` per card
+([ADR 0449](adr/0449-a-listing-reads-its-ratings-in-one-request.md)).
+
 You can generate a client from the schema:
 
 ```bash

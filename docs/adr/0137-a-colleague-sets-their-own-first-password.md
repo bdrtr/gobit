@@ -5,7 +5,7 @@ cross-module surface carries it, and the invited person sets their own first pas
 through a second unprotected admin endpoint. It costs that surface and one table, and
 ends one person choosing another's secret.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0447](0447-a-module-sends-one-message-through-a-published-name.md), which publishes its cross-module surface under a name
 - **Date:** 2026-09-11
 
 ## Context
