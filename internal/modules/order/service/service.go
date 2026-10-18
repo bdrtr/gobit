@@ -258,6 +258,7 @@ type Service struct {
 	docs     DocumentedTax
 	catalog  Catalog
 	quotes   ExchangeQuote
+	mail     TransferMail
 	log      *slog.Logger
 	now      func() time.Time
 }
@@ -303,6 +304,10 @@ type Options struct {
 	// its return sends; it is OPTIONAL (ADR 0432). When nil such an exchange
 	// sends no variant, and every other path works without it.
 	Quotes ExchangeQuote
+	// Mail carries a transfer request's token to the order's address
+	// (ADR 0450); it is OPTIONAL. When nil a storefront request is refused,
+	// and every other path works without it.
+	Mail TransferMail
 	// Logger discards the logs when it is given as nil.
 	Logger *slog.Logger
 	// Now is the clock a reading at a moment is refused a future moment by
@@ -348,6 +353,7 @@ func New(opts Options) (*Service, error) {
 		docs:     opts.Documents,
 		catalog:  opts.Catalog,
 		quotes:   opts.Quotes,
+		mail:     opts.Mail,
 		log:      log,
 		now:      now,
 	}, nil

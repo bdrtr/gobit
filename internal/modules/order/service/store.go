@@ -129,6 +129,32 @@ type Store interface {
 	// AccessTokenDigests returns the digests of every token the order issued.
 	AccessTokenDigests(ctx context.Context, orderID string) ([][]byte, error)
 
+	// InsertTransfer writes an order's transfer; a request is written waiting
+	// and anything else closed at the database's now (ADR 0450).
+	InsertTransfer(ctx context.Context, t models.OrderTransfer) (models.OrderTransfer, error)
+	// GetTransfer returns the transfer; NotFound when there is none.
+	GetTransfer(ctx context.Context, id string) (models.OrderTransfer, error)
+	// LockTransfer locks the transfer, after its order's lock; it may only be
+	// called inside [Store.WithTx].
+	LockTransfer(ctx context.Context, id string) (models.OrderTransfer, error)
+	// RequestedTransfers returns the order's transfers still marked waiting,
+	// expired ones included.
+	RequestedTransfers(ctx context.Context, orderID string) ([]models.OrderTransfer, error)
+	// CloseTransfer moves a waiting transfer to status.
+	CloseTransfer(ctx context.Context, id string, status models.TransferStatus) (models.OrderTransfer, error)
+	// ListTransfers pages the order's transfers, newest first.
+	ListTransfers(ctx context.Context, orderID string, limit, offset int32) ([]models.OrderTransfer, int64, error)
+	// MoveOrderCustomer hands the order and the orders that add to it to the
+	// receiver while each still belongs to fromCustomerID, and returns the
+	// ids it moved.
+	MoveOrderCustomer(ctx context.Context, orderID, fromCustomerID, toCustomerID, toEmail string) ([]string, error)
+	// EraseTransferEmails empties the address a transfer asked on the given
+	// orders and wherever the person was the holder asked.
+	EraseTransferEmails(ctx context.Context, orderIDs []string, customerID, email string) (int64, error)
+	// TransfersForDisclosure returns the transfers of the given orders and
+	// every transfer naming the person.
+	TransfersForDisclosure(ctx context.Context, orderIDs []string, customerID, email string) ([]models.OrderTransfer, error)
+
 	// OrdersForDisclosure returns the orders of the person named by the
 	// customer id and/or the e-mail, WITHOUT locking anything.
 	//

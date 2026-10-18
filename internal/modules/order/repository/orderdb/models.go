@@ -267,3 +267,17 @@ type OrderSummary struct {
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
 }
+
+type OrderTransfer struct {
+	ID             string
+	OrderID        string
+	Status         string
+	RequestedBy    string
+	FromCustomerID *string
+	ToCustomerID   string
+	FromEmail      *string
+	TokenHash      []byte
+	ExpiresAt      pgtype.Timestamptz
+	ClosedAt       pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+}

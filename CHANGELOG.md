@@ -40,6 +40,25 @@ design. It is fixed with `1.0.0`.
 - **`GET /store/v1/review-summaries`** (ADR 0449, D304): the approved
   reviews' count and average of up to a hundred products named by repeated
   `product_id`, in the order named, from one statement.
+- **An order changes hands by its address's consent** (ADR 0450, D305). A
+  signed-in shopper who can open an order (one of its access tokens in
+  `X-Order-Token`) asks for it with
+  `POST /store/v1/orders/{id}/transfer-requests`; gobit mails the order's
+  address a token with the template `order.transfer_requested` (data
+  `order_id`, `display_id`, `transfer_id`, `transfer_token`, `expires_at`),
+  and whoever reads it answers at
+  `POST /store/v1/order-transfers/{transferId}/accept` or `/decline` with
+  `{"token": …}` within seven days; the shopper withdraws it at `/cancel`.
+  Acceptance moves the order and the orders that add to it to the receiver's
+  customer and address on record, withdraws their access tokens and publishes
+  `order.transferred` (`order_id`, `transfer_id`, `transferred_at`), which
+  `webhook-out` forwards. An operator lists an order's transfers with
+  `GET /admin/v1/orders/{id}/transfers` and moves it at once with
+  `POST /admin/v1/orders/{id}/transfers`
+  (`{"customer_id", "expected_customer_id"}`, `order:write`). Order migration
+  000045 adds `order_transfers`, declared to the data subject sweep. A
+  notification provider needs the new template for the request to be
+  delivered; a request whose mail fails is withdrawn and answered 503.
 
 ## [0.14.0] — 2026-10-15
 

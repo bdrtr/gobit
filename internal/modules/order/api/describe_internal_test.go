@@ -248,6 +248,31 @@ func describedEndpoints() []endpointExpectation {
 			response: filledOrder().storeOrderDTO, shape: pagedList,
 		},
 		{
+			method: http.MethodPost, path: pathStoreTransferRequests, status: "201",
+			response: filledStoreTransfer(),
+		},
+		{
+			method: http.MethodPost, path: pathStoreTransferAccept, status: "200",
+			request: transferAnswerRequest{Token: "ordxfr_x"}, response: filledStoreTransfer(),
+		},
+		{
+			method: http.MethodPost, path: pathStoreTransferDecline, status: "200",
+			request: transferAnswerRequest{Token: "ordxfr_x"}, response: filledStoreTransfer(),
+		},
+		{
+			method: http.MethodPost, path: pathStoreTransferCancel, status: "200",
+			response: filledStoreTransfer(),
+		},
+		{
+			method: http.MethodGet, path: pathAdminOrderTransfers, status: "200",
+			response: filledAdminTransfer(), shape: pagedList,
+		},
+		{
+			method: http.MethodPost, path: pathAdminOrderTransfers, status: "201",
+			request:  moveOrderRequest{CustomerID: "cus_2", ExpectedCustomerID: new(string)},
+			response: filledAdminTransfer(),
+		},
+		{
 			method: http.MethodGet, path: "/admin/v1/orders/{id}/returns", status: "200",
 			response: filledReturn(), shape: pagedList,
 		},
@@ -663,6 +688,23 @@ func describedEndpoints() []endpointExpectation {
 			status: "200", request: changeDeliveryRequest{ShippingOptionID: "so_2", PaymentCollectionID: "pay_col_1"},
 			response: filledAdminOrderDetail(),
 		},
+	}
+}
+
+// filledStoreTransfer is a transfer whose omitempty fields are written too.
+func filledStoreTransfer() storeTransferDTO {
+	at := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	return storeTransferDTO{
+		ID: "otr_1", OrderID: "order_1", Status: "requested", CreatedAt: at,
+		ExpiresAt: &at, ClosedAt: &at,
+	}
+}
+
+// filledAdminTransfer is the operator's record of [filledStoreTransfer].
+func filledAdminTransfer() adminTransferDTO {
+	return adminTransferDTO{
+		storeTransferDTO: filledStoreTransfer(), RequestedBy: "customer",
+		FromCustomerID: "cus_1", ToCustomerID: "cus_2", FromEmail: "a@example.com",
 	}
 }
 

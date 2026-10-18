@@ -75,6 +75,7 @@ const (
 	tableOrderCreditLines       = "order_credit_lines"
 	tableOrderClaimEvidence     = "order_claim_evidence"
 	tableOrderLineCancellations = "order_line_cancellations"
+	tableOrderTransfers         = "order_transfers"
 )
 
 // The column names that appear on more than one table.
@@ -327,6 +328,25 @@ var personalColumns = []personaldata.Holding{
 		Why:       "the merchant's free detail on a line's cancellation (D188)",
 		OnErasure: personaldata.Kept,
 	},
+	{
+		Table: tableOrderTransfers, Column: "from_customer_id", Kind: personaldata.Named,
+		Why: "the customer an order belonged to before it changed hands (ADR 0450); a guest's " +
+			"order had none",
+		// Kept for orders.customer_id's reason: it is the handle a second
+		// sweep finds the transfer by.
+		OnErasure: personaldata.Kept,
+	},
+	{
+		Table: tableOrderTransfers, Column: "to_customer_id", Kind: personaldata.Named,
+		Why:       "the customer an order was handed to or asked for by (ADR 0450)",
+		OnErasure: personaldata.Kept,
+	},
+	{
+		Table: tableOrderTransfers, Column: "from_email", Kind: personaldata.Named,
+		Why: "the address an order held when its transfer was written, the one a request " +
+			"asked (ADR 0450)",
+		OnErasure: personaldata.Emptied,
+	},
 }
 
 // PersonalDataHoldings returns everything this module says it keeps about
@@ -476,6 +496,18 @@ func (s *Service) Erase(ctx context.Context, subject personaldata.Subject) (pers
 		if _, err := s.store.WithdrawAccessTokens(ctx, every); err != nil {
 			return err
 		}
+		// The address a transfer asked is emptied wherever the person was the
+		// holder asked, on an order that is now somebody else's too, and on
+		// every order anonymized here (ADR 0450). The rows are counted: a
+		// person who gave a guest order away holds nothing else here, and an
+		// answer of nothing would hide the address that was there. Like a
+		// guest order's e-mail, the address is the handle, so a second sweep
+		// finds what the first emptied no more.
+		transfers, err := s.store.EraseTransferEmails(ctx, ids, customerID, email)
+		if err != nil {
+			return err
+		}
+		rows = transfers
 		if len(ids) == 0 {
 			return nil
 		}
@@ -489,7 +521,7 @@ func (s *Service) Erase(ctx context.Context, subject personaldata.Subject) (pers
 			return err
 		}
 
-		rows = contacts + addresses
+		rows += contacts + addresses
 		anonymized = len(ids)
 
 		return nil

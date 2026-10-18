@@ -39,6 +39,7 @@ func tableAccessors() map[string][]string {
 		tableOrderCreditLines:       columnsOf(creditLineValues),
 		tableOrderClaimEvidence:     columnsOf(claimEvidenceValues),
 		tableOrderLineCancellations: columnsOf(lineCancellationValues),
+		tableOrderTransfers:         columnsOf(transferValues),
 	}
 }
 

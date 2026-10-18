@@ -136,6 +136,7 @@ var (
 	_ ordersvc.CausedRefunds      = (*paymentsvc.Interop)(nil)
 	_ ordersvc.DocumentedTax      = (*invoicesvc.Interop)(nil)
 	_ notifsvc.OrderContactReader = (*ordersvc.Interop)(nil)
+	_ ordersvc.TransferMail       = (*notifsvc.Interop)(nil)
 )
 
 // A module resolving another module's surface from its root package.

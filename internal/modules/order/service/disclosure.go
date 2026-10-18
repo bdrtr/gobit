@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"maps"
 	"slices"
 
 	"github.com/bdrtr/gobit/core/errors"
@@ -164,6 +165,12 @@ var (
 		"caption": func(e models.ClaimEvidence) any { return textValue(e.Caption) },
 	}
 
+	transferValues = disclosureValues[models.OrderTransfer]{
+		"from_customer_id": func(t models.OrderTransfer) any { return textValue(t.FromCustomerID) },
+		"to_customer_id":   func(t models.OrderTransfer) any { return textValue(t.ToCustomerID) },
+		"from_email":       func(t models.OrderTransfer) any { return textValue(t.FromEmail) },
+	}
+
 	lineCancellationValues = disclosureValues[models.OrderLineCancellation]{
 		columnReason: func(c models.OrderLineCancellation) any { return textValue(c.Reason) },
 		columnNote:   func(c models.OrderLineCancellation) any { return textValue(c.Note) },
@@ -247,6 +254,14 @@ func (s *Service) PersonalDataOf(
 		if rows.orders, readErr = s.store.OrdersForDisclosure(ctx, customerID, email); readErr != nil {
 			return readErr
 		}
+		// A transfer names the person on an order that may no longer be
+		// theirs, so it is read whether or not any order is (ADR 0450). An
+		// empty list matches no order there: the statement asks for the
+		// person's own handles beside it.
+		if rows.transfers, readErr = s.store.TransfersForDisclosure(
+			ctx, orderIDsOf(rows.orders), customerID, email); readErr != nil {
+			return readErr
+		}
 		// The person has no order here, so the child reads have nothing to
 		// look for. Skipping them is not an optimization: called with an empty
 		// list they would either scan or have to be given an "everything"
@@ -262,7 +277,7 @@ func (s *Service) PersonalDataOf(
 		return personaldata.Disclosure{}, err
 	}
 
-	if len(rows.orders) == 0 {
+	if len(rows.orders) == 0 && len(rows.transfers) == 0 {
 		s.log.InfoContext(ctx, "a disclosure request was answered",
 			"holder", ErasureHolder, "state", string(personaldata.Nothing), "records", 0)
 
@@ -320,6 +335,7 @@ func disclosureRecords(rows *dossierRows) ([]personaldata.Record, error) {
 	exchangesByOrder := groupByOrder(rows.exchanges, func(e models.Exchange) string { return e.OrderID })
 	claimsByOrder := groupByOrder(rows.claims, func(c models.Claim) string { return c.OrderID })
 	creditsByOrder := groupByOrder(rows.creditLines, func(c models.OrderCreditLine) string { return c.OrderID })
+	transfersByOrder := groupByOrder(rows.transfers, func(t models.OrderTransfer) string { return t.OrderID })
 
 	// A replacement, a claim's evidence and a line's cancellation name no
 	// order; each hangs on it through the parent the same snapshot read.
@@ -378,6 +394,15 @@ func disclosureRecords(rows *dossierRows) ([]personaldata.Record, error) {
 		appendRecords(dossier, tableOrderLineCancellations, id,
 			cancellationsByOrder[id], lineCancellationValues,
 			func(c models.OrderLineCancellation) string { return c.ID })
+		appendRecords(dossier, tableOrderTransfers, id,
+			transfersByOrder[id], transferValues, func(t models.OrderTransfer) string { return t.ID })
+		delete(transfersByOrder, id)
+	}
+	// The transfers that name the person on orders that are not theirs come
+	// last, under the order they moved, in the order's id order (ADR 0450).
+	for _, id := range slices.Sorted(maps.Keys(transfersByOrder)) {
+		appendRecords(dossier, tableOrderTransfers, id,
+			transfersByOrder[id], transferValues, func(t models.OrderTransfer) string { return t.ID })
 	}
 	if dossier.err != nil {
 		return nil, dossier.err
@@ -398,6 +423,7 @@ type dossierRows struct {
 	creditLines   []models.OrderCreditLine
 	evidence      []models.ClaimEvidence
 	cancellations []models.OrderLineCancellation
+	transfers     []models.OrderTransfer
 }
 
 // readDossierChildren reads every child table of the given orders into rows.

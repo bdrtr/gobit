@@ -771,6 +771,12 @@ var subscriberlessPublications = map[string]outsideListener{
 			"the customer's devices after the mail, and read the notification module's delivery rows for it",
 		Record: "0448",
 	},
+	"order.transferred": {
+		Listener: "the same marketplace copies an order's customer into its own analytics when the " +
+			"order is placed and reads it again when the order changes hands; its plugin hears the " +
+			"topic through Host.Subscribe",
+		Record: "0450",
+	},
 }
 
 // outsideListener is who hears a topic nothing inside gobit subscribes to, and

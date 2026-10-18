@@ -52,6 +52,7 @@ import (
 var erasureKeyColumns = map[string]string{
 	"orders":          "id",
 	"order_addresses": "order_id",
+	"order_transfers": "order_id",
 }
 
 // erasureAddress produces one address of an order, filled in every personal
@@ -174,6 +175,14 @@ func TestErasureAnonymizesASettledOrder(t *testing.T) {
 
 	ord := placeOrderFor(t, svc, customerID, email)
 	settleOrder(t, svc, ord)
+	// The order came to the person from somebody else (ADR 0450), so its
+	// transfer names the address that was asked.
+	_, err := testPool.Pool().Exec(ctx, `
+        INSERT INTO order_transfers (id, order_id, status, requested_by, from_customer_id,
+                                     to_customer_id, from_email, closed_at)
+        VALUES ($1, $2, 'accepted', 'operator', 'cus_ERASE_BEFORE', $3, 'before@example.com', now())`,
+		"otr_"+ord.ID, ord.ID, customerID)
+	require.NoError(t, err)
 
 	result, err := svc.Erase(ctx, personaldata.Subject{CustomerID: customerID, Email: email})
 	require.NoError(t, err)
@@ -181,7 +190,8 @@ func TestErasureAnonymizesASettledOrder(t *testing.T) {
 	assert.Equal(t, personaldata.Anonymized, result.Outcome)
 	assert.Equal(t, order.ModuleName, result.Holder,
 		"the holder has to be the module's name; the sweep prints it next to the other holders")
-	assert.Equal(t, 3, result.Rows, "one order row and its two address rows were written")
+	assert.Equal(t, 4, result.Rows,
+		"one order row, its two address rows and its transfer's asked address were written")
 	assert.NotEmpty(t, result.Why, "an anonymized answer that kept columns has to say why")
 
 	// The declaration and the erasure have to agree. Every column the module

@@ -82,6 +82,12 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get(pathStoreOwnOrders, h.storeListOwnOrders)
 	r.Get("/store/v1/orders/{id}/timeline", h.storeGetOrderTimeline)
 	r.Post("/store/v1/orders/{id}/returns", h.storeRequestReturn)
+	// An order changes hands (ADR 0450). The request is the order's, behind
+	// its access; the answers carry the mailed token and are not.
+	r.Post(pathStoreTransferRequests, h.storeRequestTransfer)
+	r.Post(pathStoreTransferAccept, h.storeAcceptTransfer)
+	r.Post(pathStoreTransferDecline, h.storeDeclineTransfer)
+	r.Post(pathStoreTransferCancel, h.storeCancelTransfer)
 
 	// --- Admin API (administration) ---
 	read.Get("/admin/v1/orders", h.adminListOrders)
@@ -218,4 +224,8 @@ func (h *Handler) Routes(r chi.Router) {
 	// (ADR 0171).
 	read.Get("/admin/v1/orders/{id}/as-of", h.adminGetOrderAsOf)
 	read.Get(pathAdminOrderJournal, h.adminOrderJournal)
+
+	// Who the order belongs to, and an operator's move (ADR 0450).
+	read.Get(pathAdminOrderTransfers, h.adminListTransfers)
+	write.Post(pathAdminOrderTransfers, h.adminMoveOrder)
 }

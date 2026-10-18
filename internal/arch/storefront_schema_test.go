@@ -427,6 +427,50 @@ var storefrontStoredClaims = map[string]claimVerdict{
 			"REFUSED, and the difference is what it is read to mean: here it says what the " +
 			"request is about, where on a review it would have said who wrote it",
 	},
+	"order.order_transfers.order_id": {
+		limb: limbConfined,
+		why: "the SUBJECT of a transfer request, arriving in the PATH behind the order's access " +
+			"(ADR 0439) as order_returns.order_id does; the answering routes name the transfer " +
+			"by its path id and the token mailed for it, and no body names an order (ADR 0450)",
+	},
+	"order.order_transfers.from_customer_id": {
+		limb: limbConfined,
+		why: "copied by the SERVER from the order when the request is written, so it says whom " +
+			"the order belonged to and no body names it (ADR 0450)",
+	},
+	"order.order_transfers.to_customer_id": {
+		limb: limbConfined,
+		why: "the customer the bound identity PROVES the request's writer to be, never a body " +
+			"field; it names the writer, who asks for the order to become theirs (ADR 0450)",
+	},
+	"order.order_transfers.from_email": {
+		limb: limbConfined,
+		why: "copied by the SERVER from the order: the address the request's token is mailed " +
+			"to, the one every mail of the order went to, which no body names (ADR 0450)",
+	},
+	"order.orders.customer_id": {
+		limb: limbConfined,
+		why: "written by an acceptance only, to the receiver the request recorded from the " +
+			"identity's proof, by whoever holds the token mailed to the order's own address, " +
+			"and only while the order still holds the customer and address the request was " +
+			"written against; no storefront body names it (ADR 0450)",
+	},
+	"order.orders.email": {
+		limb: limbConfined,
+		why: "written by an acceptance only, as the receiver's address on record, read from the " +
+			"customer module rather than from any body (ADR 0450)",
+	},
+	"order.orders.adds_to_order_id": {
+		limb: limbConfined,
+		why: "an acceptance reaches the orders table to move an order and the orders that add " +
+			"to it; it selects by this column and never writes it (ADR 0450)",
+	},
+	"order.order_access_tokens.order_id": {
+		limb: limbConfined,
+		why: "an acceptance DELETES the moved orders' access tokens and writes none, so the " +
+			"links mailed to the previous holder stop opening an order that is no longer " +
+			"theirs (ADR 0450)",
+	},
 }
 
 // TestNoStorefrontWriteStoresAnUnjudgedIdentityClaim is the schema boundary.

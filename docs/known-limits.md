@@ -168,8 +168,10 @@ past and is not corrected retroactively.
   that record issued no token, so a guest's opens to nothing at the storefront
   and a customer's to the proof alone, and an old mail's link opens nothing. A
   token stays valid as long as the order, and an erasure of the person, which
-  withdraws the tokens of every order of theirs, retained ones included, is the
-  only thing that withdraws it; a link forwarded with a mail opens the order for
+  withdraws the tokens of every order of theirs, retained ones included, and an
+  accepted transfer of the order
+  ([ADR 0450](adr/0450-an-order-changes-hands-by-its-addresss-consent.md)) are the
+  only things that withdraw it; a link forwarded with a mail opens the order for
   whoever receives it. A completion repeated under the same `Idempotency-Key`,
   path and body answers its recorded response, token included, so the
   idempotency record holds the plaintext for the key's lifetime
@@ -184,6 +186,14 @@ past and is not corrected retroactively.
   retried so is answered the completed cart's 404; its order token is in the
   order mail. The order id itself still travels in webhooks, logs and the
   shop's URLs, where it names the order without opening it.
+- **An order that changed hands still names its previous holder where the
+  sale did.** A transfer
+  ([ADR 0450](adr/0450-an-order-changes-hands-by-its-addresss-consent.md))
+  moves the order's customer and e-mail and leaves the shipping and billing
+  addresses, the invoice and the payment as they were sold. An erasure of the
+  previous holder empties the address their transfer asked and does not reach
+  the order's addresses, which it no longer finds as theirs; an erasure of the
+  receiver anonymizes them with the order.
 - **An admin session names its browser, not its place.** Since
   [ADR 0276](adr/0276-a-session-names-the-browser-that-opened-it.md) a session
   lists the `User-Agent` of the sign-in that opened it, as the browser gave it,

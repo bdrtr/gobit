@@ -119,6 +119,12 @@ var notPersonalColumns = map[string][]string{
 	"order_access_tokens": {
 		"order_id", "token_hash", "created_at",
 	},
+	// A transfer's state, its writer, its token's digest and its moments
+	// (ADR 0450); the three columns naming people are declared.
+	"order_transfers": {
+		"id", "order_id", "status", "requested_by", "token_hash", "expires_at",
+		"closed_at", "created_at",
+	},
 }
 
 // TestPersonalDataCoversEveryColumnOfTheSchema holds the declaration to the

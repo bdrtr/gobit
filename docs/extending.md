@@ -392,9 +392,10 @@ return's receipt, or the claim, exchange and replacement transitions: a topic
 arrives with the first subscriber inside gobit that acts on it, or with an
 outside consumer's report decided in a record, which the arch gate's
 `subscriberlessPublications` names (ADR 0063, ADR 0386, ADR 0437). A parcel's
-delivery, a return's opening and withdrawal and a back-in-stock alert
-(ADR 0448) are of the second kind: nothing inside gobit subscribes to them and
-`webhook-out` carries them.
+delivery, a return's opening and withdrawal, a back-in-stock alert
+(ADR 0448) and an order's transfer (ADR 0450) are of the second kind: nothing
+inside gobit subscribes to them, `webhook-out` carries them, and a plugin hears
+them with `Host.Subscribe`.
 `fulfillment.returned` is the carrier bringing a parcel back undelivered;
 `order.return_*` is the customer's return record. There is no transition hook
 beside the bus.
@@ -413,6 +414,7 @@ beside the bus.
 | `fulfillment.delivered` | `fulfillment_id`, `reference`, `return_id` (empty for a parcel that went out), `delivered_at` |
 | `order.return_opened` | `order_id`, `return_id`, `opened_at` |
 | `order.return_canceled` | `order_id`, `return_id`, `canceled_at` |
+| `order.transferred` | `order_id`, `transfer_id`, `transferred_at` |
 | `cart.created` / `cart.completed` | `cart_id`, `region_id`, `currency_code`, `occurred_at` |
 | `wishlist.back_in_stock` | `customer_id`, `variant_id`, `product_id`, `armed_at` |
 
@@ -435,7 +437,8 @@ receiver written in any other language (ADR 0435).
 `placed_at` is a timestamp, but it too is a string: the moment the order was
 placed, converted to UTC and formatted with `time.RFC3339Nano`
 (`EventFieldPlacedAt`). `occurred_at`, `canceled_at`, `completed_at`,
-`returned_at`, `delivered_at` and `opened_at` are the same shape. Every
+`returned_at`, `delivered_at`, `opened_at` and `transferred_at` are the same
+shape. Every
 moment is the one its record stores, so it equals what the record's read
 returns, to the microsecond.
 
@@ -482,6 +485,20 @@ more, with the template `wishlist.price_drop`, when a variant whose price the
 customer marked in a region is quoted below the price recorded at the mark; the
 data adds `currency_code`, `previous_amount` and `amount`, both amounts in
 minor units (ADR 0216). The `stock-alert` job runs it every five minutes.
+
+An order changes hands (ADR 0450). `order.transferred` is published once per
+order that moved — the order and every order that adds to it — and carries
+no customer: a subscriber that keeps a copy of an order's customer reads the
+order again, which is the truth when two transfers arrive out of order. A
+shopper's request is mailed through the notification module, not the bus,
+because the mail carries a secret: the template `order.transfer_requested`
+goes to the order's own address, and its data is `order_id`, `display_id`,
+`transfer_id`, `transfer_token` (the only copy of the token that answers the
+request; the storefront sends it back in the body of
+`POST /store/v1/order-transfers/{transferId}/accept` or `/decline`) and
+`expires_at` (RFC 3339, seven days after the request). A provider without
+the template fails the send, and the request is withdrawn and answered 503,
+so an installation that offers transfers writes the template first.
 
 **Notification** listens to `order.placed` and sends the order confirmation, and
 to `order.completed` and sends the completion notice (ADR 0386), through the

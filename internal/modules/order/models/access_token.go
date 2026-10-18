@@ -70,3 +70,29 @@ func AccessTokenMatches(presented string, digests [][]byte) bool {
 
 	return matched == 1
 }
+
+// A transfer's token is made and compared as an access token is (ADR 0450):
+// it answers an order's transfer request and is mailed to the order's address.
+
+// NewTransferToken returns a new transfer token and the digest a transfer
+// keeps of it, made as an access token is (256 random bits, SHA-256).
+func NewTransferToken() (plaintext string, digest []byte, err error) {
+	body := make([]byte, accessTokenEntropyBytes)
+	if _, err := rand.Read(body); err != nil {
+		return "", nil, err
+	}
+	plaintext = TransferTokenPrefix + base64.RawURLEncoding.EncodeToString(body)
+
+	return plaintext, AccessTokenDigest(plaintext), nil
+}
+
+// TransferTokenMatches reports whether presented is the token whose digest the
+// transfer keeps, in constant time. An empty token and a transfer holding no
+// digest match nothing.
+func (t OrderTransfer) TransferTokenMatches(presented string) bool {
+	if presented == "" || len(t.TokenHash) == 0 {
+		return false
+	}
+
+	return subtle.ConstantTimeCompare(AccessTokenDigest(presented), t.TokenHash) == 1
+}

@@ -175,6 +175,11 @@ type fakeStore struct {
 	// (ADR 0439), in the order they were issued.
 	tokens map[string][][]byte
 
+	// transfers are the orders' transfers (ADR 0450); failTransferInsert, when
+	// set, is returned by InsertTransfer.
+	transfers          map[string]models.OrderTransfer
+	failTransferInsert error
+
 	// hookCreateOrder, when it is set, is called ONCE at the BEGINNING of
 	// CreateOrder and is cleared afterwards.
 	//
@@ -205,6 +210,7 @@ func newFakeStore() *fakeStore {
 		cancels:         map[string]models.OrderLineCancellation{},
 		erased:          map[string]time.Time{},
 		tokens:          map[string][][]byte{},
+		transfers:       map[string]models.OrderTransfer{},
 	}
 }
 

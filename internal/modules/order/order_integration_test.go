@@ -57,7 +57,7 @@ var moduleTables = []string{
 	"order_replacements", "order_replacement_items", "order_addresses",
 	"order_credit_lines", "order_claim_evidence", "order_line_cancellations",
 	"order_shipping_methods", "order_delivery_changes", "order_replacement_item_parts",
-	"order_access_tokens",
+	"order_access_tokens", "order_transfers",
 }
 
 // Constants used in the test data. The region, customer and variant ids belong

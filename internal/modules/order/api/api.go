@@ -292,6 +292,9 @@ type Handler struct {
 	// (ADR 0367), and the customer of an order its token does not open
 	// (ADR 0439); nil refuses the first and leaves the second to the token.
 	identity corehttp.Identity
+	// transfers moves an order to another customer (ADR 0450); nil fails
+	// the transfer routes closed.
+	transfers Transfers
 }
 
 // New produces the handler set that runs over the given service and flow.

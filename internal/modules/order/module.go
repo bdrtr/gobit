@@ -334,7 +334,11 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		// the deferral the spending rule needs is about another MODULE not
 		// being registered yet, and that does not apply to core.
 		Catalog: queryLayer,
-		Logger:  log,
+		// A transfer request's token is mailed through the notification
+		// module, resolved on first use for the spending rule's reason
+		// (ADR 0450).
+		Mail:   &transferMail{c: c, log: log},
+		Logger: log,
 	})
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
@@ -398,7 +402,8 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	receiving := &returnReceiving{c: c, log: log}
 	fulfilling := &fulfillingFlow{c: c, log: log}
 	invoicing := &invoicingFlow{c: c, log: log}
-	m.handler = api.New(svc, receiving, invoicing, fulfilling).WithIdentity(storefrontIdentity(c, log))
+	m.handler = api.New(svc, receiving, invoicing, fulfilling).WithIdentity(storefrontIdentity(c, log)).
+		WithTransfers(svc)
 	// The panel acts on the after-sales records, opens a parcel (ADR 0324)
 	// and issues the invoice (ADR 0335) through the same flows the API does
 	// (ADR 0271), so the two surfaces refuse and fail alike.

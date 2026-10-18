@@ -235,6 +235,7 @@ func Describe(d *openapi.Doc) {
 	describeTimeline(d)
 	describeAsOf(d)
 	describeOrderJournal(d)
+	describeTransfers(d)
 }
 
 // describeAsOf documents the order read at a past moment (ADR 0171).

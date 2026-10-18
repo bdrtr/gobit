@@ -152,7 +152,10 @@ var customerRoutes = map[string]struct{}{
 	"/store/v1/customers/{id}/store-credit/balance":   {},
 	"/store/v1/customers/{id}/loyalty-points/balance": {},
 	// A customer's own orders (ADR 0367).
-	"/store/v1/customers/{id}/orders":                {},
+	"/store/v1/customers/{id}/orders": {},
+	// A shopper's withdrawal of their own transfer request, which only the
+	// customer who asked reaches (ADR 0450).
+	"/store/v1/order-transfers/{transferId}/cancel":  {},
 	"/store/v1/b2b/customers/{customer_id}/company":  {},
 	"/store/v1/b2b/customers/{customer_id}/employee": {},
 }
