@@ -152,7 +152,7 @@ func Describe(d *openapi.Doc) {
 	d.Describe(http.MethodGet, "/admin/v1/orders", openapi.Operation{
 		Summary: "Lists orders with filtering and paging.",
 		// The parameters are the ones the handler READS, not the ones we could
-		// wish for: [Handler.adminListOrders] reads exactly these eight. Line
+		// wish for: [Handler.adminListOrders] reads exactly these ten. Line
 		// items are NOT LOADED in the list, which is why there is no parameter
 		// such as "expand" here either — had there been one, it would have
 		// promised a feature the server ignores.
@@ -179,6 +179,24 @@ func Describe(d *openapi.Doc) {
 					"order's cart was opened in, which the order recorded when it was placed. "+
 					"An order whose cart named no channel, or placed before orders recorded "+
 					"one, is in no channel's list (ADR 0410)."),
+			queryParameter("payment_status", typeString,
+				"Payment filter, read from what the order's summary reports collected and "+
+					"refunded against its total less its credits: not_paid (nothing collected "+
+					"while it owes; an authorized payment not yet captured is here), "+
+					"partially_captured, captured (collected up to what it owes, or owing "+
+					"nothing), partially_refunded or refunded. Any other value is refused "+
+					"with 422 (ADR 0457)."),
+			queryParameter("q", typeString,
+				"Search, done in the database. \"#1042\" finds the order numbered 1042 "+
+					"alone; \"1042\" finds it and the orders whose words hold 1042. Otherwise "+
+					"an order is found when every word of q begins a word of its e-mail, or "+
+					"every word begins a word of one address it holds now (first name, last "+
+					"name, company), case and Turkish and Latin marks folded (I and dotless "+
+					"i alike); a q of digits and + - ( ) . with four digits or more also "+
+					"finds the phone of such an address holding them, a leading 0 or 90 "+
+					"ignored. An address a correction closed and an erased order are not "+
+					"searched. Every other filter, the paging and count apply to the hits. "+
+					"Over 200 characters is refused with 422 (ADR 0456)."),
 			queryParameter("limit", typeInteger,
 				"Page size; when it is not given the service's default applies."),
 			queryParameter("offset", typeInteger, "Number of records to skip."),

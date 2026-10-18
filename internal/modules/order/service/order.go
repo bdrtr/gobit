@@ -688,6 +688,16 @@ type ListOrdersInput struct {
 	// SalesChannelID, when given, returns only the orders placed in that
 	// sales channel (ADR 0410).
 	SalesChannelID *string
+	// PaymentStatus, when given, returns only the orders whose payment stands
+	// there: not_paid, partially_captured, captured, partially_refunded or
+	// refunded (ADR 0457).
+	PaymentStatus *string
+	// Q, when given, returns only the orders it finds: "#1042" the order
+	// numbered 1042, "1042" that order and the orders whose words hold it, and
+	// anything else the orders whose e-mail, or one of whose current addresses,
+	// holds the start of each of its words, or whose phone holds its digits
+	// (ADR 0456).
+	Q *string
 	// Page holds the pagination parameters.
 	Page Page
 }
@@ -738,6 +748,21 @@ func (s *Service) ListOrders(ctx context.Context, in ListOrdersInput) (OrderPage
 	}
 	filter.AwaitingPayment = in.AwaitingPayment
 	filter.PlacedByOperator = in.PlacedByOperator
+	if in.PaymentStatus != nil {
+		status := models.PaymentStatus(*in.PaymentStatus)
+		if !status.Valid() {
+			return OrderPage{}, errors.Invalid(CodeInvalidInput,
+				"undefined payment status: %q", *in.PaymentStatus)
+		}
+		filter.PaymentStatus = &status
+	}
+	if in.Q != nil {
+		search, err := orderSearch(*in.Q)
+		if err != nil {
+			return OrderPage{}, err
+		}
+		filter.Search = search
+	}
 
 	// One row MORE than asked for is fetched and the extra one is dropped
 	// below: that is how "is there a next page" is answered without a second

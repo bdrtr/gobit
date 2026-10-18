@@ -129,7 +129,21 @@ var caseFoldingDeclarations = map[string]string{
 		"upper() cannot disagree with Go's strings.ToUpper on any cluster. Without that check " +
 		"a code carrying \"é\" would be stored on one installation and refused on another. " +
 		"ADR 0109",
+
+	"internal/modules/customer/migrations/000008_a_customer_is_found_by_a_part_of_it.up.sql": searchFoldDeclaration,
+	"internal/modules/order/migrations/000046_an_order_is_found_by_a_part_of_it.up.sql":      searchFoldDeclaration,
+	"internal/modules/review/migrations/000005_a_review_is_found_by_its_words.up.sql":        searchFoldDeclaration,
 }
+
+// searchFoldDeclaration is the one reason the three search migrations of
+// ADR 0456 give; they carry one function each, written alike.
+const searchFoldDeclaration = "SOUND FOR THE TABLE AND ASCII, and the cluster's beyond them. " +
+	"The search document folds with lower(translate(...)): translate() maps every Latin " +
+	"letter of internal/core/textfold's table, small and capital, to its ASCII base before " +
+	"lower() sees it, so those letters and ASCII fold alike on every cluster, and " +
+	"TestEverySearchFoldIsTheGoFold holds the strings to the Go table. A letter outside the " +
+	"table folds as lower() folds it on that cluster (ADR 0015); the query is folded by the " +
+	"same function, so the two sides never disagree on one cluster. ADR 0456"
 
 // TestEverySqlThatFoldsCaseIsDeclared is the audit.
 //

@@ -596,7 +596,7 @@ func TestDescribedEndpointsPromiseNoUnreadParameter(t *testing.T) {
 	paths, _ := buildDoc(t)
 
 	expected := map[string][]string{
-		"GET /admin/v1/customers":       {"email", "has_account", "group_id", "limit", "offset", "after"},
+		"GET /admin/v1/customers":       {"email", "has_account", "group_id", "q", "limit", "offset", "after"},
 		"GET /admin/v1/customer-groups": {"limit", "offset"},
 	}
 

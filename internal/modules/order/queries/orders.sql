@@ -92,6 +92,20 @@ WHERE (sqlc.narg('customer_id')::text IS NULL OR customer_id = sqlc.narg('custom
        OR (placed_by IS NOT NULL) = sqlc.narg('placed_by_operator')::boolean)
   AND (sqlc.narg('sales_channel_id')::text IS NULL
        OR sales_channel_id = sqlc.narg('sales_channel_id')::text)
+  -- An order's payment status is read from what its summary reports
+  -- collected and refunded, against its total less its credits (ADR 0457).
+  -- The CASE is written out in the four list statements and changed in all.
+  AND (sqlc.narg('payment_status')::text IS NULL OR sqlc.narg('payment_status')::text = (
+    SELECT CASE
+             WHEN COALESCE(s.refunded_total, 0) > 0 AND s.refunded_total >= s.paid_total THEN 'refunded'
+             WHEN COALESCE(s.refunded_total, 0) > 0 THEN 'partially_refunded'
+             WHEN COALESCE(s.paid_total, 0) >= orders.total
+                  - COALESCE((SELECT SUM(c.amount) FROM order_credit_lines c WHERE c.order_id = orders.id), 0)
+               THEN 'captured'
+             WHEN COALESCE(s.paid_total, 0) = 0 THEN 'not_paid'
+             ELSE 'partially_captured'
+           END
+    FROM (SELECT 1) AS one LEFT JOIN order_summaries s ON s.order_id = orders.id))
   AND (created_at, id) < (
     COALESCE(sqlc.narg('after_at')::timestamptz, 'infinity'::timestamptz),
     COALESCE(sqlc.narg('after_id')::text, '')
@@ -124,7 +138,21 @@ WHERE (sqlc.narg('customer_id')::text IS NULL OR customer_id = sqlc.narg('custom
   AND (sqlc.narg('placed_by_operator')::boolean IS NULL
        OR (placed_by IS NOT NULL) = sqlc.narg('placed_by_operator')::boolean)
   AND (sqlc.narg('sales_channel_id')::text IS NULL
-       OR sales_channel_id = sqlc.narg('sales_channel_id')::text);
+       OR sales_channel_id = sqlc.narg('sales_channel_id')::text)
+  -- An order's payment status is read from what its summary reports
+  -- collected and refunded, against its total less its credits (ADR 0457).
+  -- The CASE is written out in the four list statements and changed in all.
+  AND (sqlc.narg('payment_status')::text IS NULL OR sqlc.narg('payment_status')::text = (
+    SELECT CASE
+             WHEN COALESCE(s.refunded_total, 0) > 0 AND s.refunded_total >= s.paid_total THEN 'refunded'
+             WHEN COALESCE(s.refunded_total, 0) > 0 THEN 'partially_refunded'
+             WHEN COALESCE(s.paid_total, 0) >= orders.total
+                  - COALESCE((SELECT SUM(c.amount) FROM order_credit_lines c WHERE c.order_id = orders.id), 0)
+               THEN 'captured'
+             WHEN COALESCE(s.paid_total, 0) = 0 THEN 'not_paid'
+             ELSE 'partially_captured'
+           END
+    FROM (SELECT 1) AS one LEFT JOIN order_summaries s ON s.order_id = orders.id));
 
 -- GetOrdersByIDs satisfies the Query layer's FetchByIDs call in a SINGLE round
 -- trip; no per-ID query (N+1) is made.

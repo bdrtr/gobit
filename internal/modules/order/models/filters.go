@@ -35,6 +35,12 @@ type OrderFilter struct {
 	// SalesChannelID, when given, returns only the orders placed in that sales
 	// channel (ADR 0410).
 	SalesChannelID *string
+	// PaymentStatus, when given, returns only the orders whose payment
+	// stands there (ADR 0457).
+	PaymentStatus *PaymentStatus
+	// Search, when given, returns only the orders the q it was read from
+	// finds (ADR 0456).
+	Search *OrderSearch
 	// Limit is the maximum number of rows to return.
 	Limit int64
 	// Offset is the number of rows to skip.

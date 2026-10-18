@@ -3,8 +3,10 @@ package service
 import (
 	"context"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/internal/core/textfold"
 	"github.com/bdrtr/gobit/internal/modules/review/models"
 )
 
@@ -116,6 +118,18 @@ func (s *Service) ListReviews(ctx context.Context, filter models.Filter) (Page, 
 	}
 	if err := checkSuggestionFilter(filter); err != nil {
 		return Page{}, err
+	}
+	if filter.Search != nil {
+		q, ok := textfold.Query(*filter.Search)
+		switch {
+		case !ok:
+			filter.Search = nil
+		case utf8.RuneCountInString(q) > textfold.MaxQueryLen:
+			return Page{}, errors.Invalid(CodeInvalidInput,
+				"q is at most %d characters", textfold.MaxQueryLen)
+		default:
+			filter.Search = &q
+		}
 	}
 
 	fetch, limit, err := boundedFilter(filter)

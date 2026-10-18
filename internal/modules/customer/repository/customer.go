@@ -114,6 +114,10 @@ func (r *Repo) ListCustomers(
 		afterID = &filter.After.ID
 	}
 
+	if filter.Search != nil {
+		return r.searchCustomers(ctx, filter, limit, offset, afterAt, afterID)
+	}
+
 	rows, err := r.q.ListCustomers(ctx, customerdb.ListCustomersParams{
 		Email:      filter.Email,
 		HasAccount: filter.HasAccount,

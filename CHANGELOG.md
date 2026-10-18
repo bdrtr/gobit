@@ -102,6 +102,25 @@ design. It is fixed with `1.0.0`.
   as a set, those read (409 `auth_api_key_scopes_revised` otherwise); the
   secret is unchanged and every copy of it holds the new set from its next
   request.
+- **An admin list is searched in the database** (ADR 0456, D311).
+  `GET /admin/v1/orders`, `/admin/v1/customers` and `/admin/v1/reviews`
+  take `q`. An order is found by its number (`#1042` alone, `1042` also as
+  words), by its e-mail, or by the names, company and phone of an address
+  it holds now; a customer by their name, e-mail and phone; a review by its
+  title, text and byline. Each word of q is the start of a word, case and
+  Turkish and Latin marks folded on any cluster; a q of digits and phone
+  signs is a phone, found by any run of its digits. The list's other
+  filters, paging, cursor and count apply to the hits, and the scopes the
+  lists demanded are unchanged. Over 200 characters is refused with 422.
+  The order, customer and review migrations (000046, 000008, 000005)
+  create one GIN index each (two on orders) and hold off writes to those
+  tables while they build (measured in
+  `docs/measurements/0456-what-a-search-read.md`).
+- **An order's payment status filters the order list** (ADR 0457, D312).
+  `GET /admin/v1/orders?payment_status=` takes `not_paid`,
+  `partially_captured`, `captured`, `partially_refunded` or `refunded`,
+  read from what the order's summary reports collected and refunded; an
+  unknown value is refused with 422.
 
 ## [0.14.0] — 2026-10-15
 

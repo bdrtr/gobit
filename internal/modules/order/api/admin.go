@@ -62,6 +62,12 @@ func (h *Handler) adminListOrders(w http.ResponseWriter, r *http.Request) {
 	if raw := r.URL.Query().Get("sales_channel_id"); raw != "" {
 		in.SalesChannelID = &raw
 	}
+	if raw := r.URL.Query().Get("payment_status"); raw != "" {
+		in.PaymentStatus = &raw
+	}
+	if raw := r.URL.Query().Get("q"); raw != "" {
+		in.Q = &raw
+	}
 
 	result, err := h.svc.ListOrders(ctx, in)
 	if err != nil {

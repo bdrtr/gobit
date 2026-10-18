@@ -36,7 +36,7 @@ func (h *Handler) adminCreateCustomer(w http.ResponseWriter, r *http.Request) {
 // adminListCustomers lists customers, filtered and paged
 // (GET /admin/v1/customers).
 //
-// Filters: email, has_account, group_id. The "email" filter returns GUESTS
+// Filters: email, has_account, group_id, q (ADR 0456). The "email" filter returns GUESTS
 // TOO; since several guest records can share one e-mail address, the result
 // can contain more than one row (see models.Customer).
 func (h *Handler) adminListCustomers(w http.ResponseWriter, r *http.Request) {
@@ -63,6 +63,7 @@ func (h *Handler) adminListCustomers(w http.ResponseWriter, r *http.Request) {
 		Email:      stringParam(r, "email"),
 		HasAccount: hasAccount,
 		GroupID:    stringParam(r, "group_id"),
+		Q:          stringParam(r, "q"),
 		Limit:      limit,
 		Offset:     offset,
 		After:      after,

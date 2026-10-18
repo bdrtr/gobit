@@ -278,6 +278,11 @@ type Filter struct {
 	// client's parameter into this pair. The two together are contradictory and
 	// the service refuses them; see the service package.
 	Unsuggested bool
+	// Search, when given, returns only the reviews whose title, text or byline
+	// holds the start of each of its words, matched in the database
+	// (ADR 0456). The admin listing alone reads it; it is trimmed and never
+	// empty.
+	Search *string
 	// Limit is the maximum number of rows to return.
 	Limit int64
 	// Offset is the number of rows to skip.

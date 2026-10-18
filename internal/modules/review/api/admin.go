@@ -44,6 +44,7 @@ func (h *Handler) adminList(w http.ResponseWriter, r *http.Request) {
 		ProductID:   stringParam(r, "product_id"),
 		Suggested:   suggested,
 		Unsuggested: unsuggested,
+		Search:      stringParam(r, "q"),
 		Limit:       limit,
 		Offset:      offset,
 		After:       after,

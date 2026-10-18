@@ -568,6 +568,9 @@ past and is not corrected retroactively.
   `--locale=C` takes a dump/restore. If you bring your own Postgres, the
   cluster's CTYPE has to be a UTF-8 aware locale; an ICU provider is NOT
   ENOUGH — it fixes `ILIKE` and leaves the search index broken.
+  The admin lists' `q` folds the Turkish and Latin letters with marks
+  itself and any other letter as the cluster does
+  ([ADR 0456](adr/0456-an-admin-list-is-searched-in-the-database.md)).
 - **The database has to start transactions at READ COMMITTED, and the process
   refuses one that does not.** Every lock in gobit that guards a total — a
   balance, a spending limit, a stock level, a budget — is taken first and the
@@ -1117,7 +1120,10 @@ past and is not corrected retroactively.
   and closes the payment session once its event is handled
   ([ADR 0288](adr/0288-a-canceled-order-holds-no-payment.md)). The order list
   shows the orders still awaiting their payment
-  ([ADR 0294](adr/0294-the-order-list-filters-the-orders-awaiting-their-payment.md)).
+  ([ADR 0294](adr/0294-the-order-list-filters-the-orders-awaiting-their-payment.md))
+  and filters by a payment status read from the summary, where an authorized payment not yet captured is
+  `not_paid`; either filter alone counts by reading every order's summary
+  ([ADR 0457](adr/0457-an-orders-payment-status-is-read-from-its-summary.md)).
 
 - **Store credit names its order, not the finer cause.** Since
   [ADR 0274](adr/0274-a-store-credit-names-the-order-it-compensates.md) an

@@ -16,6 +16,11 @@ type CustomerFilter struct {
 	HasAccount *bool
 	// GroupID, when given, returns only the members of this group.
 	GroupID *string
+	// Search, when given, returns only the customers it finds: every word of
+	// it begins a word of their name or e-mail, or its digits are a part of
+	// their phone, matched in the database (ADR 0456). It is trimmed and
+	// never empty.
+	Search *string
 	// After is the keyset position the page starts below; the zero value is the
 	// first page.
 	//

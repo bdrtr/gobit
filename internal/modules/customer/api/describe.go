@@ -88,7 +88,7 @@ func describeCustomers(d *openapi.Doc) {
 	d.Describe(http.MethodGet, "/admin/v1/customers", openapi.Operation{
 		Summary: "Lists customers, filtered and paginated.",
 		// The parameters are the ones the handler READS, not the ones we might
-		// want: [Handler.adminListCustomers] reads exactly these six.
+		// want: [Handler.adminListCustomers] reads exactly these seven.
 		Parameters: []openapi.Parameter{
 			queryParameter("email", typeString,
 				"Filters by email; also returns GUEST records, "+
@@ -96,6 +96,15 @@ func describeCustomers(d *openapi.Doc) {
 			queryParameter("has_account", typeBoolean,
 				"true returns only registered accounts, false only guests."),
 			queryParameter("group_id", typeString, "Limits the customers to a single group."),
+			queryParameter("q", typeString,
+				"Search, done in the database: a customer is found when every word of q "+
+					"begins a word of their first name, last name or e-mail, case and "+
+					"Turkish and Latin marks folded (I and dotless i alike), and a q of "+
+					"digits and + - ( ) . with four digits or more also finds the phone "+
+					"holding them, a leading 0 or 90 ignored. An e-mail splits at its signs, "+
+					"so \"example\" finds ayse@example.com. Every other filter, the paging "+
+					"and count apply to the hits. Over 200 characters is refused with 422 "+
+					"(ADR 0456)."),
 			queryParameter("limit", typeInteger,
 				"The page size; when omitted, the service's default applies."),
 			queryParameter("offset", typeInteger, "The number of records to skip."),

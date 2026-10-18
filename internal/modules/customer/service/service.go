@@ -33,9 +33,11 @@ import (
 	"context"
 	"log/slog"
 	"time"
+	"unicode/utf8"
 
 	"github.com/bdrtr/gobit/core/errors"
 	corepage "github.com/bdrtr/gobit/internal/core/page"
+	"github.com/bdrtr/gobit/internal/core/textfold"
 	"github.com/bdrtr/gobit/internal/modules/customer/models"
 )
 
@@ -355,6 +357,11 @@ type ListCustomersInput struct {
 	HasAccount *bool
 	// GroupID, when given, returns only the members of this group.
 	GroupID *string
+	// Q, when given, returns only the customers whose name or e-mail holds the
+	// start of each of its words, case and Turkish and Latin marks folded, or
+	// whose phone holds its digits (ADR 0456). A q with nothing in it filters
+	// nothing; one over textfold.MaxQueryLen is refused.
+	Q *string
 	// Limit is the page size; if 0 [DefaultLimit] is applied.
 	Limit int64
 	// Offset is the number of records to skip.
@@ -392,6 +399,16 @@ func (s *Service) ListCustomers(ctx context.Context, in ListCustomersInput) (Pag
 			return Page[models.Customer]{}, idErr
 		}
 		filter.GroupID = in.GroupID
+	}
+
+	if in.Q != nil {
+		if q, ok := textfold.Query(*in.Q); ok {
+			if utf8.RuneCountInString(q) > textfold.MaxQueryLen {
+				return Page[models.Customer]{}, errors.Invalid(CodeInvalidInput,
+					"q is at most %d characters", textfold.MaxQueryLen)
+			}
+			filter.Search = &q
+		}
 	}
 
 	filter.After = in.After

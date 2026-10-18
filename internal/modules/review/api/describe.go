@@ -119,6 +119,12 @@ func Describe(d *openapi.Doc) {
 					"\"rejected\", or \"none\" for the reviews no model has been asked "+
 					"about. A proposal is not a moderation and this filter does not "+
 					"change what the review's status is."),
+			queryParameter("q", typeString,
+				"Search, done in the database: a review is found when every word of q "+
+					"begins a word of its title, its text or its author's name, case and "+
+					"Turkish and Latin marks folded (I and dotless i alike). The other "+
+					"filters, the paging and count apply to the hits. Over 200 characters "+
+					"is refused with 422 (ADR 0456)."),
 			queryParameter("limit", typeInteger,
 				"Page size; when it is not given the service's default applies."),
 			queryParameter("offset", typeInteger, "Number of records to skip."),

@@ -196,6 +196,10 @@ func (r *Repository) List(
 	// instead would make the first page come back empty with no error anywhere.
 	afterAt, afterID := cursorBounds(filter.After)
 
+	if filter.Search != nil {
+		return r.search(ctx, filter, afterAt, afterID)
+	}
+
 	rows, err := r.queries().ListReviews(ctx, reviewdb.ListReviewsParams{
 		Status:      filter.Status,
 		ProductID:   filter.ProductID,

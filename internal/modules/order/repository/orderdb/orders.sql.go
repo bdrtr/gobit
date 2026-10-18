@@ -190,6 +190,20 @@ WHERE ($1::text IS NULL OR customer_id = $1::text)
        OR (placed_by IS NOT NULL) = $6::boolean)
   AND ($7::text IS NULL
        OR sales_channel_id = $7::text)
+  -- An order's payment status is read from what its summary reports
+  -- collected and refunded, against its total less its credits (ADR 0457).
+  -- The CASE is written out in the four list statements and changed in all.
+  AND ($8::text IS NULL OR $8::text = (
+    SELECT CASE
+             WHEN COALESCE(s.refunded_total, 0) > 0 AND s.refunded_total >= s.paid_total THEN 'refunded'
+             WHEN COALESCE(s.refunded_total, 0) > 0 THEN 'partially_refunded'
+             WHEN COALESCE(s.paid_total, 0) >= orders.total
+                  - COALESCE((SELECT SUM(c.amount) FROM order_credit_lines c WHERE c.order_id = orders.id), 0)
+               THEN 'captured'
+             WHEN COALESCE(s.paid_total, 0) = 0 THEN 'not_paid'
+             ELSE 'partially_captured'
+           END
+    FROM (SELECT 1) AS one LEFT JOIN order_summaries s ON s.order_id = orders.id))
 `
 
 type CountOrdersParams struct {
@@ -200,6 +214,7 @@ type CountOrdersParams struct {
 	AwaitingPayment  *bool
 	PlacedByOperator *bool
 	SalesChannelID   *string
+	PaymentStatus    *string
 }
 
 // CountOrders gives the total count of the pagination envelope and applies the
@@ -218,6 +233,7 @@ func (q *Queries) CountOrders(ctx context.Context, arg CountOrdersParams) (int64
 		arg.AwaitingPayment,
 		arg.PlacedByOperator,
 		arg.SalesChannelID,
+		arg.PaymentStatus,
 	)
 	var count int64
 	err := row.Scan(&count)
@@ -564,12 +580,26 @@ WHERE ($1::text IS NULL OR customer_id = $1::text)
        OR (placed_by IS NOT NULL) = $6::boolean)
   AND ($7::text IS NULL
        OR sales_channel_id = $7::text)
+  -- An order's payment status is read from what its summary reports
+  -- collected and refunded, against its total less its credits (ADR 0457).
+  -- The CASE is written out in the four list statements and changed in all.
+  AND ($8::text IS NULL OR $8::text = (
+    SELECT CASE
+             WHEN COALESCE(s.refunded_total, 0) > 0 AND s.refunded_total >= s.paid_total THEN 'refunded'
+             WHEN COALESCE(s.refunded_total, 0) > 0 THEN 'partially_refunded'
+             WHEN COALESCE(s.paid_total, 0) >= orders.total
+                  - COALESCE((SELECT SUM(c.amount) FROM order_credit_lines c WHERE c.order_id = orders.id), 0)
+               THEN 'captured'
+             WHEN COALESCE(s.paid_total, 0) = 0 THEN 'not_paid'
+             ELSE 'partially_captured'
+           END
+    FROM (SELECT 1) AS one LEFT JOIN order_summaries s ON s.order_id = orders.id))
   AND (created_at, id) < (
-    COALESCE($8::timestamptz, 'infinity'::timestamptz),
-    COALESCE($9::text, '')
+    COALESCE($9::timestamptz, 'infinity'::timestamptz),
+    COALESCE($10::text, '')
   )
 ORDER BY created_at DESC, id DESC
-LIMIT $11::bigint OFFSET $10::bigint
+LIMIT $12::bigint OFFSET $11::bigint
 `
 
 type ListOrdersParams struct {
@@ -580,6 +610,7 @@ type ListOrdersParams struct {
 	AwaitingPayment  *bool
 	PlacedByOperator *bool
 	SalesChannelID   *string
+	PaymentStatus    *string
 	AfterAt          pgtype.Timestamptz
 	AfterID          *string
 	RowOffset        int64
@@ -595,6 +626,7 @@ func (q *Queries) ListOrders(ctx context.Context, arg ListOrdersParams) ([]Order
 		arg.AwaitingPayment,
 		arg.PlacedByOperator,
 		arg.SalesChannelID,
+		arg.PaymentStatus,
 		arg.AfterAt,
 		arg.AfterID,
 		arg.RowOffset,
