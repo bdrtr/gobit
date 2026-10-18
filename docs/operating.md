@@ -292,7 +292,7 @@ make rename-module MODULE=github.com/user/repo
 
 ## Version
 
-Current version: **v0.14.0**. For the changes, see
+Current version: **v0.15.0**. For the changes, see
 [`CHANGELOG.md`](../CHANGELOG.md). Which roadmap phase covers what is in the
 README's phase-status table.
 
@@ -541,6 +541,49 @@ finds it missing; register a callback with `Host.RegisterCallback`, which
 reaches the registry at `Start`. An
 installation whose plugins declare a header the core reads, or a name that is
 not a header field name, does not start (`plugin_proof_header_invalid`).
+
+- **v0.15.0** — thirteen records from depremtek, a consumer: a shipping
+  quote names the cart it prices
+  ([ADR 0445](adr/0445-a-quote-names-the-cart-it-prices.md)), `web-push`
+  pushes to chosen customers through `webpush.service`
+  ([ADR 0446](adr/0446-a-plugin-pushes-to-a-customers-devices-through-web-push.md)),
+  the notification module's one-message surface and
+  `wishlist.back_in_stock` are published (ADR 0447, ADR 0448),
+  `GET /store/v1/review-summaries`
+  ([ADR 0449](adr/0449-a-listing-reads-its-ratings-in-one-request.md)), an
+  order changes hands by its address's consent
+  ([ADR 0450](adr/0450-an-order-changes-hands-by-its-addresss-consent.md)),
+  the admin CORS list, route quotas and the sign-in quota, an invitation's
+  withdrawal, `auth/me`'s names and a secret key's scopes revised in place
+  (ADR 0451–0455), and the admin order, customer and review lists' `q` and
+  the order list's `payment_status`
+  ([ADR 0456](adr/0456-an-admin-list-is-searched-in-the-database.md),
+  [ADR 0457](adr/0457-an-orders-payment-status-is-read-from-its-summary.md)),
+  D300–D312.
+
+**From v0.15.0 signing in to the admin surface has a per-client quota**
+(ADR 0452, D307): 20 requests per 15 minutes by default, set with
+`ADMIN_SIGN_IN_LIMIT` and `ADMIN_SIGN_IN_WINDOW` (`0` turns it off). Behind a
+reverse proxy set `TRUSTED_PROXY_HOPS` first, or every operator shares one
+bucket. `ADMIN_CORS_ALLOWED_ORIGINS` (ADR 0451) is empty by default and keeps
+the admin surface without CORS; a panel behind a same-origin proxy needs
+nothing. A password written for a user now removes their pending invitation
+(ADR 0453). The migrations run in this order as the installation starts:
+order 000045 adds `order_transfers`, order 000046, customer 000008 and review
+000005 build the search indexes without `CONCURRENTLY`, holding off writes to
+`orders`, `order_addresses`, `customer` and `reviews` while they build — 3 to
+9 seconds a table at 100,000 customers, 300,000 orders and 200,000 reviews
+([measurements/0456](measurements/0456-what-a-search-read.md)) — so start the
+upgrade at a quiet hour. A shipping provider's `QuoteInput` gains `Cart`
+(ADR 0445); every quote now reads the cart's variants and products, and a
+provider that prices the goods refuses a nil one, so its option drops out
+where no cart is named. In `web-push` a template file's locale is read in
+lower case (`order.placed.en-GB.tmpl` serves an `en-gb` device), a device's
+language serves a regional locale with no file of its own, the order
+confirmation included, and the payload gains `tag` (ADR 0446). Offering
+order transfers needs the template `order.transfer_requested` in the
+notification provider; without it a request is withdrawn and answered 503
+(ADR 0450).
 
 Throughout `0.x`, **breaking changes may arrive in minor versions**: the API
 surface is not frozen yet. It freezes with `1.0.0`.

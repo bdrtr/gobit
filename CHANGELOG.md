@@ -9,6 +9,17 @@ design. It is fixed with `1.0.0`.
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-10-18
+
+Thirteen records from depremtek, a consumer: published surfaces for what it
+worked around, an order changing hands by its address's consent, the admin
+surface a panel on its own host needs, and the admin lists searched in the
+database. Order migrations 000045 and 000046, customer 000008 and review
+000005 run as the installation starts, and the three search migrations hold
+off writes to their tables while their indexes build; see
+`docs/operating.md`. Take gobit and both `contrib/` modules at v0.15.0
+together.
+
 ### Security
 
 - **A mailed invitation no longer outlives a password set another way**
