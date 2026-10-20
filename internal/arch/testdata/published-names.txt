@@ -244,6 +244,7 @@ core/http CodeIdentityNotBound
 core/http CodeIdentityRefused
 core/http CodeIdentityUnproven
 core/http CodeRateLimited
+core/http CodeRouteNotFound
 core/http CodeRouteQuotaInvalid
 core/http CodeSalesChannelMissing
 core/http CodeSalesChannelNotAuthorized
@@ -310,6 +311,7 @@ core/http RequestLogger
 core/http RequireAdmin
 core/http RequireScope
 core/http RequireStore
+core/http RouteNotFound
 core/http RouteQuota
 core/http RouteQuotas
 core/http RouterOptions

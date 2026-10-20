@@ -253,7 +253,7 @@ func TestAPublicRouterStartsAndAnswersNoAdminPath(t *testing.T) {
 	} {
 		rec := sendTo(r, c.method, c.path)
 		assert.Equal(t, http.StatusNotFound, rec.Code, "%s %s", c.method, c.path)
-		assert.Contains(t, rec.Body.String(), codeRouteNotFound, "%s %s", c.method, c.path)
+		assert.Contains(t, rec.Body.String(), corehttp.CodeRouteNotFound, "%s %s", c.method, c.path)
 	}
 	assert.Zero(t, reached.Load(), "a route bound outside the admin surfaces answered an admin path")
 
@@ -293,7 +293,7 @@ func TestAModulesNotFoundDoesNotAnswerAnAdminPath(t *testing.T) {
 	} {
 		rec := sendTo(r, http.MethodPut, path)
 		assert.Equal(t, http.StatusNotFound, rec.Code, path)
-		assert.Contains(t, rec.Body.String(), codeRouteNotFound, path)
+		assert.Contains(t, rec.Body.String(), corehttp.CodeRouteNotFound, path)
 	}
 	assert.Zero(t, m.fallbacks.Load(), "a module's fallback answered a path on the admin surfaces")
 

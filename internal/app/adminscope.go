@@ -31,10 +31,6 @@ import (
 // when a route on the admin surfaces is not held to a privilege (ADR 0434).
 const codeAdminRouteUnscoped = "admin_route_unscoped"
 
-// codeRouteNotFound is the code gobit answers a path under /admin/v1 with when
-// no route matches it.
-const codeRouteNotFound = "route_not_found"
-
 // AdminRoute names a route by its method and its path pattern, as chi binds it.
 type AdminRoute struct {
 	// Method is the HTTP method, upper case.
@@ -303,8 +299,8 @@ type surfaceOwner struct {
 }
 
 // answer is 405 carrying Allow when a route takes the path with another
-// method, the answer chi gives every other path, and otherwise a 404 through
-// corehttp.WriteError.
+// method, the answer chi gives every other path, and otherwise
+// corehttp.RouteNotFound's 404, the one every surface gives (ADR 0458).
 func (o *surfaceOwner) answer(w http.ResponseWriter, r *http.Request) {
 	if o.allow(w, r.URL.Path) {
 		chiMethodNotAllowed(w, r)
@@ -312,8 +308,7 @@ func (o *surfaceOwner) answer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	corehttp.WriteError(r.Context(), w, errors.NotFound(codeRouteNotFound,
-		"no route answers %s %s", r.Method, r.URL.Path))
+	corehttp.RouteNotFound(w, r)
 }
 
 // allow writes the Allow header for the methods a route other than gobit's own

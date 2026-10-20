@@ -11,6 +11,15 @@ design. It is fixed with `1.0.0`.
 
 ### Fixes
 
+- **A path no route takes is answered in the error envelope** (ADR 0458,
+  D313). A route an installation leaves unbound, `contrib/identity-session`'s
+  registration without a mailer or web-push's subscription without a key,
+  answered chi's `404 page not found` as text/plain, and a client parsing
+  every error answer as JSON failed on it. Every surface now answers such a
+  path with a 404 carrying `route_not_found` and the request's id, as the
+  admin surface already did; `corehttp.RouteNotFound` is the handler, for an
+  embedder building its own router.
+
 - **grpc is at the release that fixes GO-2026-6443.** The advisory, a server
   panic on a request without an authority or Host header, is against
   `google.golang.org/grpc` v1.83.1, which gobit reaches only as the OTLP

@@ -190,6 +190,9 @@ type readyResponse struct {
 // [RouterOptions.TelemetryService]), and [RouterOptions.Middlewares] sits below
 // Recoverer.
 //
+// A path no route takes is answered by [RouteNotFound], in the error envelope,
+// on the root and on every router mounted under it (ADR 0458).
+//
 // /health and /ready DO pass through the [RouterOptions.Middlewares] stack: a
 // guard middleware is expected to narrow its own scope with [Scoped]. Taking
 // the health endpoints outside the stack would separate the path the
@@ -214,6 +217,7 @@ func NewRouter(opts RouterOptions) chi.Router {
 		}
 		r.Use(mw)
 	}
+	r.NotFound(RouteNotFound)
 
 	r.Get("/health", healthHandler(opts.Version))
 	warnAboutDuplicateChecks(opts, log)
