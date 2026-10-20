@@ -9,6 +9,15 @@ design. It is fixed with `1.0.0`.
 
 ## [Unreleased]
 
+### Fixes
+
+- **grpc is at the release that fixes GO-2026-6443.** The advisory, a server
+  panic on a request without an authority or Host header, is against
+  `google.golang.org/grpc` v1.83.1, which gobit reaches only as the OTLP
+  trace exporter's client; `make vuln` found the package imported and no call
+  path to it. The root module and the two example modules that require grpc
+  take v1.83.2; no code changed.
+
 ## [0.15.0] — 2026-10-18
 
 Thirteen records from depremtek, a consumer: published surfaces for what it
