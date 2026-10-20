@@ -240,18 +240,13 @@ past and is not corrected retroactively.
   assembled, through a type assertion on the handler `App.InProcess` returns
   or a router a plugin kept from `AddRoutes`, is never walked; neither is the
   documented way to bind one.
-- **A client is an address, and an IPv6 host holds many.** The whole-API
-  limit and the route quotas, the admin sign-in's among them
-  ([ADR 0452](adr/0452-a-route-takes-a-quota-and-signing-in-has-one.md)),
-  key a client by its full address, so a host rotating through its IPv6 /64
-  is a new client at every address; the per-account lock still bounds the
-  guesses at one account. Past its quota, the panel's own sign-in form is
-  answered the API's 429 in JSON, without the panel's page or its headers.
-- **`ADMIN_CORS_ALLOWED_ORIGINS` compares an origin as written.** An entry
-  with its scheme's default port, `https://panel.example.com:443`, or with a
-  host in Unicode rather than its punycode starts the installation and
-  matches no browser, which sends neither
-  ([ADR 0451](adr/0451-a-panel-on-its-own-host-calls-the-admin-api.md)).
+- **The whole-API limit counts an IPv6 address, and the panel's sign-in
+  form is refused in JSON.** A route quota, the admin sign-in's among them,
+  counts an IPv6 client by its /64
+  ([ADR 0462](adr/0462-the-admin-surface-counts-a-network-and-names-an-origin-a-browser-sends.md)); the
+  whole-API limit still counts each address. Past its quota, the panel's own
+  sign-in form is answered the API's 429 in JSON under the panel's headers,
+  not its login page.
 - **The audit log's path filter is exact, and a credential write's path
   carries its customer.** `GET /admin/v1/audit-log?path=…` matches one path,
   so since ADR 0434 it lists one customer's credential writes; every

@@ -3,7 +3,7 @@
 **Summary:** `ADMIN_CORS_ALLOWED_ORIGINS` lists the sites whose pages may call `/admin/v1` from a browser with their own bearer token; the admin surface allows no credentials and no wildcard.
 It costs an operator a list to keep and every listed site's script the power of the tokens it holds, and buys a separate panel its calls without a same-origin proxy.
 
-- **Status:** Accepted; amended by [0461](0461-a-panel-may-name-the-version-it-read.md): the preflight allows `If-Match`
+- **Status:** Accepted; amended by [0461](0461-a-panel-may-name-the-version-it-read.md): the preflight allows `If-Match`; amended by [0462](0462-the-admin-surface-counts-a-network-and-names-an-origin-a-browser-sends.md): an origin no browser sends is refused
 - **Date:** 2026-10-17
 - **Amends:** the historical [0011](0011-yonetim-paneli-dorduncu-agac.md), whose rejection of CORS on the admin surface rested on a token that a separate panel now keeps in its page anyway
 

@@ -44,6 +44,16 @@ design. It is fixed with `1.0.0`.
 
 ### Fixed
 
+- **The admin surface counts a network and names an origin a browser sends**
+  (ADR 0462, D317–D319). A route quota, the admin sign-in's included, counts
+  an IPv6 client by its /64: a host rotating through its addresses met a
+  fresh quota at each. `ADMIN_CORS_ALLOWED_ORIGINS` now refuses at startup an
+  entry with its scheme's default port (`https://panel.example.com:443`) or
+  a host outside ASCII, which no browser sends and which turned the panel
+  away silently; write the origin without the port and the host as its
+  `xn--` name. A refusal at the panel's address, the sign-in quota's 429
+  included, carries the panel's security headers.
+
 - **A panel on its own host may send a product write's `If-Match`**
   (ADR 0461, D316). `ADMIN_CORS_ALLOWED_ORIGINS`'s preflight allowed
   `If-None-Match` and not `If-Match`, which every product write reads as the

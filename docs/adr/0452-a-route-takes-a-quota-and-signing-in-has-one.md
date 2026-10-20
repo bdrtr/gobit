@@ -3,7 +3,7 @@
 **Summary:** A plugin declares a quota on any bound route with `Host.RegisterRouteQuota`, and the admin sign-in, the invitation's acceptance and the panel's form share one quota per client, 20 per 15 minutes by default (`ADMIN_SIGN_IN_LIMIT`).
 It costs an office behind one address its sign-ins counted together and a plugin a startup refusal for a quota on an unbound route, and buys a quota on core routes without a proxy rule.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0462](0462-the-admin-surface-counts-a-network-and-names-an-origin-a-browser-sends.md): an IPv6 client is its /64
 - **Date:** 2026-10-17
 - **Amends:** [0137](0137-a-colleague-sets-their-own-first-password.md), whose acceptance had the whole-API limit alone
 

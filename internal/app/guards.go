@@ -432,19 +432,20 @@ func withPanelRing(
 	// requests it serves are the ones the panel's script sends to /admin/v1.
 	return append([]func(http.Handler) http.Handler{
 		corehttp.Scoped(adminPrefixOf(opts), nil, panel.APISession),
+		// The content policy is scoped to the PREFIX and not to the panel's
+		// own route group, which is where ADR 0155 put it. The group covers
+		// what the panel binds; the prefix covers what an operator's browser
+		// can reach at the panel's address, and the two differ the moment
+		// anything else binds a route there — a plugin's AddRoutes runs on
+		// this same router after the panel (ADR 0157, D97).
+		//
+		// It goes before the API guards so that every refusal at the panel's
+		// address carries the policy as well: the 403 page the origin check
+		// writes, the 401 login page the identity ring writes, and the 429 the
+		// whole-API limit or the sign-in quota (ADR 0452) answers its form.
+		corehttp.Scoped(adminui.URLPrefix, nil, adminui.SecurityHeaders),
 	},
 		append(corehttp.APIGuards(opts),
-			// The content policy is scoped to the PREFIX and not to the panel's
-			// own route group, which is where ADR 0155 put it. The group covers
-			// what the panel binds; the prefix covers what an operator's browser
-			// can reach at the panel's address, and the two differ the moment
-			// anything else binds a route there — a plugin's AddRoutes runs on
-			// this same router after the panel (ADR 0157, D97).
-			//
-			// It goes before the other two so that a refusal from either — the
-			// 403 page the origin check writes, the 401 login page the identity
-			// ring writes — carries the policy as well.
-			corehttp.Scoped(adminui.URLPrefix, nil, adminui.SecurityHeaders),
 			corehttp.Scoped(adminui.URLPrefix, nil, panel.CheckOrigin),
 			corehttp.Scoped(adminui.URLPrefix, adminui.ExemptPaths(), panel.Protect),
 			// The callback ring carries no prefix of its own: it acts on the

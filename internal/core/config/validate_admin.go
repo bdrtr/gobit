@@ -30,6 +30,10 @@ func (c Config) validateAdminSurface() error {
 			return fmt.Errorf("config: ADMIN_CORS_ALLOWED_ORIGINS holds %q, which is not an origin "+
 				"(scheme://host[:port])", origin)
 		}
+		if reason := unmatchableOrigin(u); reason != "" {
+			return fmt.Errorf("config: ADMIN_CORS_ALLOWED_ORIGINS holds %q, which no browser sends: %s",
+				origin, reason)
+		}
 	}
 	if c.AdminSignInLimit < 0 {
 		return fmt.Errorf("config: ADMIN_SIGN_IN_LIMIT cannot be negative, %d given; zero turns "+
@@ -41,4 +45,25 @@ func (c Config) validateAdminSurface() error {
 	}
 
 	return nil
+}
+
+// defaultPorts are the ports a browser leaves out of the Origin it sends.
+var defaultPorts = map[string]string{"http": "80", "https": "443"}
+
+// unmatchableOrigin says why an origin that parses is still one a browser
+// never sends, or nothing. A browser drops its scheme's default port and
+// sends a non-ASCII host in its ASCII (punycode) form, and the admin surface
+// compares the Origin as an exact string, so either entry would turn its
+// panel away without a word.
+func unmatchableOrigin(u *url.URL) string {
+	if port := u.Port(); port != "" && port == defaultPorts[u.Scheme] {
+		return "the browser leaves out the default port " + port + "; write the origin without it"
+	}
+	for i := 0; i < len(u.Host); i++ {
+		if u.Host[i] >= 0x80 {
+			return "the browser sends a non-ASCII host in its ASCII form; write the xn-- name"
+		}
+	}
+
+	return ""
 }

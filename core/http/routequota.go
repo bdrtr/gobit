@@ -2,6 +2,7 @@ package http
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"slices"
 	"strconv"
@@ -166,7 +167,7 @@ func RouteQuotas(quotas []RouteQuota, key KeyFunc) func(http.Handler) http.Handl
 				}
 				spent[route.quota] = true
 				if client == "" {
-					if client = key(r); client == "" {
+					if client = quotaClient(key(r)); client == "" {
 						break
 					}
 				}
@@ -189,4 +190,24 @@ func RouteQuotas(quotas []RouteQuota, key KeyFunc) func(http.Handler) http.Handl
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// ipv6ClientBits is how much of an IPv6 address names one client to a quota:
+// the /64 a host, a home line or a server is given whole.
+const ipv6ClientBits = 64
+
+// quotaClient is the client a quota counts for the key: an IPv6 address is
+// counted by its /64, any other key as it is.
+//
+// A quota bounds what one client may try at one door (ADR 0452), and a host
+// holding a /64 can send every request from an address of its own; counted
+// per address, it would meet a fresh quota on each. An IPv4 address, or a key
+// that is not an address at all, is one client already.
+func quotaClient(key string) string {
+	ip := net.ParseIP(key)
+	if ip == nil || ip.To4() != nil {
+		return key
+	}
+
+	return ip.Mask(net.CIDRMask(ipv6ClientBits, 8*net.IPv6len)).String() + "/64"
 }

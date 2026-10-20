@@ -20,6 +20,7 @@ func TestTheAdminSurfacesSettingsAreHeld(t *testing.T) {
 
 	for _, origins := range [][]string{
 		{"https://admin.example.com"}, {"http://localhost:5173", " https://satici.example.com/ "}, {""},
+		{"https://admin.example.com:8443"}, {"https://xn--ynetim-zua.example.com"},
 	} {
 		cfg := base
 		cfg.AdminCORSAllowedOrigins = origins
@@ -28,6 +29,7 @@ func TestTheAdminSurfacesSettingsAreHeld(t *testing.T) {
 	for _, origin := range []string{
 		"*", "admin.example.com", "https://admin.example.com/panel", "ftp://admin.example.com",
 		"https://admin.example.com?x=1", "https://user@admin.example.com", "https://",
+		"https://admin.example.com:443", "http://admin.example.com:80", "https://b\u00fccher.example.com",
 	} {
 		cfg := base
 		cfg.AdminCORSAllowedOrigins = []string{origin}
