@@ -75,6 +75,16 @@ WHERE order_id = ANY (sqlc.arg('order_ids')::text[])
    OR (sqlc.narg('customer_id')::text IS NOT NULL AND from_customer_id = sqlc.narg('customer_id')::text)
    OR (sqlc.narg('email')::text IS NOT NULL AND from_email = sqlc.narg('email')::text);
 
+-- CancelOrderTransfersTo withdraws every request still waiting for the
+-- person as its receiver: an erased customer receives no order (ADR 0459).
+-- The status is the second gate, as in CloseOrderTransfer, so a request an
+-- acceptance closed under its lock first stays accepted.
+-- name: CancelOrderTransfersTo :execrows
+UPDATE order_transfers
+SET status    = 'canceled',
+    closed_at = now()
+WHERE to_customer_id = sqlc.arg('customer_id') AND status = 'requested';
+
 -- OrderTransfersForDisclosure reads the transfers of the person's orders and
 -- every transfer that names them, as holder or as receiver.
 -- name: OrderTransfersForDisclosure :many

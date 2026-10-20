@@ -237,11 +237,15 @@ func TestATokenThatIsNotTheTransfersOpensNothing(t *testing.T) {
 func TestARequestIsRefusedWhatCannotChangeHands(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("the receiver's own order", func(t *testing.T) {
+	t.Run("a customer's order", func(t *testing.T) {
 		e := newTransferEnv(t)
 		order := placeOrder(t, e.env)
-		_, err := e.svc.RequestTransfer(ctx, order.ID, testCustomerID)
-		assert.Equal(t, service.CodeTransferOwnOrder, errors.CodeOf(err))
+		for _, receiver := range []string{transferReceiver, testCustomerID} {
+			_, err := e.svc.RequestTransfer(ctx, order.ID, receiver)
+			assert.Equal(t, service.CodeNotTransferable, errors.CodeOf(err), receiver)
+		}
+		assert.Empty(t, e.mail.sent, "the address typed at a customer's checkout is not asked")
+		assert.Equal(t, testCustomerID, e.store.orders[order.ID].CustomerID)
 	})
 	t.Run("a canceled order", func(t *testing.T) {
 		e := newTransferEnv(t)
@@ -455,4 +459,113 @@ func TestAnErasureEmptiesTheAddressATransferAsked(t *testing.T) {
 	assert.Empty(t, e.store.transfers[transfer.ID].FromEmail)
 	assert.Equal(t, transferReceiverEmail, e.store.orders[order.ID].Email,
 		"the receiver's order keeps the receiver's address")
+}
+
+// TestARequestOnACustomersOrderIsNotAcceptedAfterTheRule proves ADR 0459
+// reaches a request written on a customer's order before it: the address
+// typed at that checkout, a gift's recipient's, would otherwise still take
+// the order from the account that bought it.
+func TestARequestOnACustomersOrderIsNotAcceptedAfterTheRule(t *testing.T) {
+	ctx := context.Background()
+	e := newTransferEnv(t)
+	in := validInput()
+	in.Email = "gift-recipient@example.com"
+	order, err := e.svc.CreateOrder(ctx, in)
+	require.NoError(t, err)
+	token, digest, err := models.NewTransferToken()
+	require.NoError(t, err)
+	expiresAt := e.now.Add(service.TransferTTL)
+	e.store.transfers["otr_BEFORE"] = models.OrderTransfer{
+		ID: "otr_BEFORE", OrderID: order.ID, Status: models.TransferRequested,
+		RequestedBy: models.TransferByCustomer, FromCustomerID: testCustomerID,
+		ToCustomerID: transferReceiver, FromEmail: order.Email, TokenHash: digest, ExpiresAt: &expiresAt,
+	}
+
+	_, err = e.svc.AcceptTransfer(ctx, "otr_BEFORE", token)
+	assert.Equal(t, service.CodeNotTransferable, errors.CodeOf(err))
+	assert.Equal(t, testCustomerID, e.store.orders[order.ID].CustomerID, "nothing moved")
+	assert.Empty(t, e.bus.eventsNamed(service.EventOrderTransferred))
+}
+
+// TestAnOrderIsAskedForAtMostThreeTimesAWeek proves the order's address is
+// not mailed without end by a shopper who withdraws and asks again (ADR
+// 0459).
+func TestAnOrderIsAskedForAtMostThreeTimesAWeek(t *testing.T) {
+	ctx := context.Background()
+	e := newTransferEnv(t)
+	order := e.guestOrder(t)
+
+	for range service.MaxTransferRequests {
+		transfer, _ := e.requested(t, order.ID)
+		_, err := e.svc.CancelTransfer(ctx, transfer.ID, transferReceiver)
+		require.NoError(t, err)
+		*e.now = e.now.Add(time.Hour)
+	}
+	_, err := e.svc.RequestTransfer(ctx, order.ID, transferReceiver)
+	assert.Equal(t, service.CodeTransferRequestsSpent, errors.CodeOf(err))
+	assert.True(t, errors.HasKind(err, errors.KindTooManyRequests))
+	assert.Len(t, e.mail.sent, service.MaxTransferRequests, "the refused request mailed nothing")
+
+	*e.now = e.now.Add(service.TransferTTL - time.Duration(service.MaxTransferRequests-1)*time.Hour)
+	_, err = e.svc.RequestTransfer(ctx, order.ID, transferReceiver)
+	assert.NoError(t, err, "the first request's bound passed, and it is counted no more")
+}
+
+// TestAnErasedReceiverReceivesNoOrder proves a receiver's erasure withdraws
+// the request that waits for them (ADR 0459): the holder's acceptance would
+// write the order to an address that reaches nobody.
+func TestAnErasedReceiverReceivesNoOrder(t *testing.T) {
+	ctx := context.Background()
+	e := newTransferEnv(t)
+	order := e.guestOrder(t)
+	transfer, token := e.requested(t, order.ID)
+
+	_, err := e.svc.Erase(ctx, personaldata.Subject{CustomerID: transferReceiver})
+	require.NoError(t, err)
+	assert.Equal(t, models.TransferCanceled, e.store.transfers[transfer.ID].Status)
+
+	_, err = e.svc.AcceptTransfer(ctx, transfer.ID, token)
+	assert.Equal(t, service.CodeTransferClosed, errors.CodeOf(err))
+	assert.Empty(t, e.store.orders[order.ID].CustomerID, "the order stays the guest's")
+}
+
+// TestATransferDisclosesEachSideItsOwn proves the receiver is not handed the
+// holder's address as their own, nor the holder the receiver's id (ADR 0459).
+func TestATransferDisclosesEachSideItsOwn(t *testing.T) {
+	ctx := context.Background()
+	e := newTransferEnv(t)
+	order := e.guestOrder(t)
+	holder := order.Email
+	transfer, token := e.requested(t, order.ID)
+	_, err := e.svc.AcceptTransfer(ctx, transfer.ID, token)
+	require.NoError(t, err)
+
+	fieldsOf := func(subject personaldata.Subject) map[string]any {
+		t.Helper()
+		dossier, err := e.svc.PersonalDataOf(ctx, subject)
+		require.NoError(t, err)
+		for _, record := range dossier.Records {
+			if record.Table != "order_transfers" {
+				continue
+			}
+			fields := map[string]any{}
+			for _, f := range record.Fields {
+				fields[f.Column] = f.Value
+			}
+
+			return fields
+		}
+		t.Fatalf("no transfer was disclosed to %+v", subject)
+
+		return nil
+	}
+
+	received := fieldsOf(personaldata.Subject{CustomerID: transferReceiver})
+	assert.Equal(t, transferReceiver, received["to_customer_id"])
+	assert.Nil(t, received["from_email"], "the holder's address is not the receiver's")
+	assert.Nil(t, received["from_customer_id"])
+
+	given := fieldsOf(personaldata.Subject{Email: holder})
+	assert.Equal(t, holder, given["from_email"])
+	assert.Nil(t, given["to_customer_id"], "the receiver's id is not the holder's")
 }

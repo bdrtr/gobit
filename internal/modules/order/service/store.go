@@ -151,6 +151,9 @@ type Store interface {
 	// EraseTransferEmails empties the address a transfer asked on the given
 	// orders and wherever the person was the holder asked.
 	EraseTransferEmails(ctx context.Context, orderIDs []string, customerID, email string) (int64, error)
+	// CancelTransfersTo withdraws every request still waiting for the
+	// customer as its receiver, and returns how many it withdrew.
+	CancelTransfersTo(ctx context.Context, customerID string) (int64, error)
 	// TransfersForDisclosure returns the transfers of the given orders and
 	// every transfer naming the person.
 	TransfersForDisclosure(ctx context.Context, orderIDs []string, customerID, email string) ([]models.OrderTransfer, error)

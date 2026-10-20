@@ -11,6 +11,25 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const cancelOrderTransfersTo = `-- name: CancelOrderTransfersTo :execrows
+UPDATE order_transfers
+SET status    = 'canceled',
+    closed_at = now()
+WHERE to_customer_id = $1 AND status = 'requested'
+`
+
+// CancelOrderTransfersTo withdraws every request still waiting for the
+// person as its receiver: an erased customer receives no order (ADR 0459).
+// The status is the second gate, as in CloseOrderTransfer, so a request an
+// acceptance closed under its lock first stays accepted.
+func (q *Queries) CancelOrderTransfersTo(ctx context.Context, customerID string) (int64, error) {
+	result, err := q.db.Exec(ctx, cancelOrderTransfersTo, customerID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const closeOrderTransfer = `-- name: CloseOrderTransfer :one
 UPDATE order_transfers
 SET status    = $1,

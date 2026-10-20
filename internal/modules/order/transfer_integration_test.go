@@ -28,7 +28,9 @@ import (
 // transferCustomers are the receiving customers and their addresses on record.
 var transferCustomers = map[string]string{
 	"cus_RECEIVER": "receiver@example.com",
-	"cus_OPERATOR": "picked@example.com",
+	// Erased by its own test, so no other test's order is hers.
+	"cus_ERASED_RECEIVER": "erased-receiver@example.com",
+	"cus_OPERATOR":        "picked@example.com",
 }
 
 // mailbox keeps the tokens the requests mailed, by transfer.
@@ -235,6 +237,35 @@ func TestAnErasureEmptiesTheAddressATransferAskedOnTheRealDatabase(t *testing.T)
 	assert.Nil(t, fromEmail, "the address asked is emptied")
 	assert.Equal(t, "cus_RECEIVER", toCustomer, "the ids are kept, as orders.customer_id is")
 	assert.Equal(t, "receiver@example.com", orderEmail, "the receiver's order is not theirs to erase")
+}
+
+// TestAnErasedReceiversRequestIsWithdrawnOnTheRealDatabase proves the
+// statement behind ADR 0459's withdrawal: the request waiting for the erased
+// customer is closed canceled, and its holder's token moves nothing.
+func TestAnErasedReceiversRequestIsWithdrawnOnTheRealDatabase(t *testing.T) {
+	ctx := context.Background()
+	svc, box := newTransferService(t)
+	ord, err := svc.CreateOrder(ctx, guestInput())
+	require.NoError(t, err)
+	request, err := svc.RequestTransfer(ctx, ord.ID, "cus_ERASED_RECEIVER")
+	require.NoError(t, err)
+
+	_, err = svc.Erase(ctx, personaldata.Subject{CustomerID: "cus_ERASED_RECEIVER"})
+	require.NoError(t, err)
+
+	var status string
+	var closedAt *time.Time
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT status, closed_at FROM order_transfers WHERE id = $1`, request.ID).Scan(&status, &closedAt))
+	assert.Equal(t, string(models.TransferCanceled), status)
+	assert.NotNil(t, closedAt, "a withdrawn request is closed")
+
+	_, err = svc.AcceptTransfer(ctx, request.ID, box.token(request.ID))
+	assert.Equal(t, service.CodeTransferClosed, errors.CodeOf(err))
+	var customerID *string
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT customer_id FROM orders WHERE id = $1`, ord.ID).Scan(&customerID))
+	assert.Nil(t, customerID, "the order stays the guest's")
 }
 
 // TestTheTransferTableRefusesAShapeTheServiceNeverWrites holds the CHECKs.

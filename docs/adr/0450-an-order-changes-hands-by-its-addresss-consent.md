@@ -3,7 +3,7 @@
 **Summary:** A signed-in shopper who can open an order asks for it, the order's address answers with a token mailed there, and acceptance moves the order's customer and e-mail and withdraws its links; an operator moves an order at once.
 It costs a second mail and a guest's token to ask with, and buys a transfer no order id, forwarded link or stale page can make alone.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0459](0459-a-shopper-asks-only-for-a-guests-order.md): a shopper asks only for a guest's order
 - **Date:** 2026-10-17
 - **Amends:** [0439](0439-an-id-gobit-hands-out-opens-nothing-at-the-storefront.md), whose access tokens an accepted transfer withdraws
 

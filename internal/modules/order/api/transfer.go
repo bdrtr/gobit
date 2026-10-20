@@ -15,9 +15,9 @@ import (
 
 // An order changes hands (ADR 0450).
 //
-// A signed-in shopper who can open the order — one of its access tokens in
-// the header — asks for it at POST /store/v1/orders/{id}/transfer-requests,
-// and gobit mails a token to the order's address. Whoever reads that mailbox
+// A signed-in shopper who can open a guest's order — one of its access tokens
+// in the header — asks for it at POST /store/v1/orders/{id}/transfer-requests,
+// and gobit mails a token to the order's address (ADR 0459). Whoever reads that mailbox
 // answers at /store/v1/order-transfers/{transferId}/accept or /decline with
 // the token in the body; the shopper withdraws the request at .../cancel. An
 // operator lists an order's transfers and moves it at once under

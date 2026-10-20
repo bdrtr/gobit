@@ -9,7 +9,24 @@ design. It is fixed with `1.0.0`.
 
 ## [Unreleased]
 
-### Fixes
+### Security
+
+- **A shopper asks only for a guest's order** (ADR 0459, D314). The
+  storefront's transfer request reached a customer's order through the
+  address typed at its checkout, so whoever read that address, a gift's
+  recipient, could take the order from the account that bought it.
+  `POST /store/v1/orders/{id}/transfer-requests` and the acceptance now
+  refuse an order that has a customer with 409 `order_not_transferable`,
+  a request written on one before this release included; an operator moves
+  it at `POST /admin/v1/orders/{id}/transfers`. An order takes three
+  requests within seven days, the fourth answered 429
+  `order_transfer_requests_spent`, so a shopper who withdraws and asks again
+  no longer mails its address without end. A customer's erasure withdraws
+  the requests waiting for them, and a transfer's disclosure gives each
+  person only their own side: the receiver is no longer handed the previous
+  holder's address as their own.
+
+### Fixed
 
 - **A path no route takes is answered in the error envelope** (ADR 0458,
   D313). A route an installation leaves unbound, `contrib/identity-session`'s

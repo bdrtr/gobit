@@ -513,6 +513,8 @@ An order changes hands (ADR 0450). `order.transferred` is published once per
 order that moved — the order and every order that adds to it — and carries
 no customer: a subscriber that keeps a copy of an order's customer reads the
 order again, which is the truth when two transfers arrive out of order. A
+shopper asks only for a guest's order, at most three times in seven days, and
+an operator moves a customer's (ADR 0459). A
 shopper's request is mailed through the notification module, not the bus,
 because the mail carries a secret: the template `order.transfer_requested`
 goes to the order's own address, and its data is `order_id`, `display_id`,

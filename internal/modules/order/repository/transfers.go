@@ -152,6 +152,17 @@ func (r *Repository) EraseTransferEmails(
 	return written, nil
 }
 
+// CancelTransfersTo withdraws every request still waiting for the customer as
+// its receiver, and returns how many it withdrew.
+func (r *Repository) CancelTransfersTo(ctx context.Context, customerID string) (int64, error) {
+	withdrawn, err := r.queries(ctx).CancelOrderTransfersTo(ctx, customerID)
+	if err != nil {
+		return 0, classify(err, codeQueryFailed, "could not withdraw the requests waiting for the customer")
+	}
+
+	return withdrawn, nil
+}
+
 // TransfersForDisclosure returns the transfers of the given orders and every
 // transfer naming the person.
 func (r *Repository) TransfersForDisclosure(

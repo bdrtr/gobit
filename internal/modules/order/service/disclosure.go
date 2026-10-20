@@ -276,6 +276,7 @@ func (s *Service) PersonalDataOf(
 	if err != nil {
 		return personaldata.Disclosure{}, err
 	}
+	rows.transfers = ownSides(rows.transfers, customerID, email)
 
 	if len(rows.orders) == 0 && len(rows.transfers) == 0 {
 		s.log.InfoContext(ctx, "a disclosure request was answered",
@@ -409,6 +410,29 @@ func disclosureRecords(rows *dossierRows) ([]personaldata.Record, error) {
 	}
 
 	return dossier.records, nil
+}
+
+// ownSides keeps of each transfer the fields of the side the person was on,
+// the holder asked or the receiver named, and empties the other's (ADR 0459).
+//
+// A transfer on the person's own order names whoever held it before, and one
+// the person asked for names the order's holder: that address and that id are
+// somebody else's, and a disclosure vouches that what it returns is the
+// person's. A transfer left with no field of theirs is not disclosed.
+func ownSides(transfers []models.OrderTransfer, customerID, email string) []models.OrderTransfer {
+	own := slices.Clone(transfers)
+	for i := range own {
+		t := &own[i]
+		holder := (customerID != "" && t.FromCustomerID == customerID) || (email != "" && t.FromEmail == email)
+		if !holder {
+			t.FromCustomerID, t.FromEmail = "", ""
+		}
+		if customerID == "" || t.ToCustomerID != customerID {
+			t.ToCustomerID = ""
+		}
+	}
+
+	return own
 }
 
 // dossierRows is everything one disclosure read, in one snapshot.

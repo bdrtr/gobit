@@ -60,7 +60,8 @@ const (
 	CodeTransferOwnOrder = "order_transfer_own_order"
 	// CodeNotTransferable refuses a canceled order, one whose personal data
 	// was erased, one an operator's move names no address for, and a
-	// storefront request on an order with no address to ask.
+	// storefront request on an order with no address to ask or on a
+	// customer's order (ADR 0459).
 	CodeNotTransferable = "order_not_transferable"
 	// CodeTransferAddition refuses a transfer of an order that adds to
 	// another: it moves with the order it adds to.
@@ -85,10 +86,18 @@ const (
 	// CodeTransferMailFailed reports that the request's token could not be
 	// mailed, or that nothing is bound to mail it; the request is withdrawn.
 	CodeTransferMailFailed = "order_transfer_mail_failed"
+	// CodeTransferRequestsSpent refuses a storefront request on an order
+	// asked for [MaxTransferRequests] times within [TransferTTL] (ADR 0459).
+	CodeTransferRequestsSpent = "order_transfer_requests_spent"
 )
 
 // TransferTTL is how long a storefront request waits for its answer.
 const TransferTTL = 7 * 24 * time.Hour
+
+// MaxTransferRequests is how many storefront requests an order takes within
+// [TransferTTL], whatever became of them: each one mailed the order's
+// address (ADR 0459).
+const MaxTransferRequests = 3
 
 // TemplateTransferRequested is the template a request's token is mailed with
 // to the order's address (ADR 0450). Its data is the TransferMail* keys below.
@@ -131,10 +140,11 @@ type TransferMail interface {
 //
 // The caller decided that the request may reach the order — the storefront
 // route asks for one of its access tokens — and proved receiverID. The order
-// must not be canceled, erased, an addition, or receiverID's already, and it
-// must hold an address to ask; one request waits per order. A request whose
-// mail fails is withdrawn and the failure returned, so no request waits that
-// its holder was never asked.
+// must be a guest's (ADR 0459), not canceled, erased or an addition, and it
+// must hold an address to ask; one request waits per order, and an order
+// takes [MaxTransferRequests] within [TransferTTL]. A request whose mail
+// fails is withdrawn and the failure returned, so no request waits that its
+// holder was never asked.
 func (s *Service) RequestTransfer(ctx context.Context, orderID, receiverID string) (models.OrderTransfer, error) {
 	if err := requireID("order_id", orderID); err != nil {
 		return models.OrderTransfer{}, err
@@ -166,15 +176,17 @@ func (s *Service) RequestTransfer(ctx context.Context, orderID, receiverID strin
 		if err := transferable(order); err != nil {
 			return err
 		}
+		if err := guestOrder(order); err != nil {
+			return err
+		}
 		if order.Email == "" {
 			return errors.Conflict(CodeNotTransferable,
 				"order %s holds no address to ask; an operator can move it", orderID)
 		}
-		if order.CustomerID == receiverID {
-			return errors.Conflict(CodeTransferOwnOrder,
-				"order %s already belongs to the customer asking for it", orderID)
-		}
 		if err := s.refuseWaitingRequest(ctx, orderID); err != nil {
+			return err
+		}
+		if err := s.refuseSpentRequests(ctx, orderID); err != nil {
 			return err
 		}
 
@@ -218,6 +230,32 @@ func (s *Service) refuseWaitingRequest(ctx context.Context, orderID string) erro
 			return errors.Conflict(CodeTransferPending,
 				"order %s already has a transfer request waiting for its answer", orderID)
 		}
+	}
+
+	return nil
+}
+
+// refuseSpentRequests refuses a request on an order already asked for
+// [MaxTransferRequests] times whose bounds have not passed, whatever became
+// of them: each mailed the order's address, and a shopper who withdraws and
+// asks again would otherwise mail it without end (ADR 0459).
+func (s *Service) refuseSpentRequests(ctx context.Context, orderID string) error {
+	newest, _, err := s.store.ListTransfers(ctx, orderID, MaxTransferRequests, 0)
+	if err != nil {
+		return err
+	}
+	now := s.now()
+	asked := 0
+	for i := range newest {
+		if newest[i].RequestedBy == models.TransferByCustomer &&
+			newest[i].ExpiresAt != nil && now.Before(*newest[i].ExpiresAt) {
+			asked++
+		}
+	}
+	if asked >= MaxTransferRequests {
+		return errors.TooManyRequests(CodeTransferRequestsSpent,
+			"order %s was asked for %d times within %s; an operator can move it",
+			orderID, MaxTransferRequests, TransferTTL)
 	}
 
 	return nil
@@ -320,6 +358,11 @@ func (s *Service) AcceptTransfer(ctx context.Context, transferID, token string) 
 		if order.CustomerID != transfer.FromCustomerID || order.Email == "" || order.Email != transfer.FromEmail {
 			return errors.Conflict(CodeTransferStale,
 				"order %s changed hands or address since the transfer was requested", order.ID)
+		}
+		// A request written on a customer's order before ADR 0459 is
+		// refused here, where it would move the order.
+		if err := guestOrder(order); err != nil {
+			return err
 		}
 
 		accepted, moved, err = s.moveOrder(ctx, order, transfer, receiverEmail, func(ctx context.Context) (models.OrderTransfer, error) {
@@ -623,6 +666,19 @@ func transferable(order models.Order) error {
 	case order.AddsToOrderID != "":
 		return errors.Conflict(CodeTransferAddition,
 			"order %s adds to order %s and changes hands with it", order.ID, order.AddsToOrderID)
+	}
+
+	return nil
+}
+
+// guestOrder refuses, at the storefront, an order that has a customer: the
+// address typed at its checkout may be a gift's recipient's rather than the
+// account's, and the account's holder would lose the order unasked (ADR
+// 0459). An operator moves it.
+func guestOrder(order models.Order) error {
+	if order.CustomerID != "" {
+		return errors.Conflict(CodeNotTransferable,
+			"order %s belongs to a customer; an operator can move it", order.ID)
 	}
 
 	return nil

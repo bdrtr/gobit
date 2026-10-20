@@ -32,9 +32,11 @@ func describeTransfers(d *openapi.Doc) {
 	d.Describe(http.MethodPost, pathStoreTransferRequests, openapi.Operation{
 		Summary: "Asks for the order to become the signed-in shopper's.",
 		Description: "The request needs the order's access, as every route under the order " +
-			"does, and a shopper the customer identity proves: they are the receiver. The " +
-			"order's own customer has nothing to ask, so in practice the access is one of the " +
-			"order's tokens, a guest's order's or one shared by its holder. gobit mails a " +
+			"does, and a shopper the customer identity proves: they are the receiver. Only a " +
+			"guest's order is asked for, so the access is one of its tokens; an order that has " +
+			"a customer is refused, since the address typed at its checkout may not be the " +
+			"account's, and an operator moves it (ADR 0459). An order takes three requests " +
+			"within seven days, whatever became of them. gobit mails a " +
 			"token to the order's address with the template \"order.transfer_requested\"; " +
 			"whoever reads it accepts or declines at /store/v1/order-transfers/{transferId}, " +
 			"within seven days. No body is read. " + storeOrderAccessNote + " " +
@@ -44,11 +46,13 @@ func describeTransfers(d *openapi.Doc) {
 			"201": openapi.Response("The request, waiting for its answer", d.Item(storeTransferDTO{})),
 			"401": openapi.ErrorResponse("The request proves no customer (\"order_transfer_unproven\")."),
 			"404": openapi.ErrorResponse(storeOrderRefusal),
-			"409": openapi.ErrorResponse("\"order_transfer_own_order\" for the shopper's own " +
-				"order, \"order_not_transferable\" for a canceled or erased order or one with " +
-				"no address to ask, \"order_transfer_addition\" for an order that adds to " +
-				"another (it moves with that one), and \"order_transfer_pending\" while " +
-				"another request on the order waits."),
+			"409": openapi.ErrorResponse("\"order_not_transferable\" for an order that has a " +
+				"customer, a canceled or erased order or one with no address to ask, " +
+				"\"order_transfer_addition\" for an order that adds to another (it moves with " +
+				"that one), and \"order_transfer_pending\" while another request on the order " +
+				"waits."),
+			"429": openapi.ErrorResponse("The order was asked for three times within seven days " +
+				"(\"order_transfer_requests_spent\"); each request mailed its address."),
 			"503": openapi.ErrorResponse("The token could not be mailed and the request was " +
 				"withdrawn (\"order_transfer_mail_failed\")."),
 		},
@@ -68,7 +72,8 @@ func describeTransfers(d *openapi.Doc) {
 		"withdrawn, \"order_transfer_expired\" past its bound, \"order_transfer_stale\" when " +
 		"the order changed hands, address or state since it was asked for, and " +
 		"\"order_transfer_receiver_unknown\" when the customer module no longer holds the " +
-		"receiver.")
+		"receiver, and \"order_not_transferable\" for a request written on a customer's " +
+		"order before ADR 0459.")
 	d.Describe(http.MethodPost, pathStoreTransferAccept, openapi.Operation{
 		Summary:     "Accepts a transfer request with the token mailed for it.",
 		Description: transferAnswerNote + transferNote + " " + transferStatusNote,
