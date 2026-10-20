@@ -221,3 +221,4 @@ truth: a report says what was true on the day it was taken.
 | [What a wrong password took — measured 2026-10-15](0442-what-a-wrong-password-took.md) | 56 |
 | [What a sign-in undid — measured 2026-10-15](0443-what-a-sign-in-undid.md) | 44 |
 | [What a search read — measured 2026-10-18](0456-what-a-search-read.md) | 140 |
+| [What a Turkish cluster folds — measured 2026-10-20](0460-what-a-turkish-cluster-folds.md) | 45 |

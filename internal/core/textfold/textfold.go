@@ -95,14 +95,19 @@ func Fold(value string) string {
 // the table and on ASCII, whatever the cluster's CTYPE.
 //
 // Each small letter of the table maps to its base, and so does its capital when
-// the capital is not ASCII: lower() folds an ASCII capital on every cluster and
-// a non-ASCII one only on a cluster whose CTYPE knows it (ADR 0015). The dotted
-// capital I (U+0130) is added on its own: no small letter of the table is its
-// lower case, Go lowers it to an ASCII i, and lower() on a C cluster leaves it.
-// The runes come in code-point order, so the strings are one fixed spelling a
-// migration can be held to.
+// the capital is not ASCII: lower() folds a non-ASCII capital only on a cluster
+// whose CTYPE knows it (ADR 0015). Two capitals are added on their own. The
+// dotted capital I (U+0130): no small letter of the table is its lower case, Go
+// lowers it to an ASCII i, and lower() on a C cluster leaves it. And the ASCII
+// capital I, the one ASCII letter lower() does not fold alike everywhere: a
+// Turkish or Azerbaijani CTYPE lowers it to the dotless i (ADR 0460). The runes
+// come in code-point order, so the strings are one fixed spelling a migration
+// can be held to.
 func SQLTranslate() (from, to string) {
-	pairs := map[rune]rune{'\u0130': 'i'} // dotted capital I (U+0130)
+	pairs := map[rune]rune{
+		'I':      'i', // the ASCII capital I, which a Turkish CTYPE lowers to U+0131
+		'\u0130': 'i', // dotted capital I (U+0130)
+	}
 	for small, base := range latinASCII {
 		pairs[small] = base
 		if capital := unicode.ToUpper(small); capital != small && capital > unicode.MaxASCII {

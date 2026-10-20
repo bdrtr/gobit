@@ -3,7 +3,7 @@
 **Summary:** `GET /admin/v1/orders`, `/admin/v1/customers` and `/admin/v1/reviews` take `q`, matched in the database through a GIN index on each module's search document, with the list's other filters, paging and count applied to the hits.
 It costs a GIN index per searched table and its upkeep on every write, and buys a search that is exact over every row instead of a consumer's window.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0460](0460-an-ascii-capital-i-folds-on-every-cluster.md): the ASCII capital I is translated before `lower()`
 - **Date:** 2026-10-18
 
 ## Context

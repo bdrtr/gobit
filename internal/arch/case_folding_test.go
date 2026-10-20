@@ -133,17 +133,44 @@ var caseFoldingDeclarations = map[string]string{
 	"internal/modules/customer/migrations/000008_a_customer_is_found_by_a_part_of_it.up.sql": searchFoldDeclaration,
 	"internal/modules/order/migrations/000046_an_order_is_found_by_a_part_of_it.up.sql":      searchFoldDeclaration,
 	"internal/modules/review/migrations/000005_a_review_is_found_by_its_words.up.sql":        searchFoldDeclaration,
+
+	"internal/modules/customer/migrations/000009_an_ascii_capital_i_folds_on_every_cluster.up.sql": searchFoldReplacedDeclaration,
+	"internal/modules/order/migrations/000047_an_ascii_capital_i_folds_on_every_cluster.up.sql":    searchFoldReplacedDeclaration,
+	"internal/modules/review/migrations/000006_an_ascii_capital_i_folds_on_every_cluster.up.sql":   searchFoldReplacedDeclaration,
+
+	"internal/modules/customer/migrations/000009_an_ascii_capital_i_folds_on_every_cluster.down.sql": searchFoldRestoredDeclaration,
+	"internal/modules/order/migrations/000047_an_ascii_capital_i_folds_on_every_cluster.down.sql":    searchFoldRestoredDeclaration,
+	"internal/modules/review/migrations/000006_an_ascii_capital_i_folds_on_every_cluster.down.sql":   searchFoldRestoredDeclaration,
 }
 
 // searchFoldDeclaration is the one reason the three search migrations of
 // ADR 0456 give; they carry one function each, written alike.
-const searchFoldDeclaration = "SOUND FOR THE TABLE AND ASCII, and the cluster's beyond them. " +
-	"The search document folds with lower(translate(...)): translate() maps every Latin " +
-	"letter of internal/core/textfold's table, small and capital, to its ASCII base before " +
-	"lower() sees it, so those letters and ASCII fold alike on every cluster, and " +
-	"TestEverySearchFoldIsTheGoFold holds the strings to the Go table. A letter outside the " +
-	"table folds as lower() folds it on that cluster (ADR 0015); the query is folded by the " +
-	"same function, so the two sides never disagree on one cluster. ADR 0456"
+const searchFoldDeclaration = "SOUND FOR THE TABLE, and the cluster's beyond it; REPLACED by " +
+	"ADR 0460. The search document folds with lower(translate(...)): translate() maps every " +
+	"Latin letter of internal/core/textfold's table, small and capital, to its ASCII base " +
+	"before lower() sees it, so those letters fold alike on every cluster. The ASCII capital " +
+	"I was left to lower(), which a Turkish or Azerbaijani CTYPE folds to the dotless i, so " +
+	"a name stored in capitals was found by no other spelling there; ADR 0460's migration " +
+	"replaces the document function. A letter outside the table folds as lower() folds it " +
+	"on that cluster (ADR 0015). ADR 0456"
+
+// searchFoldReplacedDeclaration is the reason ADR 0460's three migrations
+// give, which replace the search document of ADR 0456's.
+const searchFoldReplacedDeclaration = "SOUND FOR THE TABLE AND ASCII, and the cluster's " +
+	"beyond them. translate() maps every Latin letter of internal/core/textfold's table, " +
+	"small and capital, and the ASCII capital I to their ASCII bases before lower() sees " +
+	"them; lower() folds every other ASCII capital alike on every cluster, so the table and " +
+	"ASCII fold alike everywhere, and TestEverySearchFoldIsTheGoFold holds the module's " +
+	"definition in effect to the Go table. A letter outside the table folds as lower() folds " +
+	"it on that cluster (ADR 0015); the query is folded by the same function, so the two " +
+	"sides never disagree on one cluster. ADR 0460"
+
+// searchFoldRestoredDeclaration is the reason the down migrations of ADR
+// 0460 give: they restore ADR 0456's document, the ASCII capital I left to
+// lower().
+const searchFoldRestoredDeclaration = "UNSOUND FOR THE ASCII CAPITAL I on a Turkish or " +
+	"Azerbaijani CTYPE, as ADR 0456's function was: a down migration restores that function " +
+	"and rebuilds the index by it, and is run only to step back past ADR 0460. ADR 0460"
 
 // TestEverySqlThatFoldsCaseIsDeclared is the audit.
 //

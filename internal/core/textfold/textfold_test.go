@@ -36,4 +36,5 @@ func TestEveryCapitalOfTheTableIsTranslated(t *testing.T) {
 		}
 	}
 	assert.Contains(t, from, "\u0130", "the dotted capital I, which Go lowers to an ASCII i")
+	assert.Contains(t, from, "I", "the ASCII capital I, which a Turkish CTYPE lowers to U+0131 (ADR 0460)")
 }

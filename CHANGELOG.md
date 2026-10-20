@@ -28,6 +28,17 @@ design. It is fixed with `1.0.0`.
 
 ### Fixed
 
+- **An admin search finds a name typed in capitals on a Turkish cluster**
+  (ADR 0460, D315). The search document of `q` on the admin order, customer
+  and review lists left the ASCII capital I to `lower()`, which a database
+  whose CTYPE is Turkish or Azerbaijani lowers to the dotless i, so there a
+  name stored as `WILLIS` was found by no other spelling of it, capitals
+  included. Order migration 000047, customer 000009 and review 000006
+  replace each module's search document and rebuild its index as the
+  installation starts, holding off writes to `orders`, `order_addresses`,
+  `customer` and `reviews` while the rebuild runs, as the first build did.
+  A cluster with any other CTYPE finds what it found before.
+
 - **A path no route takes is answered in the error envelope** (ADR 0458,
   D313). A route an installation leaves unbound, `contrib/identity-session`'s
   registration without a mailer or web-push's subscription without a key,
