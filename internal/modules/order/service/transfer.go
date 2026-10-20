@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
@@ -11,13 +12,15 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/order/models"
 )
 
-// This file is how an order changes hands (ADR 0450).
+// This file is how an order changes hands (ADR 0450, ADR 0459).
 //
 // # Who says yes
 //
-// A shopper the storefront identity proves, who can already open the order —
-// with one of its access tokens, since its own customer has nothing to ask —
-// requests it. The token proves the shopper holds the order's link, not that
+// A shopper the storefront identity proves, who can already open a guest's
+// order with one of its access tokens, requests it. A customer's order is not
+// asked for: the address typed at its checkout may be a gift's recipient's
+// rather than the account's, and an operator moves it. The token proves the
+// shopper holds the order's link, not that
 // the order is theirs: a link is forwarded with the mail it came in. So the
 // request is answered by the address the order is mailed at, the one every
 // order mail went to, with a token mailed there alone. The holder of that
@@ -44,9 +47,11 @@ import (
 //
 // # Races
 //
-// Every write takes the order's lock first and the transfer's second, so a
-// request, its answer, an operator's move, a cancellation and an erasure of
-// one order run one after another. An acceptance moves the order only while
+// Every write of a request, its answer, an operator's move and a cancellation
+// takes the order's lock first and the transfer's second, so they run one
+// after another on one order. An erasure writes the transfers that name the
+// person without the order's lock, and the status it reads is the row's own
+// under the lock it takes, so an answer that closed a request first stands. An acceptance moves the order only while
 // it holds the customer and the address the request was written against: a
 // request written before another move answers stale rather than undoing it.
 
@@ -647,12 +652,22 @@ func (s *Service) receiverEmail(ctx context.Context, customerID string) (string,
 			"there is no customer %s to receive the order", customerID)
 	}
 	email := models.NormalizeEmail(recordText(records[0], fieldCustomerEmail))
-	if email == "" {
+	if email == "" || reachesNobody(email) {
 		return "", errors.Conflict(CodeTransferReceiverUnknown,
-			"customer %s holds no address for the order's mails", customerID)
+			"customer %s holds no address the order's mails reach", customerID)
 	}
 
 	return email, nil
+}
+
+// reachesNobody reports an address on the .invalid top-level domain, which
+// RFC 6761 reserves so that nothing is ever delivered there. The customer
+// module writes an erased customer's address there and keeps the row, so an
+// order moved to them would be theirs in name and nobody's in its mail
+// (ADR 0459). It is read at the acceptance and the operator's move, however
+// the erasure named the person.
+func reachesNobody(email string) bool {
+	return strings.HasSuffix(email, ".invalid")
 }
 
 // transferable refuses an order that cannot change hands.

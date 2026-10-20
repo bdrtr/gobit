@@ -76,14 +76,18 @@ WHERE order_id = ANY (sqlc.arg('order_ids')::text[])
    OR (sqlc.narg('email')::text IS NOT NULL AND from_email = sqlc.narg('email')::text);
 
 -- CancelOrderTransfersTo withdraws every request still waiting for the
--- person as its receiver: an erased customer receives no order (ADR 0459).
--- The status is the second gate, as in CloseOrderTransfer, so a request an
--- acceptance closed under its lock first stays accepted.
+-- person as its receiver, since an erased customer receives no order, and
+-- returns every transfer that names them so (ADR 0459). It matches the
+-- closed ones unchanged, as EraseOrderTransferEmails matches what it already
+-- emptied, so a second sweep counts the same rows: the receiver's id stays
+-- on each, and an answer of nothing would hide it. The status is read from
+-- the row the statement locks, so a request an acceptance closed first stays
+-- accepted.
 -- name: CancelOrderTransfersTo :execrows
 UPDATE order_transfers
-SET status    = 'canceled',
-    closed_at = now()
-WHERE to_customer_id = sqlc.arg('customer_id') AND status = 'requested';
+SET status    = CASE WHEN status = 'requested' THEN 'canceled' ELSE status END,
+    closed_at = CASE WHEN status = 'requested' THEN now() ELSE closed_at END
+WHERE to_customer_id = sqlc.arg('customer_id');
 
 -- OrderTransfersForDisclosure reads the transfers of the person's orders and
 -- every transfer that names them, as holder or as receiver.

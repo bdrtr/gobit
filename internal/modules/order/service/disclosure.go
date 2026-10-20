@@ -420,9 +420,9 @@ func disclosureRecords(rows *dossierRows) ([]personaldata.Record, error) {
 // somebody else's, and a disclosure vouches that what it returns is the
 // person's. A transfer left with no field of theirs is not disclosed.
 func ownSides(transfers []models.OrderTransfer, customerID, email string) []models.OrderTransfer {
-	own := slices.Clone(transfers)
-	for i := range own {
-		t := &own[i]
+	own := make([]models.OrderTransfer, 0, len(transfers))
+	for i := range transfers {
+		t := transfers[i]
 		holder := (customerID != "" && t.FromCustomerID == customerID) || (email != "" && t.FromEmail == email)
 		if !holder {
 			t.FromCustomerID, t.FromEmail = "", ""
@@ -430,6 +430,10 @@ func ownSides(transfers []models.OrderTransfer, customerID, email string) []mode
 		if customerID == "" || t.ToCustomerID != customerID {
 			t.ToCustomerID = ""
 		}
+		if t.FromCustomerID == "" && t.FromEmail == "" && t.ToCustomerID == "" {
+			continue
+		}
+		own = append(own, t)
 	}
 
 	return own

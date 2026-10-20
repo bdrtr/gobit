@@ -250,8 +250,12 @@ func TestAnErasedReceiversRequestIsWithdrawnOnTheRealDatabase(t *testing.T) {
 	request, err := svc.RequestTransfer(ctx, ord.ID, "cus_ERASED_RECEIVER")
 	require.NoError(t, err)
 
-	_, err = svc.Erase(ctx, personaldata.Subject{CustomerID: "cus_ERASED_RECEIVER"})
+	result, err := svc.Erase(ctx, personaldata.Subject{CustomerID: "cus_ERASED_RECEIVER"})
 	require.NoError(t, err)
+	assert.Equal(t, 1, result.Rows, "the request names the receiver")
+	again, err := svc.Erase(ctx, personaldata.Subject{CustomerID: "cus_ERASED_RECEIVER"})
+	require.NoError(t, err)
+	assert.Equal(t, 1, again.Rows, "a closed request still names them, and is counted again")
 
 	var status string
 	var closedAt *time.Time

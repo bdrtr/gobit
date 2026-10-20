@@ -9,6 +9,19 @@ design. It is fixed with `1.0.0`.
 
 ## [Unreleased]
 
+### Breaking changes
+
+- **A shopper asks only for a guest's order** (ADR 0459, D314). **For
+  storefronts:** `POST /store/v1/orders/{id}/transfer-requests` on an order
+  that has a customer answers 409 `order_not_transferable` where it answered
+  201, and no longer answers `order_transfer_own_order`; offer the request
+  on a guest's order only, and send a customer's to an operator, who moves
+  it at `POST /admin/v1/orders/{id}/transfers`. A fourth request on an order
+  within seven days of three answers 429 `order_transfer_requests_spent`.
+  Accepting a request written on a customer's order before this release
+  answers 409 `order_not_transferable`, and accepting one for a receiver the
+  customer module erased answers 409 `order_transfer_receiver_unknown`.
+
 ### Security
 
 - **A shopper asks only for a guest's order** (ADR 0459, D314). The
@@ -21,10 +34,13 @@ design. It is fixed with `1.0.0`.
   it at `POST /admin/v1/orders/{id}/transfers`. An order takes three
   requests within seven days, the fourth answered 429
   `order_transfer_requests_spent`, so a shopper who withdraws and asks again
-  no longer mails its address without end. A customer's erasure withdraws
-  the requests waiting for them, and a transfer's disclosure gives each
-  person only their own side: the receiver is no longer handed the previous
-  holder's address as their own.
+  no longer mails its address without end. An erased receiver receives no
+  order: an erasure naming the customer withdraws the requests waiting for
+  them and counts every transfer naming them, and an acceptance or an
+  operator's move refuses a receiver the customer module holds at a
+  `.invalid` address, however the erasure named them. A transfer's
+  disclosure gives each person only their own side: the receiver is no
+  longer handed the previous holder's address as their own.
 
 ### Fixed
 

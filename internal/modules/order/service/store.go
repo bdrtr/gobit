@@ -152,7 +152,8 @@ type Store interface {
 	// orders and wherever the person was the holder asked.
 	EraseTransferEmails(ctx context.Context, orderIDs []string, customerID, email string) (int64, error)
 	// CancelTransfersTo withdraws every request still waiting for the
-	// customer as its receiver, and returns how many it withdrew.
+	// customer as its receiver, and returns how many transfers name them so,
+	// closed ones included.
 	CancelTransfersTo(ctx context.Context, customerID string) (int64, error)
 	// TransfersForDisclosure returns the transfers of the given orders and
 	// every transfer naming the person.

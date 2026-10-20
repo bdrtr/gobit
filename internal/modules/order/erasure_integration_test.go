@@ -190,8 +190,9 @@ func TestErasureAnonymizesASettledOrder(t *testing.T) {
 	assert.Equal(t, personaldata.Anonymized, result.Outcome)
 	assert.Equal(t, order.ModuleName, result.Holder,
 		"the holder has to be the module's name; the sweep prints it next to the other holders")
-	assert.Equal(t, 4, result.Rows,
-		"one order row, its two address rows and its transfer's asked address were written")
+	assert.Equal(t, 5, result.Rows,
+		"one order row, its two address rows, its transfer's asked address, and the same "+
+			"transfer again as the one naming the person its receiver (ADR 0459)")
 	assert.NotEmpty(t, result.Why, "an anonymized answer that kept columns has to say why")
 
 	// The declaration and the erasure have to agree. Every column the module

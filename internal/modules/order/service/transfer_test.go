@@ -71,6 +71,9 @@ type transferEnv struct {
 	env
 	mail *fakeTransferMail
 	now  *time.Time
+	// customers are the customer module's addresses on record, which a test
+	// rewrites as that module's erasure does.
+	customers map[string]string
 }
 
 func newTransferEnv(t *testing.T) transferEnv {
@@ -79,17 +82,18 @@ func newTransferEnv(t *testing.T) transferEnv {
 	base := newEnv(t)
 	mail := &fakeTransferMail{}
 	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	customers := map[string]string{
+		transferReceiver: "Receiver@Example.com", testCustomerID: "customer@example.com",
+	}
 	svc, err := service.New(service.Options{
 		Repo: base.store, Events: base.bus, Mail: mail,
-		Catalog: customerCatalog{emails: map[string]string{
-			transferReceiver: "Receiver@Example.com", testCustomerID: "customer@example.com",
-		}},
-		Now: func() time.Time { return now },
+		Catalog: customerCatalog{emails: customers},
+		Now:     func() time.Time { return now },
 	})
 	require.NoError(t, err)
 	base.svc = svc
 
-	return transferEnv{env: base, mail: mail, now: &now}
+	return transferEnv{env: base, mail: mail, now: &now, customers: customers}
 }
 
 // guestOrder places an order with no customer, the case a transfer is for.
@@ -520,13 +524,67 @@ func TestAnErasedReceiverReceivesNoOrder(t *testing.T) {
 	order := e.guestOrder(t)
 	transfer, token := e.requested(t, order.ID)
 
-	_, err := e.svc.Erase(ctx, personaldata.Subject{CustomerID: transferReceiver})
+	result, err := e.svc.Erase(ctx, personaldata.Subject{CustomerID: transferReceiver})
 	require.NoError(t, err)
 	assert.Equal(t, models.TransferCanceled, e.store.transfers[transfer.ID].Status)
+	assert.Equal(t, 1, result.Rows, "the request names the receiver, and its id stays")
+	assert.Contains(t, result.Kept, "order_transfers.to_customer_id")
+
+	again, err := e.svc.Erase(ctx, personaldata.Subject{CustomerID: transferReceiver})
+	require.NoError(t, err)
+	assert.Equal(t, result.Rows, again.Rows, "a second sweep counts what the first did")
 
 	_, err = e.svc.AcceptTransfer(ctx, transfer.ID, token)
 	assert.Equal(t, service.CodeTransferClosed, errors.CodeOf(err))
 	assert.Empty(t, e.store.orders[order.ID].CustomerID, "the order stays the guest's")
+}
+
+// TestAReceiverErasedByTheirAddressReceivesNoOrder proves the acceptance
+// refuses a receiver the customer module erased, when the erasure named the
+// person by address alone and so reached no request here (ADR 0459).
+func TestAReceiverErasedByTheirAddressReceivesNoOrder(t *testing.T) {
+	ctx := context.Background()
+	e := newTransferEnv(t)
+	order := e.guestOrder(t)
+	transfer, token := e.requested(t, order.ID)
+
+	_, err := e.svc.Erase(ctx, personaldata.Subject{Email: transferReceiverEmail})
+	require.NoError(t, err)
+	assert.Equal(t, models.TransferRequested, e.store.transfers[transfer.ID].Status,
+		"an address is no receiver's handle here")
+	e.customers[transferReceiver] = "cust_receiver@erased.invalid"
+
+	_, err = e.svc.AcceptTransfer(ctx, transfer.ID, token)
+	assert.Equal(t, service.CodeTransferReceiverUnknown, errors.CodeOf(err))
+	assert.Empty(t, e.store.orders[order.ID].CustomerID, "the order stays the guest's")
+	_, err = e.svc.MoveOrder(ctx, order.ID, transferReceiver, "")
+	assert.Equal(t, service.CodeTransferReceiverUnknown, errors.CodeOf(err),
+		"an operator moves no order to an erased customer either")
+}
+
+// TestATransferHoldingNothingOfThePersonIsNotDisclosed proves a transfer on
+// the person's order between two earlier holders is left out of their
+// dossier, not handed over with every field empty.
+func TestATransferHoldingNothingOfThePersonIsNotDisclosed(t *testing.T) {
+	ctx := context.Background()
+	e := newTransferEnv(t)
+	order := e.guestOrder(t)
+	transfer, token := e.requested(t, order.ID)
+	_, err := e.svc.AcceptTransfer(ctx, transfer.ID, token)
+	require.NoError(t, err)
+	moved, err := e.svc.MoveOrder(ctx, order.ID, testCustomerID, transferReceiver)
+	require.NoError(t, err)
+
+	dossier, err := e.svc.PersonalDataOf(ctx, personaldata.Subject{CustomerID: testCustomerID})
+	require.NoError(t, err)
+	var transfers []string
+	for _, record := range dossier.Records {
+		if record.Table == "order_transfers" {
+			transfers = append(transfers, record.ID)
+		}
+	}
+	assert.Equal(t, []string{order.ID + "/" + moved.ID}, transfers,
+		"only the move to the person names them")
 }
 
 // TestATransferDisclosesEachSideItsOwn proves the receiver is not handed the

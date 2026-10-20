@@ -194,6 +194,18 @@ past and is not corrected retroactively.
   previous holder empties the address their transfer asked and does not reach
   the order's addresses, which it no longer finds as theirs; an erasure of the
   receiver anonymizes them with the order.
+- **Two erasures can meet on one pair of transfers.** An erasure writes the
+  transfers that name the person, as the holder asked and as the receiver
+  ([ADR 0459](adr/0459-a-shopper-asks-only-for-a-guests-order.md)), without
+  the orders' locks. Two people each asking for the other's guest order,
+  erased at the same moment, lock one row each in the other's order, and
+  PostgreSQL ends one erasure with a deadlock, which the controller retries.
+- **An erasure that names the person by address alone leaves their transfer
+  request waiting.** The order module finds a request by its receiver's
+  customer id. The request stays `requested` until its holder answers it,
+  and the acceptance refuses a receiver the customer module holds at a
+  `.invalid` address
+  ([ADR 0459](adr/0459-a-shopper-asks-only-for-a-guests-order.md)).
 - **An admin session names its browser, not its place.** Since
   [ADR 0276](adr/0276-a-session-names-the-browser-that-opened-it.md) a session
   lists the `User-Agent` of the sign-in that opened it, as the browser gave it,
@@ -228,6 +240,18 @@ past and is not corrected retroactively.
   assembled, through a type assertion on the handler `App.InProcess` returns
   or a router a plugin kept from `AddRoutes`, is never walked; neither is the
   documented way to bind one.
+- **A client is an address, and an IPv6 host holds many.** The whole-API
+  limit and the route quotas, the admin sign-in's among them
+  ([ADR 0452](adr/0452-a-route-takes-a-quota-and-signing-in-has-one.md)),
+  key a client by its full address, so a host rotating through its IPv6 /64
+  is a new client at every address; the per-account lock still bounds the
+  guesses at one account. Past its quota, the panel's own sign-in form is
+  answered the API's 429 in JSON, without the panel's page or its headers.
+- **`ADMIN_CORS_ALLOWED_ORIGINS` compares an origin as written.** An entry
+  with its scheme's default port, `https://panel.example.com:443`, or with a
+  host in Unicode rather than its punycode starts the installation and
+  matches no browser, which sends neither
+  ([ADR 0451](adr/0451-a-panel-on-its-own-host-calls-the-admin-api.md)).
 - **The audit log's path filter is exact, and a credential write's path
   carries its customer.** `GET /admin/v1/audit-log?path=…` matches one path,
   so since ADR 0434 it lists one customer's credential writes; every
@@ -568,9 +592,12 @@ past and is not corrected retroactively.
   `--locale=C` takes a dump/restore. If you bring your own Postgres, the
   cluster's CTYPE has to be a UTF-8 aware locale; an ICU provider is NOT
   ENOUGH — it fixes `ILIKE` and leaves the search index broken.
-  The admin lists' `q` folds the Turkish and Latin letters with marks
-  itself and any other letter as the cluster does
-  ([ADR 0456](adr/0456-an-admin-list-is-searched-in-the-database.md)).
+  The admin lists' `q` folds the Turkish and Latin letters with marks and
+  the ASCII capital I itself, and any other letter as the cluster does
+  ([ADR 0456](adr/0456-an-admin-list-is-searched-in-the-database.md),
+  [ADR 0460](adr/0460-an-ascii-capital-i-folds-on-every-cluster.md)); a
+  letter stored decomposed, a base followed by a combining mark, is not
+  found by its precomposed spelling.
 - **The database has to start transactions at READ COMMITTED, and the process
   refuses one that does not.** Every lock in gobit that guards a total — a
   balance, a spending limit, a stock level, a budget — is taken first and the
@@ -1282,6 +1309,12 @@ past and is not corrected retroactively.
   through `HTTPS_PROXY` is resolved by the proxy, so the check that a built-in
   host answers at a public address is the proxy's to make
   ([ADR 0440](adr/0440-a-push-device-is-a-push-services-and-its-customers.md)).
+
+- **A push template needs its default file.** `webpush.service` and the
+  operator's broadcast render a template in the default locale before they
+  read a device, so a template written only as `<name>.tr.tmpl` is refused as
+  unknown, the refusal listing it, though a device in that locale would be
+  served ([ADR 0446](adr/0446-a-plugin-pushes-to-a-customers-devices-through-web-push.md)).
 
 - **No lane proves a generated project works at the version it PINS.** Every
   out-of-tree proof rewrites the generated `go.mod` to point at the checkout, so

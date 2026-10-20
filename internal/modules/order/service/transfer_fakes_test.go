@@ -168,25 +168,29 @@ func (f *fakeStore) EraseTransferEmails(
 	return written, nil
 }
 
-// CancelTransfersTo withdraws the requests still waiting for the customer.
+// CancelTransfersTo withdraws the requests still waiting for the customer and
+// counts every transfer naming them as receiver.
 func (f *fakeStore) CancelTransfersTo(ctx context.Context, customerID string) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	var withdrawn int64
+	var named int64
 	for id := range f.transfers {
 		t := f.transfers[id]
-		if t.ToCustomerID != customerID || t.Status != models.TransferRequested {
+		if t.ToCustomerID != customerID {
+			continue
+		}
+		named++
+		if t.Status != models.TransferRequested {
 			continue
 		}
 		closed := f.nextStamp()
 		t.Status, t.ClosedAt = models.TransferCanceled, &closed
 		f.recordUndo(ctx, undoEntry(f.transfers, id))
 		f.transfers[id] = t
-		withdrawn++
 	}
 
-	return withdrawn, nil
+	return named, nil
 }
 
 // TransfersForDisclosure returns the transfers of the orders and those naming

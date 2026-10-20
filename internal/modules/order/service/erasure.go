@@ -509,15 +509,18 @@ func (s *Service) Erase(ctx context.Context, subject personaldata.Subject) (pers
 		}
 		rows = transfers
 		// A request still waiting for the person as its receiver is
-		// withdrawn: an erased customer receives no order, and an acceptance
-		// would write the holder's order to an address that reaches nobody
-		// (ADR 0459). The withdrawals are not counted: the request's
-		// receiver id is kept, as orders.customer_id is, and nothing of the
-		// person was emptied.
+		// withdrawn: an erased customer receives no order (ADR 0459). An
+		// erasure that names the person by address alone reaches no request
+		// here; the acceptance refuses a receiver the customer module holds
+		// at a .invalid address instead. Every transfer naming the person as
+		// receiver is counted, closed ones too: its to_customer_id is kept,
+		// as orders.customer_id is, and an answer of nothing would hide it.
 		if customerID != "" {
-			if _, err := s.store.CancelTransfersTo(ctx, customerID); err != nil {
+			received, err := s.store.CancelTransfersTo(ctx, customerID)
+			if err != nil {
 				return err
 			}
+			rows += received
 		}
 		if len(ids) == 0 {
 			return nil
