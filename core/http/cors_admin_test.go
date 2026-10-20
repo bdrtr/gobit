@@ -59,6 +59,23 @@ func TestAPanelOnItsOwnHostMayCallTheAdminSurface(t *testing.T) {
 	assert.Empty(t, rec.Header().Get("Access-Control-Allow-Origin"), "an origin not listed is allowed nothing")
 }
 
+// TestAPanelMayNameTheVersionItRead is ADR 0461: a product write from a panel
+// on its own host carries If-Match (ADR 0222), and a preflight that did not
+// allow it kept the browser from sending the write at all.
+func TestAPanelMayNameTheVersionItRead(t *testing.T) {
+	h := corehttp.AdminCORS([]string{panelOrigin})(http.NotFoundHandler())
+
+	r := httptest.NewRequest(http.MethodOptions, "/admin/v1/products/prod_1", http.NoBody)
+	r.Header.Set("Origin", panelOrigin)
+	r.Header.Set("Access-Control-Request-Method", http.MethodPatch)
+	r.Header.Set("Access-Control-Request-Headers", "authorization, content-type, if-match")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+
+	require.Equal(t, http.StatusNoContent, rec.Code)
+	assert.Contains(t, rec.Header().Get("Access-Control-Allow-Headers"), "If-Match")
+}
+
 // TestTheAdminSurfaceTakesNoWildcard is ADR 0451: "*" is dropped, so a list
 // holding only it writes no CORS header for any site.
 func TestTheAdminSurfaceTakesNoWildcard(t *testing.T) {

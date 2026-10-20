@@ -44,6 +44,13 @@ design. It is fixed with `1.0.0`.
 
 ### Fixed
 
+- **A panel on its own host may send a product write's `If-Match`**
+  (ADR 0461, D316). `ADMIN_CORS_ALLOWED_ORIGINS`'s preflight allowed
+  `If-None-Match` and not `If-Match`, which every product write reads as the
+  version its caller read (ADR 0222), so a browser refused such a write
+  before sending it. The preflight now allows it, and every header an admin
+  operation describes is held to the preflight by an integration test.
+
 - **An admin search finds a name typed in capitals on a Turkish cluster**
   (ADR 0460, D315). The search document of `q` on the admin order, customer
   and review lists left the ASCII capital I to `lower()`, which a database

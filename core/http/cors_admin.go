@@ -7,9 +7,11 @@ import (
 
 // adminCORSAllowedHeaders are the request headers a panel on an allowed origin
 // may send to the admin surface (ADR 0451): its bearer token, the idempotency
-// key a retried write carries, the request id and the read validator. The
+// key a retried write carries, the request id, the read validator, and the
+// version a product write names as the one it read (ADR 0222, ADR 0461). The
 // list is closed for [corsAllowedHeaders]'s reason; the store surface's keys
-// are not on it, since no admin route reads them.
+// are not on it, since no admin route reads them. Every header an admin
+// operation describes is held to it by an integration test in internal/app.
 var adminCORSAllowedHeaders = []string{
 	"Content-Type",
 	"Accept",
@@ -17,6 +19,7 @@ var adminCORSAllowedHeaders = []string{
 	IdempotencyKeyHeader,
 	requestIDHeader,
 	"If-None-Match",
+	"If-Match",
 }
 
 // adminCORSExposedHeaders are the admin responses' headers a panel's script
